@@ -14,6 +14,7 @@ The repository currently contains Experiment Contract v0.1, including:
 - harness-compatibility validation;
 - deterministic runtime planning;
 - platform-neutral single-run execution orchestration;
+- atomic per-run result persistence;
 - ACMM Run Record v0.1 schema and semantic validation;
 - regression fixtures and tests;
 - the `acmm validate` and `acmm plan` commands.
@@ -501,3 +502,25 @@ The returned `executed_run` remains in memory and contains both the Run Record a
 artifact bytes. Persistent result-directory writing is intentionally the next layer.
 
 See `docs/runtime/execution.md` for the execution boundary and failure semantics.
+
+## Result persistence
+
+`persist_executed_run()` writes an in-memory execution result into:
+
+```text
+results/<experiment_id>/run_<run_index>_<run_id>/
+```
+
+Each published directory contains `run_record.yaml` and the evidence artifacts referenced
+by the record.
+
+Before any filesystem publication, the writer verifies that evidence IDs, channels, paths,
+captured bytes, and SHA-256 values agree with the Run Record manifest. Unsafe paths,
+missing/extra artifacts, duplicate artifact paths, and attempts to overwrite an existing
+run are rejected.
+
+The bundle is written first into a hidden sibling temporary directory and renamed into its
+final location only after all writes succeed. A failed write therefore does not leave a
+partially written directory that looks like a completed run.
+
+See `docs/runtime/persistence.md` for the exact storage layout and durability boundary.

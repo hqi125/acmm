@@ -109,7 +109,7 @@ artifact
 sha256
 ```
 
-Evidence IDs and channels are unique within a Run Record.
+Evidence IDs, channels, and artifact paths are unique within a Run Record.
 
 Artifact paths are relative POSIX-style paths rooted at the Run Record directory. Absolute
 paths, backslashes, empty path segments, `.` segments, `..` traversal, and drive prefixes

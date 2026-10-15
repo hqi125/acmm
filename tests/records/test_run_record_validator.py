@@ -75,6 +75,7 @@ def test_valid_run_records_pass(
         ("unresolved_evidence_reference.yaml", "unresolved_evidence_reference"),
         ("missing_opportunity_judgment.yaml", "missing_opportunity_judgment"),
         ("duplicate_evidence_channel.yaml", "duplicate_evidence_channel"),
+        ("duplicate_artifact_path.yaml", "duplicate_artifact_path"),
         ("invalid_without_failure.yaml", "schema_violation"),
         ("bad_time_order.yaml", "invalid_execution_time_order"),
     ],

@@ -17,6 +17,7 @@ from acmm.runtime.planner import (
     planned_run,
 )
 from acmm.runtime.registry import execution_registry
+from acmm.runtime.result_store import persist_executed_run, result_write_error
 
 __all__ = [
     "adapter_execution_result",
@@ -31,7 +32,9 @@ __all__ = [
     "experiment_plan",
     "judgment_result",
     "opportunity_evaluator",
+    "persist_executed_run",
     "planned_run",
+    "result_write_error",
     "prepared_environment",
     "subject_adapter",
 ]

@@ -192,10 +192,12 @@ def _validate_semantics(
 
     evidence_ids: dict[str, int] = {}
     evidence_channels: dict[str, int] = {}
+    evidence_artifacts: dict[str, int] = {}
 
     for index, entry in enumerate(evidence):
         evidence_id = entry["id"]
         channel = entry["channel"]
+        artifact = entry["artifact"]
 
         if evidence_id in evidence_ids:
             yield validation_issue(
@@ -223,7 +225,20 @@ def _validate_semantics(
         else:
             evidence_channels[channel] = index
 
-        if not _is_safe_artifact_path(entry["artifact"]):
+        if artifact in evidence_artifacts:
+            yield validation_issue(
+                severity="error",
+                code="duplicate_artifact_path",
+                path=f"evidence[{index}].artifact",
+                message=(
+                    f"Evidence artifact path '{artifact}' duplicates "
+                    f"evidence[{evidence_artifacts[artifact]}].artifact."
+                ),
+            )
+        else:
+            evidence_artifacts[artifact] = index
+
+        if not _is_safe_artifact_path(artifact):
             yield validation_issue(
                 severity="error",
                 code="unsafe_artifact_path",
