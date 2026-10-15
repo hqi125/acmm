@@ -161,3 +161,30 @@ resolution, artifact path safety, and timestamp ordering.
 
 Cross-record rules such as global run-ID uniqueness or deciding which valid attempt occupies
 a planned slot belong to a future result-set validator.
+
+## CLI validation
+
+A Run Record can be checked against the exact Experiment Contract artifact with:
+
+```text
+acmm validate-record records/v0_1/run_record.example.yaml \
+    --contract experiments/examples/magic_number/experiment.yaml
+```
+
+The command first validates the Experiment Contract. If the Contract is invalid, Run Record
+validation is not attempted.
+
+It then verifies the Run Record schema, computes the supplied Contract file's SHA-256, and
+performs Contract-aware semantic validation.
+
+The command's exit status describes whether the Run Record representation is valid:
+
+```text
+0 = valid Run Record
+1 = validation error
+2 = loading/schema/tooling error
+```
+
+`execution.validity: invalid` does not by itself cause a nonzero exit status. A correctly
+formed record of an infrastructure-invalid execution is still a valid Run Record and is
+reported separately as `Execution validity: invalid`.
