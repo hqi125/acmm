@@ -20,23 +20,32 @@ def persist_executed_run(
     results_root: str | Path,
 ) -> Path:
     """
-    Persist one executed run as an atomically published result directory.
+    Persist one executed run under ``results_root/<experiment_id>/``.
 
-    The function first verifies that the in-memory evidence artifacts agree with
-    the Run Record manifest. It then writes a hidden temporary directory beside
-    the final destination and publishes it with a same-filesystem rename.
-
-    The returned path is the final per-run result directory.
+    This convenience entry point preserves the original standalone result
+    layout. Experiment-level execution uses ``persist_executed_run_to()`` to
+    supply an already established per-session runs directory.
     """
+
+    experiment_id = result.record["run"]["experiment_id"]
+    _validate_directory_component("experiment ID", experiment_id)
+
+    experiment_dir = Path(results_root) / experiment_id
+    return persist_executed_run_to(result, experiment_dir)
+
+
+def persist_executed_run_to(
+    result: executed_run,
+    destination: str | Path,
+) -> Path:
+    """Persist one executed run directly under ``destination``."""
 
     record = result.record
     run = record["run"]
 
-    experiment_id = run["experiment_id"]
     run_index = run["run_index"]
     run_id = run["id"]
 
-    _validate_directory_component("experiment ID", experiment_id)
     _validate_directory_component("run ID", run_id)
 
     if (
@@ -48,8 +57,7 @@ def persist_executed_run(
             "Run index must be a non-negative integer."
         )
 
-    root = Path(results_root)
-    experiment_dir = root / experiment_id
+    experiment_dir = Path(destination)
     experiment_dir.mkdir(parents=True, exist_ok=True)
 
     directory_name = f"run_{run_index:06d}_{run_id}"

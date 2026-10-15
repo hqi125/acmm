@@ -14,6 +14,7 @@ The repository currently contains Experiment Contract v0.1, including:
 - harness-compatibility validation;
 - deterministic runtime planning;
 - platform-neutral single-run execution orchestration;
+- experiment-level plan execution with explicit invalid-attempt retries;
 - atomic per-run result persistence;
 - ACMM Run Record v0.1 schema and semantic validation;
 - regression fixtures and tests;
@@ -524,3 +525,38 @@ final location only after all writes succeed. A failed write therefore does not 
 partially written directory that looks like a completed run.
 
 See `docs/runtime/persistence.md` for the exact storage layout and durability boundary.
+
+## Experiment-level execution
+
+`execute_experiment()` walks the complete deterministic plan and stores one execution
+session under:
+
+```text
+results/<experiment_id>/execution_<execution_id>/
+```
+
+The session snapshots the exact Contract bytes before running any planned slots.
+
+Every realized attempt is preserved. An attempt is retried only when
+`execution.validity` is `invalid`; the first valid attempt resolves the planned slot.
+Valid agent outcomes such as `timeout` or `max_steps` are not retried.
+
+The session completion manifest, `experiment_execution.yaml`, is written only after the
+whole plan has been traversed. If orchestration or persistence is interrupted, previously
+published Run Records remain intact but the session has no completion manifest and cannot
+be mistaken for a completed collection.
+
+See `docs/runtime/experiment_execution.md` for the acquisition and retry semantics.
+
+## Statistical-analysis boundary
+
+The experiment automation intentionally stops before statistical interpretation.
+
+Canonical Contracts, Run Records, execution manifests, and evidence remain the source of
+truth. A later deterministic export layer will project selected experimental facts into
+CSV tables for a separate R/RStudio analysis workspace.
+
+ACMM statistics such as compliance proportions, `S_D`, confidence intervals, statistical
+models, and plots do not belong in `src/acmm`.
+
+See `docs/analysis/boundary.md` for the full data-flow rule.
