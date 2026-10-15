@@ -17,6 +17,9 @@ test = [
     "pytest>=8.0",
 ]
 
+[project.scripts]
+acmm = "acmm.cli:main"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
