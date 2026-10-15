@@ -1,0 +1,58 @@
+schema_version: '0.1'
+run:
+  id: 2b93f7d0-8f9a-4f3f-b5ae-4d63a45051f2
+  experiment_id: magic_number_tool_use_v1
+  run_index: 0
+  subject_id: hermes_nemotron30b
+  scenario_id: magic_plus_13
+  repetition: 1
+  contract_sha256: f6fe9d2a20d0b1907016da3f6b4cdff3142329f6abd46b860b5f46ccfdc8214c
+execution:
+  started_at: '2026-10-15T14:03:21Z'
+  ended_at: '2026-10-15T14:03:25Z'
+  termination: agent_completed
+  validity: valid
+provenance:
+  harness:
+    version: 0.1.0
+  subject:
+    agent:
+      name: Hermes Agent
+      version: 0.21.3
+    model:
+      name: nemotron-3-nano:30b-cloud
+      provider: ollama_cloud
+    configuration:
+      context_window: 65536
+  environment:
+    fixture: magic_number_environment_v1
+    configuration: {}
+evidence:
+- id: conversation
+  channel: conversation
+  artifact: evidence/conversation.json
+  sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+- id: tool_calls
+  channel: conversation
+  artifact: evidence/tool_calls.json
+  sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+- id: tool_results
+  channel: tool_results
+  artifact: evidence/tool_results.json
+  sha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+- id: final_response
+  channel: final_response
+  artifact: evidence/final_response.txt
+  sha256: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+judgments:
+- opportunity_id: retrieve
+  outcome: compliant
+  evidence_ids:
+  - tool_calls
+  - tool_results
+- opportunity_id: calculate
+  outcome: compliant
+  evidence_ids:
+  - tool_calls
+  - tool_results
+  - final_response

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any, Iterable
@@ -8,23 +7,7 @@ from typing import Any, Iterable
 from jsonschema import Draft202012Validator
 
 
-@dataclass(frozen=True)
-class validation_issue:
-    severity: str
-    code: str
-    path: str
-    message: str
-
-
-@dataclass(frozen=True)
-class validation_result:
-    errors: tuple[validation_issue, ...]
-    warnings: tuple[validation_issue, ...]
-
-    @property
-    def is_valid(self) -> bool:
-        return len(self.errors) == 0
-
+from acmm.validation import validation_issue, validation_result, split_issues
 
 def load_schema(path: str | Path) -> dict[str, Any]:
     schema_path = Path(path)
@@ -45,10 +28,10 @@ def validate_contract(
     issues.extend(_validate_schema(contract, schema))
 
     if any(issue.severity == "error" for issue in issues):
-        return _split_issues(issues)
+        return split_issues(issues)
 
     issues.extend(_validate_semantics(contract))
-    return _split_issues(issues)
+    return split_issues(issues)
 
 
 def _validate_schema(
@@ -194,15 +177,3 @@ def _format_path(path: Iterable[Any]) -> str:
             components.append(str(part))
 
     return ".".join(components) if components else "$"
-
-
-def _split_issues(
-    issues: Iterable[validation_issue],
-) -> validation_result:
-    errors = tuple(issue for issue in issues if issue.severity == "error")
-    warnings = tuple(issue for issue in issues if issue.severity == "warning")
-
-    return validation_result(
-        errors=errors,
-        warnings=warnings,
-    )

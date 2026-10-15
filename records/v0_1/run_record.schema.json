@@ -1,0 +1,392 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acmm.local/schema/run-record-0.1.json",
+  "title": "ACMM Run Record v0.1",
+  "description": "Machine-readable structural schema for ACMM Run Record v0.1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run",
+    "execution",
+    "provenance",
+    "evidence",
+    "judgments"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "run": {
+      "$ref": "#/$defs/run"
+    },
+    "execution": {
+      "$ref": "#/$defs/execution"
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence_entry"
+      }
+    },
+    "judgments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/judgment"
+      }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "nonempty_string": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "experiment_id",
+        "run_index",
+        "subject_id",
+        "scenario_id",
+        "repetition",
+        "contract_sha256"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "experiment_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "run_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "subject_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "scenario_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "repetition": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "contract_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "message"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/identifier"
+        },
+        "message": {
+          "$ref": "#/$defs/nonempty_string"
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "started_at",
+        "ended_at",
+        "termination",
+        "validity"
+      ],
+      "properties": {
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ended_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "termination": {
+          "type": "string",
+          "enum": [
+            "agent_completed",
+            "max_steps",
+            "timeout",
+            "harness_error"
+          ]
+        },
+        "validity": {
+          "type": "string",
+          "enum": [
+            "valid",
+            "invalid"
+          ]
+        },
+        "failure": {
+          "$ref": "#/$defs/failure"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "validity": {
+                "const": "invalid"
+              }
+            },
+            "required": [
+              "validity"
+            ]
+          },
+          "then": {
+            "required": [
+              "failure"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "validity": {
+                "const": "valid"
+              }
+            },
+            "required": [
+              "validity"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "failure"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "termination": {
+                "const": "harness_error"
+              }
+            },
+            "required": [
+              "termination"
+            ]
+          },
+          "then": {
+            "properties": {
+              "validity": {
+                "const": "invalid"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "agent_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "version": {
+          "$ref": "#/$defs/nonempty_string"
+        }
+      }
+    },
+    "model_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "provider": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    },
+    "subject_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "model"
+      ],
+      "properties": {
+        "agent": {
+          "$ref": "#/$defs/agent_provenance"
+        },
+        "model": {
+          "$ref": "#/$defs/model_provenance"
+        },
+        "configuration": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "environment_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fixture": {
+          "$ref": "#/$defs/identifier"
+        },
+        "configuration": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "harness",
+        "subject",
+        "environment"
+      ],
+      "properties": {
+        "harness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version"
+          ],
+          "properties": {
+            "version": {
+              "$ref": "#/$defs/nonempty_string"
+            }
+          }
+        },
+        "subject": {
+          "$ref": "#/$defs/subject_provenance"
+        },
+        "environment": {
+          "$ref": "#/$defs/environment_provenance"
+        }
+      }
+    },
+    "evidence_channel": {
+      "type": "string",
+      "enum": [
+        "conversation",
+        "tool_calls",
+        "tool_results",
+        "final_response",
+        "initial_environment_state",
+        "final_environment_state",
+        "workspace_artifacts"
+      ]
+    },
+    "evidence_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "channel",
+        "artifact",
+        "sha256"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "channel": {
+          "$ref": "#/$defs/evidence_channel"
+        },
+        "artifact": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "judgment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "opportunity_id",
+        "outcome",
+        "evidence_ids"
+      ],
+      "properties": {
+        "opportunity_id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "compliant",
+            "violation",
+            "not_applicable",
+            "unadjudicable"
+          ]
+        },
+        "evidence_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "detail": {
+          "$ref": "#/$defs/nonempty_string"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "compliant",
+                  "violation"
+                ]
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "evidence_ids": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,34 @@
+schema_version: '0.1'
+run:
+  id: 3c04a8e1-4be2-46ac-b3fa-0b095c899f0d
+  experiment_id: magic_number_tool_use_v1
+  run_index: 0
+  subject_id: hermes_nemotron30b
+  scenario_id: magic_plus_13
+  repetition: 1
+  contract_sha256: f6fe9d2a20d0b1907016da3f6b4cdff3142329f6abd46b860b5f46ccfdc8214c
+execution:
+  started_at: '2026-10-15T14:05:00Z'
+  ended_at: '2026-10-15T14:05:01Z'
+  termination: harness_error
+  validity: invalid
+  failure:
+    kind: adapter_connection_error
+    message: Connection to the subject adapter was lost.
+provenance:
+  harness:
+    version: 0.1.0
+  subject:
+    agent:
+      name: Hermes Agent
+      version: 0.21.3
+    model:
+      name: nemotron-3-nano:30b-cloud
+      provider: ollama_cloud
+    configuration:
+      context_window: 65536
+  environment:
+    fixture: magic_number_environment_v1
+    configuration: {}
+evidence: []
+judgments: []

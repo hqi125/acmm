@@ -13,6 +13,7 @@ The repository currently contains Experiment Contract v0.1, including:
 - YAML loading and Contract validation;
 - harness-compatibility validation;
 - deterministic runtime planning;
+- ACMM Run Record v0.1 schema and semantic validation;
 - regression fixtures and tests;
 - the `acmm validate` and `acmm plan` commands.
 
@@ -429,3 +430,45 @@ position in the plan.
 The planner assumes the Contract has already passed validation and intentionally does not
 repeat schema or semantic checks. See `docs/runtime/planning.md` for the runtime-planning
 boundary and ordering rules.
+
+## Run Record v0.1
+
+A Run Record is the execution-side counterpart of an Experiment Contract:
+
+```text
+Contract
+    = what should be run
+
+Run Record
+    = what actually happened in one realized execution
+```
+
+The v0.1 package lives under:
+
+```text
+records/v0_1/
+├── README.md
+├── run_record.schema.json
+└── run_record.example.yaml
+```
+
+The Python implementation lives under `src/acmm/record/`.
+
+Run Record validation is Contract-aware. After JSON Schema validation, the semantic
+validator checks:
+
+- binding to the Contract experiment and deterministic planned-run coordinate;
+- optional verification of the exact Contract artifact SHA-256;
+- execution timestamp ordering;
+- evidence ID and evidence-channel uniqueness;
+- safe relative evidence artifact paths;
+- valid-run evidence completeness against the Contract evidence policy;
+- opportunity judgment uniqueness and completeness;
+- opportunity and evidence reference resolution.
+
+Execution validity and compliance outcomes are intentionally separate. A valid run may
+contain violations and remains scientific evidence. An invalid run represents an execution
+that cannot be trusted scientifically and is excluded from ACMM quantification. Invalid
+runs may contain zero or partial evidence and judgments.
+
+See `docs/record/semantics.md` for the complete v0.1 semantics.

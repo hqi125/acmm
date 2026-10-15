@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from acmm.contract.validator import validation_issue, validation_result
+from acmm.validation import validation_issue, validation_result
 from acmm.harness.capabilities import harness_capabilities
 
 
