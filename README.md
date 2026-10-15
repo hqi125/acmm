@@ -12,8 +12,9 @@ The repository currently contains Experiment Contract v0.1, including:
 - a populated magic-number example;
 - YAML loading and Contract validation;
 - harness-compatibility validation;
+- deterministic runtime planning;
 - regression fixtures and tests;
-- the `acmm validate` command.
+- the `acmm validate` and `acmm plan` commands.
 
 ## Development environment
 
@@ -274,6 +275,12 @@ Validate the populated example Contract:
 acmm validate experiments/examples/magic_number/experiment.yaml
 ```
 
+Inspect the deterministic run plan without executing the experiment:
+
+```text
+acmm plan experiments/examples/magic_number/experiment.yaml
+```
+
 Validate an intentionally invalid fixture:
 
 ```text
@@ -300,6 +307,7 @@ source ~/.venvs/acmm_repo/bin/activate
 
 pytest
 acmm validate experiments/examples/magic_number/experiment.yaml
+acmm plan experiments/examples/magic_number/experiment.yaml
 ```
 
 When finished:
@@ -395,3 +403,29 @@ for identifier uniqueness, reference resolution, and unused-definition warnings.
 Harness compatibility is a separate validation layer. It receives the capabilities of a
 concrete harness and checks evaluator, fixture, tool, and evidence-channel availability.
 This separation keeps the Contract validator independent of a particular agent platform.
+
+## Runtime planning
+
+The researcher-facing command:
+
+```text
+acmm plan <experiment.yaml>
+```
+
+validates the Contract and, if valid, prints the deterministic run population without
+executing any agent. Validation errors block planning; warnings are reported but do not.
+
+After validation, `build_experiment_plan()` expands a Contract into the deterministic run
+population defined by:
+
+```text
+subjects x scenarios x repetitions
+```
+
+Plan ordering follows subject declaration order, then scenario declaration order, then
+one-based repetition order. Each planned run receives a zero-based `run_index` for its
+position in the plan.
+
+The planner assumes the Contract has already passed validation and intentionally does not
+repeat schema or semantic checks. See `docs/runtime/planning.md` for the runtime-planning
+boundary and ordering rules.

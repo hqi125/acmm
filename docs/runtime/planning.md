@@ -87,3 +87,16 @@ Future execution layer
 ```
 
 This keeps planning focused on deterministic expansion rather than policy enforcement.
+
+## CLI inspection
+
+The run plan can be inspected without execution:
+
+```text
+acmm plan experiments/examples/magic_number/experiment.yaml
+```
+
+The command performs Contract validation first. Errors prevent plan generation; warnings
+are reported but do not block planning.
+
+The output includes the experiment ID, total run count, and one row per planned run.
