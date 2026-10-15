@@ -4,6 +4,12 @@ __pycache__/
 .pytest_cache/
 .venv/
 
+# Python packaging/build metadata
+*.egg-info/
+.eggs/
+build/
+dist/
+
 # IDE/editor
 .vscode/
 .idea/

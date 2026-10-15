@@ -237,6 +237,25 @@ The `-e` editable installation points the installed ACMM package back to the rep
 source tree. Source changes made on Windows or through the WSL symbolic link are therefore
 used on the next Python invocation without reinstalling the package.
 
+Editable installation does not copy and repack the ACMM source code every time the virtual
+environment is activated. The installation creates the package metadata, installs declared
+dependencies and command-line entry points into the virtual environment, and records an
+editable reference/import mechanism back to the working source tree.
+
+As a result:
+
+- ordinary edits to existing Python source files are visible on the next Python process;
+- activating or deactivating the virtual environment does not rebuild ACMM;
+- changing package metadata in `pyproject.toml`, dependencies, or command-line entry points
+  should be followed by another `python -m pip install -e ".[test]"`;
+- substantial package-layout/discovery changes should also be followed by reinstalling the
+  editable package.
+
+Setuptools may generate a directory such as `src/acmm.egg-info/` during editable
+installation. This directory contains generated distribution metadata; it is not source
+code and must not be committed. The repository `.gitignore` excludes `*.egg-info/` along
+with other Python build artifacts such as `build/` and `dist/`.
+
 ### 8. Run the test suite
 
 From the repository root with the virtual environment active:
