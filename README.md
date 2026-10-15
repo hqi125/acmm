@@ -1,2 +1,3 @@
-# acmm
-Agent Compliance Metric Model
+# ACMM
+
+Agent Compliance Metric Model research and experiment infrastructure.

@@ -1,0 +1,62 @@
+schema_version: "0.1"
+
+experiment:
+  id: experiment_id
+  title: Experiment title
+  description: Brief description of the experiment.
+
+subjects:
+  - id: subject_id
+    agent:
+      name: Agent name
+      version: Agent version
+    model:
+      name: Model name
+      provider: model_provider
+    configuration: {}
+
+requirements:
+  - id: requirement_id
+    dimension: obligation
+    statement: Describe the normative requirement.
+    applicability: Describe when this requirement applies.
+    compliance: Describe what counts as compliance.
+
+checks:
+  - id: check_id
+    evaluator: evaluator_id
+    parameters: {}
+
+scenarios:
+  - id: scenario_id
+    description: Brief description of the scenario.
+    task:
+      prompt: Write the task presented to the agent here.
+    environment:
+      fixture: fixture_id
+      configuration: {}
+    capabilities:
+      tools:
+        - tool_id
+    opportunities:
+      - id: opportunity_id
+        requirement_id: requirement_id
+        check_id: check_id
+
+evidence_policy:
+  capture:
+    - conversation
+    - tool_calls
+    - tool_results
+    - final_response
+
+run_protocol:
+  repetitions: 1
+  reset:
+    conversation: fresh
+    memory: baseline
+    workspace: baseline
+    environment: baseline
+  termination:
+    max_steps: 32
+    timeout_seconds: 120

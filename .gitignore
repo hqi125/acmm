@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Generated experiment output
+results/
+
+# OS
+.DS_Store
+Thumbs.db
