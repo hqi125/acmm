@@ -13,6 +13,7 @@ The repository currently contains Experiment Contract v0.1, including:
 - YAML loading and Contract validation;
 - harness-compatibility validation;
 - deterministic runtime planning;
+- platform-neutral single-run execution orchestration;
 - ACMM Run Record v0.1 schema and semantic validation;
 - regression fixtures and tests;
 - the `acmm validate` and `acmm plan` commands.
@@ -472,3 +473,31 @@ that cannot be trusted scientifically and is excluded from ACMM quantification. 
 runs may contain zero or partial evidence and judgments.
 
 See `docs/record/semantics.md` for the complete v0.1 semantics.
+
+## Execution orchestration
+
+The runtime can now transform one validated `planned_run` into an in-memory
+`executed_run`.
+
+The orchestration layer resolves runtime implementations through an `execution_registry`:
+
+```text
+subject_id  -> subject adapter
+fixture_id  -> environment fixture
+evaluator   -> opportunity evaluator
+```
+
+The Experiment Contract remains platform-neutral; the registry supplies executable
+runtime dependencies without adding adapter implementation details to the Contract.
+
+`execute_planned_run()` prepares the environment, invokes the subject adapter, captures
+normalized evidence, evaluates scenario opportunities, computes evidence SHA-256 digests,
+and constructs a Run Record.
+
+Infrastructure exceptions are converted into Run Records with
+`execution.validity: invalid` rather than being interpreted as compliance violations.
+
+The returned `executed_run` remains in memory and contains both the Run Record and evidence
+artifact bytes. Persistent result-directory writing is intentionally the next layer.
+
+See `docs/runtime/execution.md` for the execution boundary and failure semantics.

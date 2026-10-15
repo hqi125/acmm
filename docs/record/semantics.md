@@ -137,8 +137,10 @@ Contract     = requested configuration
 Run Record   = realized configuration
 ```
 
-v0.1 requires harness, subject, and environment provenance while keeping subject and
-environment configuration objects extensible.
+v0.1 always requires harness provenance. Valid runs additionally require realized subject
+and environment provenance. Invalid runs may omit subject and/or environment provenance
+when failure occurs before those states can be realized. Subject and environment
+configuration objects remain extensible.
 
 ## Validation layers
 

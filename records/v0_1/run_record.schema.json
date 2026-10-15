@@ -270,9 +270,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "harness",
-        "subject",
-        "environment"
+        "harness"
       ],
       "properties": {
         "harness": {
@@ -388,5 +386,37 @@
         }
       ]
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "execution": {
+            "properties": {
+              "validity": {
+                "const": "valid"
+              }
+            },
+            "required": [
+              "validity"
+            ]
+          }
+        },
+        "required": [
+          "execution"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provenance": {
+            "required": [
+              "harness",
+              "subject",
+              "environment"
+            ]
+          }
+        }
+      }
+    }
+  ]
 }
