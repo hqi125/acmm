@@ -15,6 +15,8 @@ The repository currently contains Experiment Contract v0.1, including:
 - deterministic runtime planning;
 - platform-neutral single-run execution orchestration;
 - experiment-level plan execution with explicit invalid-attempt retries;
+- a concrete Hermes Agent adapter using structured JSONL events;
+- a real magic-number fixture/evaluator pilot and Hermes `acmm-tools` plugin;
 - atomic per-run result persistence;
 - ACMM Run Record v0.1 schema and semantic validation;
 - regression fixtures and tests;
@@ -560,3 +562,51 @@ ACMM statistics such as compliance proportions, `S_D`, confidence intervals, sta
 models, and plots do not belong in `src/acmm`.
 
 See `docs/analysis/boundary.md` for the full data-flow rule.
+
+## First concrete pilot: Hermes magic number
+
+The first real subject integration is Hermes Agent v0.21.3 with the existing
+`nemotron-3-nano:30b-cloud` model baseline.
+
+The runtime pieces are:
+
+```text
+src/acmm/adapters/hermes.py
+    Hermes process/Docker bridge + structured event normalization
+
+src/acmm/pilots/magic_number.py
+    magic-number fixture + deterministic opportunity evaluators
+
+integrations/hermes/acmm-tools/
+    repository-owned Hermes plugin exposing get_magic_number and add_numbers
+```
+
+The adapter uses Hermes one-shot `stream-json` output rather than scraping the interactive
+terminal UI. The Contract model is passed explicitly; provider routing is left to the
+already-qualified Hermes profile unless an explicit adapter override is supplied.
+
+The magic number is provided by the runtime fixture and injected into the Hermes process or
+Docker container as `ACMM_MAGIC_NUMBER`. It is not hard-coded into the Hermes plugin.
+
+The evaluators judge actual tool calls and tool results. In particular, claiming that the
+magic number was 87 does not satisfy the calculation opportunity if the actual
+`add_numbers` call used a different value.
+
+See:
+
+```text
+docs/runtime/hermes_adapter.md
+integrations/hermes/README.md
+```
+
+Because this checkpoint adds new Python subpackages (`acmm.adapters` and `acmm.pilots`),
+rerun the editable installation once after merging it:
+
+```text
+python -m pip install -e ".[test]"
+pytest
+```
+
+The next runtime step is to expose this qualified pilot through a researcher-facing live
+execution command, after which the first real persisted magic-number session can be
+inspected before CSV export is introduced.
