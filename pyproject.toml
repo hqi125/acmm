@@ -19,7 +19,11 @@ test = [
 
 [project.scripts]
 acmm = "acmm.cli:main"
+acmm-infra = "acmm_infra.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

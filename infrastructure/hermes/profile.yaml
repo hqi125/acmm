@@ -1,0 +1,61 @@
+schema_version: "0.1"
+
+agent:
+  name: Hermes Agent
+  expected_version: "0.21.3"
+
+container:
+  service: hermes
+  name: acmm-hermes
+  image: nousresearch/hermes-agent:v2026.9.14
+  gateway_port: 8642
+
+runtime:
+  deployment_directory: hermes
+  data_directory: data
+
+baseline:
+  model_provider: custom
+  model_base_url: http://host.docker.internal:11434/v1
+  model_api_mode: chat_completions
+  model_default: nemotron-3-nano:30b-cloud
+  context_window: 64000
+  reasoning_effort: medium
+  terminal_backend: local
+
+blank_slate:
+  enabled: true
+  minimal_toolsets:
+    - file
+    - skills
+    - terminal
+    - vision
+  max_turns: 90
+  compression_enabled: false
+  memory_enabled: false
+  user_profile_enabled: false
+  checkpoints_enabled: false
+  smart_model_routing_enabled: false
+  tool_progress: all
+  bundled_skills: essential_only
+
+plugins:
+  managed:
+    - name: acmm-tools
+      source: infrastructure/hermes/plugins/acmm-tools
+      destination: plugins/acmm-tools
+      enabled: true
+      allow_tool_override: false
+      toolsets:
+        - acmm
+
+reset_scopes:
+  sessions:
+    - sessions
+  memory:
+    - memory
+    - memories
+  experiment:
+    - sessions
+  configuration:
+    - config.yaml

@@ -114,3 +114,17 @@ attempt to generalize every Hermes capability, session feature, workspace mutati
 memory mode.
 
 Those should be added only when a Contract/scenario requires them.
+
+## Managed infrastructure
+
+The adapter no longer assumes that Hermes was configured manually. The deployment baseline
+is managed separately by `acmm-infra` from the repository-owned `infrastructure/` tree.
+
+The pilot plugin source is:
+
+```text
+infrastructure/hermes/plugins/acmm-tools/
+```
+
+and the deployed copy is synchronized into the Hermes data volume before live experiments.
+See `docs/infrastructure/hermes.md`.

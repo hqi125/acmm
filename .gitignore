@@ -20,3 +20,6 @@ results/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local infrastructure overrides / mutable deployment helpers
+infrastructure/.env

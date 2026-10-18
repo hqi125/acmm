@@ -8,8 +8,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN_PATH = (
     ROOT
-    / "integrations"
+    / "infrastructure"
     / "hermes"
+    / "plugins"
     / "acmm-tools"
     / "__init__.py"
 )

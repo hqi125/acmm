@@ -17,10 +17,12 @@ The repository currently contains Experiment Contract v0.1, including:
 - experiment-level plan execution with explicit invalid-attempt retries;
 - a concrete Hermes Agent adapter using structured JSONL events;
 - a real magic-number fixture/evaluator pilot and Hermes `acmm-tools` plugin;
+- reproducible Hermes infrastructure management through `acmm-infra`;
 - atomic per-run result persistence;
 - ACMM Run Record v0.1 schema and semantic validation;
 - regression fixtures and tests;
-- the `acmm validate` and `acmm plan` commands.
+- the `acmm validate` and `acmm plan` commands;
+- the separate `acmm-infra` deployment/inspection command.
 
 ## Development environment
 
@@ -35,10 +37,10 @@ Windows
     └── visible in WSL through /mnt/c/...
 
 WSL
-├── ~/acmm
-│   └── experiment infrastructure
 ├── ~/acmm_repo
 │   └── symbolic link to the Windows Git repository
+├── ~/acmm_runtime
+│   └── mutable deployed agent infrastructure
 ├── ~/.pyenv
 │   └── managed Python installations
 └── ~/.venvs/acmm_repo
@@ -577,7 +579,7 @@ src/acmm/adapters/hermes.py
 src/acmm/pilots/magic_number.py
     magic-number fixture + deterministic opportunity evaluators
 
-integrations/hermes/acmm-tools/
+infrastructure/hermes/plugins/acmm-tools/
     repository-owned Hermes plugin exposing get_magic_number and add_numbers
 ```
 
@@ -596,7 +598,8 @@ See:
 
 ```text
 docs/runtime/hermes_adapter.md
-integrations/hermes/README.md
+docs/infrastructure/hermes.md
+infrastructure/hermes/README.md
 ```
 
 Because this checkpoint adds new Python subpackages (`acmm.adapters` and `acmm.pilots`),
@@ -607,6 +610,79 @@ python -m pip install -e ".[test]"
 pytest
 ```
 
-The next runtime step is to expose this qualified pilot through a researcher-facing live
-execution command, after which the first real persisted magic-number session can be
-inspected before CSV export is introduced.
+Before the live execution command, the repository now includes a reproducible infrastructure
+management layer.
+
+## Infrastructure management
+
+`acmm-infra` separates the repository's installation definitions from mutable deployed
+agent state.
+
+For Hermes:
+
+```text
+~/acmm_repo/
+└── infrastructure/hermes/
+    ├── profile.yaml
+    ├── defaults/
+    └── plugins/acmm-tools/
+
+~/acmm_runtime/
+└── hermes/
+    ├── compose.yaml
+    ├── .env
+    └── data/
+```
+
+The preferred fresh workflow is now fully non-interactive on the Hermes configuration side:
+
+```text
+acmm-infra hermes init
+acmm-infra hermes apply
+acmm-infra hermes up
+acmm-infra hermes doctor
+```
+
+`apply` reproduces the qualified Windows-Ollama route:
+
+```text
+provider       custom
+base URL       http://host.docker.internal:11434/v1
+API mode       chat_completions
+model          nemotron-3-nano:30b-cloud
+context        64000
+reasoning      medium
+terminal       local
+Blank Slate    enabled
+```
+
+The Blank Slate baseline keeps only `file`, `skills`, `terminal`, and `vision` in the
+default CLI toolset surface; disables compression, memory/user profile, checkpoints, and
+smart model routing; uses a 90-turn baseline; and opts out of the full bundled-skill
+catalog while retaining Hermes's essential skill. The `acmm` plugin toolset is an explicit
+experiment overlay rather than a default toolset.
+
+`apply` requires the persistent Hermes gateway to be stopped. It reconciles all Hermes
+settings and managed-plugin enablement inside one bounded one-off Compose container rather
+than starting a new container for every setting. The batch prints sub-operation progress
+live and has a configurable whole-batch timeout (`--timeout-seconds`, default 120). On
+timeout, failure, or interruption, the named provisioning container is cleaned up.
+
+Windows Ollama retains responsibility for Cloud authentication, so fresh Hermes setup does
+not require copying an Ollama Cloud key into the Hermes data directory.
+
+Experiment toolset selection remains outside `init`; the experiment adapter chooses it per
+run.
+
+Existing Hermes data adoption remains available as a migration fallback:
+
+```text
+acmm-infra hermes adopt-data /path/to/old/data --yes
+```
+
+See `docs/infrastructure/hermes.md`.
+
+After `doctor` reports `READY`, the next runtime step is the researcher-facing live
+magic-number execution command, followed by inspection of the first persisted session and
+then deterministic CSV export.
+
