@@ -91,7 +91,7 @@ def test_fixture_exposes_magic_number_as_runtime_state() -> None:
         },
     )
 
-    assert prepared.handle == {"magic_number": 87}
+    assert prepared.handle == {"ACMM_MAGIC_NUMBER": "87"}
     assert prepared.provenance == {
         "fixture": "magic_number_environment_v1",
         "configuration": {

@@ -37,7 +37,7 @@ TERMINATION = {
 }
 
 ENVIRONMENT = {
-    "magic_number": 87,
+    "ACMM_MAGIC_NUMBER": "87",
 }
 
 
@@ -258,7 +258,7 @@ def test_live_command_relies_on_qualified_model_route() -> None:
     assert "--reasoning" not in chat_command
 
 
-def test_docker_mode_injects_fixture_value_and_exports_same_session() -> None:
+def test_docker_mode_injects_runtime_environment_and_exports_same_session() -> None:
     calls: list[tuple[list[str], dict]] = []
 
     adapter = hermes_adapter(
@@ -306,6 +306,57 @@ def test_docker_mode_injects_fixture_value_and_exports_same_session() -> None:
         "--format",
         "jsonl",
     ][-6:]
+
+
+def test_docker_runtime_environment_is_generic_and_deterministic() -> None:
+    calls: list[tuple[list[str], dict]] = []
+    adapter = hermes_adapter(
+        hermes_adapter_config(
+            docker_container="hermes-agent",
+            executable="/opt/hermes/bin/hermes",
+        ),
+        runner=_successful_runner(calls),
+    )
+
+    result = adapter.execute(
+        SUBJECT,
+        SCENARIO,
+        {
+            "ZETA_SETTING": "last",
+            "ALPHA_SETTING": "first",
+        },
+        TERMINATION,
+    )
+
+    assert result.failure is None
+    chat_command = calls[0][0]
+    assert chat_command[:9] == [
+        "docker",
+        "exec",
+        "-i",
+        "--env",
+        "ALPHA_SETTING=first",
+        "--env",
+        "ZETA_SETTING=last",
+        "hermes-agent",
+        "/opt/hermes/bin/hermes",
+    ]
+    assert calls[0][1]["env"]["ALPHA_SETTING"] == "first"
+    assert calls[0][1]["env"]["ZETA_SETTING"] == "last"
+
+
+def test_non_string_runtime_environment_value_is_configuration_failure() -> None:
+    result = hermes_adapter().execute(
+        SUBJECT,
+        SCENARIO,
+        {"ACMM_VALUE": 87},
+        TERMINATION,
+    )
+
+    assert result.termination == "harness_error"
+    assert result.failure is not None
+    assert result.failure.kind == "adapter_configuration_error"
+    assert "must have a string value" in result.failure.message
 
 
 def test_run_budget_exhaustion_is_valid_agent_timeout() -> None:

@@ -261,6 +261,15 @@ def _run_experiment(args: argparse.Namespace) -> int:
         f"Hermes container: {args.hermes_container}; "
         "toolset overlay: acmm."
     )
+    pacing = contract["run_protocol"].get("pacing", {})
+    inter_run_delay = pacing.get("inter_run_delay_seconds", 0)
+
+    if selected_indices is None and plan.run_count > 1:
+        print(
+            "Inter-run pacing: "
+            f"{inter_run_delay:g}s between planned runs."
+        )
+
     print(
         "Hermes runs in quiet one-shot mode; after it returns, ACMM exports "
         "that exact session to capture tool calls/results as structured evidence."

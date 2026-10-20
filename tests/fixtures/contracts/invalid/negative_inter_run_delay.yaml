@@ -1,0 +1,47 @@
+schema_version: "0.1"
+
+experiment:
+  id: minimal_valid
+
+subjects:
+  - id: subject_a
+    agent:
+      name: Test Agent
+    model:
+      name: Test Model
+
+requirements:
+  - id: requirement_a
+    dimension: obligation
+    statement: The agent must satisfy requirement A.
+    applicability: Requirement A applies in this scenario.
+    compliance: The required behavior is observed.
+
+checks:
+  - id: check_a
+    evaluator: evaluator_a
+
+scenarios:
+  - id: scenario_a
+    task:
+      prompt: Perform the test task.
+    opportunities:
+      - id: opportunity_a
+        requirement_id: requirement_a
+        check_id: check_a
+
+evidence_policy:
+  capture:
+    - final_response
+
+run_protocol:
+  repetitions: 1
+  pacing:
+    inter_run_delay_seconds: -1
+  reset:
+    conversation: fresh
+    memory: baseline
+    workspace: baseline
+    environment: baseline
+  termination:
+    max_steps: 8

@@ -52,6 +52,8 @@ evidence_policy:
 
 run_protocol:
   repetitions: 1
+  pacing:
+    inter_run_delay_seconds: 0
   reset:
     conversation: fresh
     memory: baseline

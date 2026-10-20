@@ -36,7 +36,7 @@ class magic_number_fixture:
 
         return prepared_environment(
             handle={
-                "magic_number": self._magic_number,
+                "ACMM_MAGIC_NUMBER": str(self._magic_number),
             },
             provenance={
                 "fixture": "magic_number_environment_v1",

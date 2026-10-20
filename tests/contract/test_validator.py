@@ -42,6 +42,7 @@ def test_valid_contracts_pass_schema_and_semantics(
         ("unresolved_requirement.yaml", "unresolved_requirement_reference"),
         ("unresolved_check.yaml", "unresolved_check_reference"),
         ("zero_repetitions.yaml", "schema_violation"),
+        ("negative_inter_run_delay.yaml", "schema_violation"),
         ("unknown_field.yaml", "schema_violation"),
     ],
 )

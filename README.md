@@ -547,6 +547,12 @@ Every realized attempt is preserved. An attempt is retried only when
 `execution.validity` is `invalid`; the first valid attempt resolves the planned slot.
 Valid agent outcomes such as `timeout` or `max_steps` are not retried.
 
+Contracts may additionally specify a fixed `run_protocol.pacing.inter_run_delay_seconds`.
+The executor applies it between selected planned slots, not between retries and not after
+the final slot, and records the configured pacing in the completion manifest. The
+magic-number pilot currently uses a 2-second inter-run delay for conservative Cloud-backed
+acquisition.
+
 The session completion manifest, `experiment_execution.yaml`, is written only after the
 selected plan has been traversed. If orchestration or persistence is interrupted, previously
 published Run Records remain intact but the session has no completion manifest and cannot
@@ -588,7 +594,9 @@ infrastructure/hermes/plugins/acmm-tools/
 The adapter runs a quiet Hermes one-shot chat and then exports that exact persisted
 session as JSONL rather than scraping the interactive terminal UI. The normal live path
 relies on the already-qualified model/provider route and verifies the model reported by the
-exported session against the Contract.
+exported session against the Contract. Runtime environment injection is generic: the
+adapter consumes a string environment-variable mapping, while the concrete pilot fixture
+owns translations such as `magic_number=87 -> ACMM_MAGIC_NUMBER=87`.
 
 The magic number is provided by the runtime fixture and injected into the Hermes process or
 Docker container as `ACMM_MAGIC_NUMBER`. It is not hard-coded into the Hermes plugin.

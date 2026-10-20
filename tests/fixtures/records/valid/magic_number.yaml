@@ -7,7 +7,7 @@ run:
   subject_id: hermes_nemotron30b
   scenario_id: magic_plus_13
   repetition: 1
-  contract_sha256: 5fa645ab57fd6c557466ee8365546a42c6b7d8fd2c9a3fac904ae5ddc1edbdc9
+  contract_sha256: 08eda73cd38bf22aee869208681739afd8b16477be173d3fb9e8319637a0d66e
 
 execution:
   started_at: "2026-10-15T14:03:21Z"

@@ -191,6 +191,9 @@ def test_run_command_executes_one_magic_number_slot(
     assert manifest["execution"]["selected_run_indices"] == [0]
     assert manifest["execution"]["planned_run_count"] == 1
     assert manifest["execution"]["resolved_run_count"] == 1
+    assert manifest["execution"]["pacing"] == {
+        "inter_run_delay_seconds": 2.0,
+    }
 
     run_dirs = list((execution_dir / "runs").glob("run_000000_*"))
     assert len(run_dirs) == 1
@@ -212,6 +215,7 @@ def test_run_command_executes_one_magic_number_slot(
     output = capsys.readouterr().out
     assert "Executing run 0/4" in output
     assert "toolset overlay: acmm" in output
+    assert "Inter-run pacing:" not in output
     assert "judgment retrieve: compliant" in output
     assert "judgment calculate: compliant" in output
     assert "tool calls: get_magic_number, add_numbers" in output

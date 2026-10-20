@@ -71,7 +71,15 @@ these normalized evidence categories.
 
 ### Run protocol
 
-The run protocol defines repetition count, reset behavior, and termination bounds.
+The run protocol defines repetition count, optional deterministic pacing, reset behavior,
+and termination bounds.
+
+`pacing.inter_run_delay_seconds` is an optional non-negative fixed delay between selected
+planned slots. If omitted, the delay is zero. The delay is applied after a slot has either
+resolved or exhausted its allowed acquisition attempts and before the next selected slot
+begins. It is not applied between retries of the same slot and is never applied after the
+final selected slot. Fixed pacing is part of the Contract so acquisition timing policy is
+visible and reproducible rather than a hidden CLI/runtime tweak.
 
 Reset states have the following meanings:
 

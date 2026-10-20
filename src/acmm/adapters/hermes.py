@@ -46,11 +46,11 @@ class hermes_adapter:
         termination: dict[str, Any],
     ) -> adapter_execution_result:
         try:
-            magic_number = _environment_magic_number(environment)
+            runtime_environment = _runtime_environment_variables(environment)
             command, process_environment = self._build_chat_invocation(
                 scenario=scenario,
                 termination=termination,
-                magic_number=magic_number,
+                runtime_environment=runtime_environment,
             )
         except Exception as exc:
             return _failure_result(
@@ -230,7 +230,7 @@ class hermes_adapter:
         self,
         scenario: dict[str, Any],
         termination: dict[str, Any],
-        magic_number: int,
+        runtime_environment: Mapping[str, str],
     ) -> tuple[list[str], dict[str, str]]:
         prompt = scenario["task"]["prompt"]
         max_steps = termination["max_steps"]
@@ -241,7 +241,7 @@ class hermes_adapter:
         if self._config.extra_environment is not None:
             environment.update(self._config.extra_environment)
 
-        environment["ACMM_MAGIC_NUMBER"] = str(magic_number)
+        environment.update(runtime_environment)
 
         hermes_args = [
             self._config.executable,
@@ -293,11 +293,22 @@ class hermes_adapter:
             "docker",
             "exec",
             "-i",
-            "--env",
-            f"ACMM_MAGIC_NUMBER={magic_number}",
-            self._config.docker_container,
-            *hermes_args,
         ]
+
+        for name, value in sorted(runtime_environment.items()):
+            docker_args.extend(
+                [
+                    "--env",
+                    f"{name}={value}",
+                ]
+            )
+
+        docker_args.extend(
+            [
+                self._config.docker_container,
+                *hermes_args,
+            ]
+        )
 
         return docker_args, environment
 
@@ -802,20 +813,36 @@ def _json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def _environment_magic_number(environment: Any) -> int:
-    if not isinstance(environment, dict):
+def _runtime_environment_variables(
+    environment: Any,
+) -> dict[str, str]:
+    if environment is None:
+        return {}
+
+    if not isinstance(environment, Mapping):
         raise ValueError(
-            "Hermes magic-number adapter requires a mapping environment."
+            "Hermes adapter environment must be a mapping of environment "
+            "variable names to string values."
         )
 
-    value = environment.get("magic_number")
+    variables: dict[str, str] = {}
 
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise ValueError(
-            "Hermes magic-number environment must provide integer magic_number."
-        )
+    for name, value in environment.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                "Hermes adapter environment variable names must be non-empty "
+                "strings."
+            )
 
-    return value
+        if not isinstance(value, str):
+            raise ValueError(
+                f"Hermes adapter environment variable {name!r} must have a "
+                "string value."
+            )
+
+        variables[name] = value
+
+    return variables
 
 
 def _subject_provenance(

@@ -42,8 +42,21 @@ Per-run controls supplied by the Contract/runtime are:
 --query <scenario prompt>
 ```
 
-For Docker-hosted Hermes, the adapter invokes `/opt/hermes/bin/hermes` with `docker exec`
-and injects the fixture value as `ACMM_MAGIC_NUMBER`.
+For Docker-hosted Hermes, the adapter invokes `/opt/hermes/bin/hermes` with `docker exec`.
+The prepared runtime environment supplied by the concrete pilot is treated only as a
+string-to-string environment-variable mapping. The Hermes adapter has no knowledge of
+fixture-specific concepts such as magic numbers or workspace paths.
+
+For the first pilot, `magic_number_fixture` owns the concrete binding:
+
+```text
+magic_number = 87
+    -> ACMM_MAGIC_NUMBER=87
+    -> generic Hermes runtime environment
+```
+
+A later pilot can provide different environment variables without changing the Hermes
+invocation code.
 
 ## Evidence normalization
 

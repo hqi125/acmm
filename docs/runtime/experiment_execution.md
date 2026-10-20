@@ -113,6 +113,42 @@ planned slot
 
 Invalid attempts are never overwritten or hidden.
 
+## Inter-run pacing
+
+A Contract may declare:
+
+```yaml
+run_protocol:
+  pacing:
+    inter_run_delay_seconds: 2
+```
+
+The executor waits that fixed duration only between selected planned slots. The sequence is:
+
+```text
+slot 0
+    +-- attempt 1
+    +-- optional invalid retries
+    +-- slot complete
+    |
+    +-- fixed inter-run delay
+    |
+slot 1
+```
+
+No pacing delay occurs between retries of the same planned slot, because retry policy is a
+separate acquisition concern. No delay occurs after the final selected slot. A one-slot
+engineering execution therefore never sleeps merely because the Contract contains pacing.
+
+The completion manifest records the configured pacing policy under:
+
+```text
+execution.pacing.inter_run_delay_seconds
+```
+
+The delay is deterministic rather than randomized. This keeps provider-facing request
+bursts conservative while preserving straightforward experimental reproducibility.
+
 ## Retry semantics
 
 `max_attempts_per_run` is an operational acquisition policy. It applies only when the

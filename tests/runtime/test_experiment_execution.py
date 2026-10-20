@@ -204,6 +204,7 @@ def test_execute_experiment_snapshots_contract_and_completes_plan(
         registry=_registry(adapter),
         results_root=tmp_path,
         harness_version="0.1.0",
+        sleep=lambda _: None,
         max_attempts_per_run=1,
         now=_clock(),
         execution_id_factory=lambda: EXECUTION_ID,
@@ -251,6 +252,7 @@ def test_run_selection_executes_only_requested_slot(
         registry=_registry(adapter),
         results_root=tmp_path,
         harness_version="0.1.0",
+        sleep=lambda _: None,
         max_attempts_per_run=1,
         run_indices=(0,),
         progress=messages.append,
@@ -289,6 +291,7 @@ def test_run_selection_rejects_unknown_index_without_side_effects(
             registry=_registry(sequence_adapter()),
             results_root=tmp_path,
             harness_version="0.1.0",
+        sleep=lambda _: None,
             run_indices=(99,),
             execution_id_factory=lambda: EXECUTION_ID,
         )
@@ -308,6 +311,7 @@ def test_invalid_attempt_is_preserved_and_then_retried(
         registry=_registry(adapter),
         results_root=tmp_path,
         harness_version="0.1.0",
+        sleep=lambda _: None,
         max_attempts_per_run=2,
         now=_clock(),
         execution_id_factory=lambda: EXECUTION_ID,
@@ -342,6 +346,7 @@ def test_valid_timeout_is_not_retried(
         registry=_registry(adapter),
         results_root=tmp_path,
         harness_version="0.1.0",
+        sleep=lambda _: None,
         max_attempts_per_run=3,
         now=_clock(),
         execution_id_factory=lambda: EXECUTION_ID,
@@ -371,6 +376,7 @@ def test_exhausted_invalid_attempts_leave_slots_unresolved(
         registry=_registry(adapter),
         results_root=tmp_path,
         harness_version="0.1.0",
+        sleep=lambda _: None,
         max_attempts_per_run=2,
         now=_clock(),
         execution_id_factory=lambda: EXECUTION_ID,
@@ -391,6 +397,90 @@ def test_exhausted_invalid_attempts_leave_slots_unresolved(
 
     assert manifest["execution"]["resolved_run_count"] == 0
     assert manifest["execution"]["unresolved_run_indices"] == [0, 1, 2, 3, 4]
+
+
+def test_inter_run_pacing_waits_between_planned_slots_and_is_manifested(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    waits: list[float] = []
+    messages: list[str] = []
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=_registry(adapter),
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        max_attempts_per_run=1,
+        progress=messages.append,
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        sleep=waits.append,
+    )
+
+    assert result.unresolved_run_indices == ()
+    assert waits == [2.0, 2.0, 2.0, 2.0]
+    assert sum("Pacing: waiting 2s" in item for item in messages) == 4
+
+    manifest = yaml.safe_load(
+        result.manifest_path.read_text(encoding="utf-8")
+    )
+    assert manifest["execution"]["pacing"] == {
+        "inter_run_delay_seconds": 2.0,
+    }
+
+
+def test_single_selected_slot_does_not_wait_for_pacing(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    waits: list[float] = []
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=_registry(sequence_adapter()),
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        run_indices=(0,),
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        sleep=waits.append,
+    )
+
+    assert result.unresolved_run_indices == ()
+    assert waits == []
+
+
+def test_pacing_is_between_slots_not_between_retry_attempts(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter(invalid_call_numbers={1})
+    waits: list[float] = []
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=_registry(adapter),
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        max_attempts_per_run=2,
+        run_indices=(0, 1),
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        sleep=waits.append,
+    )
+
+    assert result.unresolved_run_indices == ()
+    assert len(result.slots[0].attempts) == 2
+    assert len(result.slots[1].attempts) == 1
+    assert waits == [2.0]
 
 
 def test_persistence_failure_leaves_session_without_completion_manifest(
@@ -427,6 +517,7 @@ def test_persistence_failure_leaves_session_without_completion_manifest(
             registry=_registry(adapter),
             results_root=tmp_path,
             harness_version="0.1.0",
+        sleep=lambda _: None,
             now=_clock(),
             execution_id_factory=lambda: EXECUTION_ID,
             run_id_factory=_run_id_factory(),
@@ -457,6 +548,7 @@ def test_max_attempts_must_be_positive(
             registry=_registry(sequence_adapter()),
             results_root=tmp_path,
             harness_version="0.1.0",
+        sleep=lambda _: None,
             max_attempts_per_run=0,
         )
 

@@ -6,6 +6,7 @@ import hashlib
 import os
 from pathlib import Path
 import tempfile
+import time
 from typing import Callable
 import uuid
 
@@ -67,6 +68,7 @@ def execute_experiment(
     now: Callable[[], datetime] | None = None,
     execution_id_factory: Callable[[], str] | None = None,
     run_id_factory: Callable[[], str] | None = None,
+    sleep: Callable[[float], None] | None = None,
 ) -> experiment_execution_result:
     """
     Execute every planned slot in one experiment execution session.
@@ -102,6 +104,8 @@ def execute_experiment(
         else _new_execution_id
     )
     make_run_id = run_id_factory if run_id_factory is not None else _new_run_id
+    wait = sleep if sleep is not None else time.sleep
+    inter_run_delay_seconds = _inter_run_delay_seconds(contract)
 
     source_path = Path(contract_path)
     contract_bytes = source_path.read_bytes()
@@ -148,7 +152,7 @@ def execute_experiment(
 
     slots: list[slot_execution] = []
 
-    for planned in selected_runs:
+    for selected_position, planned in enumerate(selected_runs):
         attempts: list[run_attempt] = []
         selected_run_id: str | None = None
 
@@ -206,6 +210,15 @@ def execute_experiment(
             )
         )
 
+        has_next_selected_run = selected_position + 1 < len(selected_runs)
+
+        if has_next_selected_run and inter_run_delay_seconds > 0:
+            report(
+                "Pacing: waiting "
+                f"{inter_run_delay_seconds:g}s before the next planned run."
+            )
+            wait(inter_run_delay_seconds)
+
     ended_at = clock()
 
     manifest = _build_manifest(
@@ -216,6 +229,7 @@ def execute_experiment(
         started_at=started_at,
         ended_at=ended_at,
         max_attempts_per_run=max_attempts_per_run,
+        inter_run_delay_seconds=inter_run_delay_seconds,
         contract_run_count=plan.run_count,
         selected_run_indices=tuple(
             planned.run_index
@@ -245,6 +259,23 @@ def execute_experiment(
         manifest_path=manifest_path,
         slots=tuple(slots),
     )
+
+
+def _inter_run_delay_seconds(contract: dict) -> float:
+    pacing = contract.get("run_protocol", {}).get("pacing", {})
+    value = pacing.get("inter_run_delay_seconds", 0)
+
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or value < 0
+    ):
+        raise ValueError(
+            "run_protocol.pacing.inter_run_delay_seconds must be a "
+            "non-negative number."
+        )
+
+    return float(value)
 
 
 def _select_runs(
@@ -289,6 +320,7 @@ def _build_manifest(
     started_at: datetime,
     ended_at: datetime,
     max_attempts_per_run: int,
+    inter_run_delay_seconds: float,
     contract_run_count: int,
     selected_run_indices: tuple[int, ...],
     slots: tuple[slot_execution, ...],
@@ -337,6 +369,9 @@ def _build_manifest(
             "started_at": _format_timestamp(started_at),
             "ended_at": _format_timestamp(ended_at),
             "max_attempts_per_run": max_attempts_per_run,
+            "pacing": {
+                "inter_run_delay_seconds": inter_run_delay_seconds,
+            },
             "contract_run_count": contract_run_count,
             "selected_run_indices": list(selected_run_indices),
             "planned_run_count": len(slots),

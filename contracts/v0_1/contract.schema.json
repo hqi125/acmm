@@ -317,6 +317,19 @@
           "type": "integer",
           "minimum": 1
         },
+        "pacing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "inter_run_delay_seconds"
+          ],
+          "properties": {
+            "inter_run_delay_seconds": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        },
         "reset": {
           "type": "object",
           "additionalProperties": false,
