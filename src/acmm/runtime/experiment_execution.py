@@ -62,6 +62,8 @@ def execute_experiment(
     results_root: str | Path,
     harness_version: str,
     max_attempts_per_run: int = 1,
+    run_indices: tuple[int, ...] | None = None,
+    progress: Callable[[str], None] | None = None,
     now: Callable[[], datetime] | None = None,
     execution_id_factory: Callable[[], str] | None = None,
     run_id_factory: Callable[[], str] | None = None,
@@ -73,7 +75,13 @@ def execute_experiment(
     ``max_attempts_per_run``. The first scientifically valid execution resolves
     the planned slot. Valid agent outcomes such as timeout are not retried.
 
-    A completion manifest is published only after the full plan has been
+    By default the complete Contract plan is executed. ``run_indices`` may
+    select a deterministic subset for an explicit engineering/pilot execution;
+    the completion manifest records both the full Contract run count and the
+    selected run indices so a subset cannot be mistaken for a complete Contract
+    execution.
+
+    A completion manifest is published only after the selected plan has been
     traversed. If orchestration or persistence aborts earlier, the session
     directory remains intentionally incomplete and has no completion manifest.
     """
@@ -84,6 +92,8 @@ def execute_experiment(
         or max_attempts_per_run < 1
     ):
         raise ValueError("max_attempts_per_run must be an integer >= 1.")
+
+    report = progress if progress is not None else lambda message: None
 
     clock = now if now is not None else _utc_now
     make_execution_id = (
@@ -99,6 +109,8 @@ def execute_experiment(
 
     experiment_id = contract["experiment"]["id"]
     execution_id = make_execution_id()
+    plan = build_experiment_plan(contract)
+    selected_runs = _select_runs(plan.runs, run_indices)
 
     _validate_directory_component("experiment ID", experiment_id)
     _validate_directory_component("execution ID", execution_id)
@@ -128,14 +140,25 @@ def execute_experiment(
         raise
 
     started_at = clock()
-    plan = build_experiment_plan(contract)
+
+    report(
+        f"Execution {execution_id}: selected {len(selected_runs)} of "
+        f"{plan.run_count} planned run(s)."
+    )
+
     slots: list[slot_execution] = []
 
-    for planned in plan.runs:
+    for planned in selected_runs:
         attempts: list[run_attempt] = []
         selected_run_id: str | None = None
 
         for attempt_number in range(1, max_attempts_per_run + 1):
+            report(
+                f"Run {planned.run_index}: subject={planned.subject_id}, "
+                f"scenario={planned.scenario_id}, repetition={planned.repetition}, "
+                f"attempt={attempt_number}/{max_attempts_per_run}."
+            )
+
             executed = execute_planned_run(
                 contract=contract,
                 planned=planned,
@@ -153,6 +176,13 @@ def execute_experiment(
 
             execution = executed.record["execution"]
             run_id = executed.record["run"]["id"]
+
+            report(
+                f"Run {planned.run_index} attempt {attempt_number}: "
+                f"validity={execution['validity']}, "
+                f"termination={execution['termination']}, "
+                f"stored={result_path.name}."
+            )
 
             attempts.append(
                 run_attempt(
@@ -186,6 +216,11 @@ def execute_experiment(
         started_at=started_at,
         ended_at=ended_at,
         max_attempts_per_run=max_attempts_per_run,
+        contract_run_count=plan.run_count,
+        selected_run_indices=tuple(
+            planned.run_index
+            for planned in selected_runs
+        ),
         slots=tuple(slots),
         session_dir=session_dir,
     )
@@ -194,6 +229,12 @@ def execute_experiment(
     _write_yaml_atomically(
         manifest_path,
         manifest,
+    )
+
+    report(
+        f"Execution {execution_id} complete: "
+        f"{len(slots) - len([slot for slot in slots if not slot.is_resolved])}/"
+        f"{len(slots)} selected run(s) resolved."
     )
 
     return experiment_execution_result(
@@ -206,6 +247,40 @@ def execute_experiment(
     )
 
 
+def _select_runs(
+    runs: tuple[planned_run, ...],
+    run_indices: tuple[int, ...] | None,
+) -> tuple[planned_run, ...]:
+    if run_indices is None:
+        return runs
+
+    if not run_indices:
+        raise ValueError("run_indices must not be empty when provided.")
+
+    if len(run_indices) != len(set(run_indices)):
+        raise ValueError("run_indices must not contain duplicates.")
+
+    by_index = {run.run_index: run for run in runs}
+    selected: list[planned_run] = []
+
+    for run_index in run_indices:
+        if (
+            not isinstance(run_index, int)
+            or isinstance(run_index, bool)
+            or run_index < 0
+        ):
+            raise ValueError("run_indices must contain non-negative integers.")
+
+        try:
+            selected.append(by_index[run_index])
+        except KeyError as exc:
+            raise ValueError(
+                f"Run index {run_index} is not present in the Contract plan."
+            ) from exc
+
+    return tuple(selected)
+
+
 def _build_manifest(
     execution_id: str,
     experiment_id: str,
@@ -214,6 +289,8 @@ def _build_manifest(
     started_at: datetime,
     ended_at: datetime,
     max_attempts_per_run: int,
+    contract_run_count: int,
+    selected_run_indices: tuple[int, ...],
     slots: tuple[slot_execution, ...],
     session_dir: Path,
 ) -> dict:
@@ -260,6 +337,8 @@ def _build_manifest(
             "started_at": _format_timestamp(started_at),
             "ended_at": _format_timestamp(ended_at),
             "max_attempts_per_run": max_attempts_per_run,
+            "contract_run_count": contract_run_count,
+            "selected_run_indices": list(selected_run_indices),
             "planned_run_count": len(slots),
             "resolved_run_count": len(slots) - len(unresolved),
             "unresolved_run_indices": unresolved,

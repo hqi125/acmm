@@ -52,15 +52,23 @@ def _run_hermes_down(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def _provisioning_output_mode(
+    args: argparse.Namespace,
+) -> str:
+    if args.quiet:
+        return "quiet"
+
+    if args.verbose:
+        return "verbose"
+
+    return "normal"
+
+
 def _run_hermes_apply(args: argparse.Namespace) -> int:
     _, _, _, _, manager = _context(args)
 
-    if args.quiet:
-        output_mode = "quiet"
-    elif args.verbose:
-        output_mode = "verbose"
-    else:
-        output_mode = "normal"
+    output_mode = _provisioning_output_mode(args)
 
     if output_mode != "quiet":
         print("Applying Hermes infrastructure baseline...", flush=True)
@@ -90,10 +98,60 @@ def _run_hermes_apply(args: argparse.Namespace) -> int:
         "Baseline toolsets:     "
         + ", ".join(result["blank_slate_toolsets"])
     )
+    isolation = result["experiment_isolation"]
+    print(
+        "ACMM title generation: "
+        f"{isolation['title_generation_enabled']}"
+    )
+    print(
+        "ACMM background review:"
+        f" {isolation['background_review_enabled']}"
+    )
+    print(
+        "ACMM tool search:      "
+        f"{isolation['tool_search_enabled']}"
+    )
     print("Synchronized plugins: " + ", ".join(result["plugins_synchronized"]))
     print(f"Batch operations:     {result['provisioning_operations']}")
     print("Plugin tool override: denied unless explicitly enabled in profile")
     print("Configuration path:   one bounded provisioning container")
+    return 0
+
+
+
+def _run_hermes_apply_tools(args: argparse.Namespace) -> int:
+    _, _, _, _, manager = _context(args)
+    output_mode = _provisioning_output_mode(args)
+
+    if output_mode != "quiet":
+        print("Reconciling Hermes managed tools...", flush=True)
+
+    result = manager.apply_tools(
+        timeout_seconds=args.timeout_seconds,
+        progress=lambda message: print(message, flush=True),
+        output_mode=output_mode,
+    )
+
+    if output_mode == "quiet":
+        print("Hermes managed tools reconciled.")
+        return 0
+
+    print(
+        "Synchronized plugins: "
+        + ", ".join(result["plugins_synchronized"])
+    )
+    print(
+        "Tool Search policy:   "
+        f"{result['tool_search_enabled']}"
+    )
+    print(
+        "Batch operations:     "
+        f"{result['provisioning_operations']}"
+    )
+    print(
+        "Scope:                managed plugin bytes + plugin enable policy "
+        "+ tool-routing policy only"
+    )
     return 0
 
 
@@ -134,6 +192,24 @@ def _run_hermes_status(args: argparse.Namespace) -> int:
     print(f"  reasoning expected:{desired['reasoning_effort']}")
     print(f"  terminal observed: {observed['terminal_backend']}")
     print(f"  terminal expected: {desired['terminal_backend']}")
+
+    isolation = desired["experiment_isolation"]
+    print("  ACMM experiment isolation:")
+    print(
+        "    title generation:  "
+        f"{observed['title_generation_enabled']} "
+        f"(expected {isolation['title_generation_enabled']})"
+    )
+    print(
+        "    background review: "
+        f"{observed['background_review_enabled']} "
+        f"(expected {isolation['background_review_enabled']})"
+    )
+    print(
+        "    tool search:       "
+        f"{observed['tool_search_enabled']} "
+        f"(expected {isolation['tool_search_enabled']})"
+    )
 
     blank = desired["blank_slate"]
     print(f"  Blank Slate:       {blank['enabled']}")
@@ -301,6 +377,37 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Show raw Docker/container/Hermes provisioning output.",
     )
     apply_parser.set_defaults(handler=_run_hermes_apply)
+
+    apply_tools_parser = hermes_subparsers.add_parser(
+        "apply-tools",
+        help=(
+            "Reconcile only repository-managed Hermes tools/plugins without "
+            "reapplying the model or Blank Slate baseline."
+        ),
+    )
+    apply_tools_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=120.0,
+        help=(
+            "Maximum duration of the managed-tool provisioning batch "
+            "(default: 120)."
+        ),
+    )
+    tools_verbosity_group = apply_tools_parser.add_mutually_exclusive_group()
+    tools_verbosity_group.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Show only the final success message or an error.",
+    )
+    tools_verbosity_group.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Show raw Docker/container/Hermes provisioning output.",
+    )
+    apply_tools_parser.set_defaults(handler=_run_hermes_apply_tools)
 
     status_parser = hermes_subparsers.add_parser(
         "status",

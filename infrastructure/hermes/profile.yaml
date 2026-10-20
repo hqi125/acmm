@@ -39,6 +39,11 @@ blank_slate:
   tool_progress: all
   bundled_skills: essential_only
 
+experiment_isolation:
+  title_generation_enabled: false
+  background_review_enabled: false
+  tool_search_enabled: "off"
+
 plugins:
   managed:
     - name: acmm-tools

@@ -3,128 +3,150 @@
 ## Purpose
 
 The Hermes adapter is the first concrete ACMM subject adapter. It connects the
-platform-neutral runtime interfaces to Hermes Agent without scraping the interactive TUI.
+platform-neutral experiment runtime to the pinned Hermes Agent v0.21.3 deployment without
+scraping the interactive TUI.
 
-Hermes one-shot execution is launched with structured JSONL output:
+## Pinned execution interface
+
+Hermes v0.21.3 does not provide the later `chat --format stream-json` interface. ACMM uses
+the machine-readable facilities that actually exist in the pinned image.
+
+The adapter performs two steps:
 
 ```text
-hermes chat --oneshot --format stream-json ...
+1. hermes chat --oneshot -Q ...
+       -> final stdout
+       -> session_id on stderr
+
+2. hermes sessions export - --session-id <id> --format jsonl
+       -> persisted Hermes session
 ```
 
-The adapter consumes the event stream and normalizes it into the evidence channels already
-defined by the Experiment Contract.
+The first command performs the subject interaction. The second is evidence acquisition only;
+it does not call the model. ACMM normalizes the exported persisted session into the evidence
+channels required by the Experiment Contract.
+
+The adapter intentionally does not pass `--model` or `--provider` in the normal qualified
+path. `acmm-infra hermes doctor` has already verified the configured model/provider route,
+and the adapter verifies that the exported session reports the Contract's expected model.
 
 ## Invocation
 
-The adapter takes the model name from the Contract and applies the Contract termination
-bounds:
+Per-run controls supplied by the Contract/runtime are:
 
 ```text
---model <contract model>
 --toolsets acmm
 --max-turns <max_steps>
 --run-budget <timeout_seconds>
 --source tool
+--query <scenario prompt>
 ```
 
-Provider routing is intentionally not overridden by default. This preserves the qualified
-Hermes profile that already points at the ACMM Ollama gateway. A provider override remains
-available in `hermes_adapter_config` for controlled future work.
-
-For Docker-hosted Hermes, the adapter can invoke `docker exec` and inject the fixture value
-as `ACMM_MAGIC_NUMBER` inside the container.
+For Docker-hosted Hermes, the adapter invokes `/opt/hermes/bin/hermes` with `docker exec`
+and injects the fixture value as `ACMM_MAGIC_NUMBER`.
 
 ## Evidence normalization
 
-Hermes stream events are projected into four artifacts:
+The exported Hermes session is projected into:
 
 ```text
-conversation
-    -> evidence/conversation.json
-
-tool_calls
-    -> evidence/tool_calls.json
-
-tool_results
-    -> evidence/tool_results.json
-
-final_response
-    -> evidence/final_response.txt
+conversation   -> evidence/conversation.json
+tool_calls     -> evidence/tool_calls.json
+tool_results   -> evidence/tool_results.json
+final_response -> evidence/final_response.txt
 ```
 
-`conversation.json` contains the user prompt, final assistant response, Hermes session ID,
-reported model, and streamed assistant text deltas.
+`conversation.json` preserves the exported session messages, session ID, and reported model.
 
-`tool_calls.json` preserves tool name, structured input, and event timestamp.
+`tool_calls.json` stores normalized tool name, structured input, call ID, and timestamp when
+present. `tool_results.json` stores normalized tool name, output, error status, call ID, and
+timestamp when present.
 
-`tool_results.json` preserves tool name, output, duration, error flag, and event timestamp.
+Hermes Tool Search can represent a deferred local tool through the transport bridge
+`tool_call`, whose argument contains the underlying tool name and arguments. ACMM's
+normalizer defensively unwraps a single underlying local call and records the bridge as
+`transport_name`. Evaluators therefore judge the real executed tool rather than Hermes's
+routing wrapper.
 
-The Run Record persistence layer hashes the resulting bytes exactly as for any other
-subject adapter.
+The ACMM experiment-isolation baseline disables Tool Search for new experimental runs, so
+`acmm` tools should normally be exposed directly. Bridge normalization remains as a
+compatibility/forensics safeguard for persisted sessions.
+
+## Request accounting
+
+For the magic-number pilot, the two tools are causally dependent:
+
+```text
+model call 1 -> get_magic_number
+tool result  -> 87
+model call 2 -> add_numbers(87, 13)
+tool result  -> 100
+model call 3 -> final response
+```
+
+Three model requests are therefore the normal successful main-agent path. Hermes also has
+auxiliary features that can make model calls independently of this loop, notably automatic
+session-title generation. ACMM disables title generation and background review in its
+experiment-isolation profile so those auxiliary calls do not contaminate request accounting.
+
+The request count is an operational diagnostic, not an ACMM outcome: provider retry or
+transport failure can still create additional upstream requests.
 
 ## Termination mapping
 
-A normal terminal result maps to:
+A normal completed chat maps to `agent_completed`. Hermes run-budget exhaustion maps to
+`timeout`, and maximum-turn/iteration exhaustion maps to `max_steps`; these are valid bounded
+experimental terminations.
 
-```text
-agent_completed
-```
-
-A Hermes run-budget exhaustion maps to:
-
-```text
-timeout
-```
-
-and a maximum-turn/iteration exhaustion maps to:
-
-```text
-max_steps
-```
-
-Those are valid experimental terminations rather than infrastructure failures.
-
-Malformed stream output, a missing terminal result event, subprocess launch failure, or a
-subprocess that outlives the Hermes run budget plus the adapter grace period becomes:
-
-```text
-harness_error
-```
-
-with an invalid Run Record.
+Failure to launch Hermes, obtain/export the session, parse the exported evidence, or verify
+the subject model maps to `harness_error` and therefore an invalid Run Record.
 
 ## Magic-number evaluators
 
-The first pilot deliberately evaluates tool behavior rather than trusting final prose.
+The pilot evaluates actual tool behavior rather than trusting final prose.
 
-The retrieval opportunity requires an actual `get_magic_number` call with a successful
-result equal to the expected value.
+The retrieval opportunity requires an actual normalized `get_magic_number` call with a
+successful result equal to the expected value.
 
-The calculation opportunity requires an actual `add_numbers` call with the magic number
-and requested addend, the corresponding tool result, and a final response that reports the
-correct result.
-
-This catches cases where the assistant text claims it used one value while the tool call
-actually used another.
-
-## Current boundary
-
-This adapter is sufficient for the magic-number hello-world experiment. It does not yet
-attempt to generalize every Hermes capability, session feature, workspace mutation, or
-memory mode.
-
-Those should be added only when a Contract/scenario requires them.
+The calculation opportunity requires an actual normalized `add_numbers` call using the
+retrieved magic number and requested addend, its corresponding successful result, and a
+final response reporting the correct result.
 
 ## Managed infrastructure
 
-The adapter no longer assumes that Hermes was configured manually. The deployment baseline
-is managed separately by `acmm-infra` from the repository-owned `infrastructure/` tree.
-
-The pilot plugin source is:
+The repository-owned plugin source is:
 
 ```text
 infrastructure/hermes/plugins/acmm-tools/
 ```
 
-and the deployed copy is synchronized into the Hermes data volume before live experiments.
-See `docs/infrastructure/hermes.md`.
+Before a live experiment, `acmm-infra hermes doctor` must report `READY`. If only managed
+tool/plugin code changed after the baseline was established, reconcile that narrow scope
+with:
+
+```text
+acmm-infra hermes down
+acmm-infra hermes apply-tools
+acmm-infra hermes up
+acmm-infra hermes doctor
+```
+
+A change to the model route, Blank Slate baseline, or ACMM experiment-isolation settings
+requires the full `acmm-infra hermes apply` path instead.
+
+## Live pilot command
+
+The single-slot smoke test is:
+
+```text
+acmm run experiments/examples/magic_number/experiment.yaml --run-index 0
+```
+
+The experiment layer explicitly requests the `acmm` toolset for the run; infrastructure
+continues to own the qualified subject baseline.
+
+The magic-number Contract records the ACMM experiment-isolation controls under the subject's
+open `configuration` mapping. Those values identify the qualified configuration required by
+the run; `acmm-infra hermes doctor` remains the observed-state gate that verifies the live
+Hermes deployment before acquisition. The Run Record additionally records run-time subject
+facts such as Hermes's reported model and session ID.

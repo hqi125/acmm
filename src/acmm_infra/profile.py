@@ -37,6 +37,13 @@ class blank_slate_profile:
 
 
 @dataclass(frozen=True)
+class experiment_isolation_profile:
+    title_generation_enabled: bool
+    background_review_enabled: bool
+    tool_search_enabled: str
+
+
+@dataclass(frozen=True)
 class hermes_profile:
     expected_version: str
     service_name: str
@@ -53,6 +60,7 @@ class hermes_profile:
     reasoning_effort: str
     terminal_backend: str
     blank_slate: blank_slate_profile
+    experiment_isolation: experiment_isolation_profile
     plugins: tuple[managed_plugin, ...]
     reset_scopes: dict[str, tuple[Path, ...]]
 
@@ -96,6 +104,7 @@ def load_hermes_profile(
         runtime = data["runtime"]
         baseline = data["baseline"]
         blank_slate_data = data["blank_slate"]
+        isolation_data = data["experiment_isolation"]
         plugins_data = data["plugins"]["managed"]
         reset_data = data["reset_scopes"]
     except (KeyError, TypeError) as exc:
@@ -165,6 +174,9 @@ def load_hermes_profile(
         raise profile_error("baseline.context_window must be an integer.")
 
     blank_slate = _load_blank_slate_profile(blank_slate_data)
+    experiment_isolation = _load_experiment_isolation_profile(
+        isolation_data
+    )
 
     return hermes_profile(
         expected_version=_nonempty_string(agent.get("expected_version"), "agent.expected_version"),
@@ -206,6 +218,7 @@ def load_hermes_profile(
             "baseline.terminal_backend",
         ),
         blank_slate=blank_slate,
+        experiment_isolation=experiment_isolation,
         plugins=tuple(plugins),
         reset_scopes=reset_scopes,
     )
@@ -296,6 +309,37 @@ def _load_blank_slate_profile(value: Any) -> blank_slate_profile:
             "blank_slate.tool_progress",
         ),
         bundled_skills=bundled_skills,
+    )
+
+
+
+def _load_experiment_isolation_profile(
+    value: Any,
+) -> experiment_isolation_profile:
+    if not isinstance(value, dict):
+        raise profile_error("experiment_isolation must be a mapping.")
+
+    tool_search_enabled = _nonempty_string(
+        value.get("tool_search_enabled"),
+        "experiment_isolation.tool_search_enabled",
+    )
+
+    if tool_search_enabled not in {"auto", "on", "off"}:
+        raise profile_error(
+            "experiment_isolation.tool_search_enabled must be "
+            "'auto', 'on', or 'off'."
+        )
+
+    return experiment_isolation_profile(
+        title_generation_enabled=_boolean(
+            value.get("title_generation_enabled"),
+            "experiment_isolation.title_generation_enabled",
+        ),
+        background_review_enabled=_boolean(
+            value.get("background_review_enabled"),
+            "experiment_isolation.background_review_enabled",
+        ),
+        tool_search_enabled=tool_search_enabled,
     )
 
 

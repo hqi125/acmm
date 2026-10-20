@@ -532,21 +532,23 @@ See `docs/runtime/persistence.md` for the exact storage layout and durability bo
 
 ## Experiment-level execution
 
-`execute_experiment()` walks the complete deterministic plan and stores one execution
-session under:
+`execute_experiment()` stores one execution session under:
 
 ```text
 results/<experiment_id>/execution_<execution_id>/
 ```
 
-The session snapshots the exact Contract bytes before running any planned slots.
+The session snapshots the exact Contract bytes before running any selected planned slots. By
+default the complete deterministic plan is selected. Engineering/pilot executions may select
+explicit run indices; the manifest records both the full Contract run count and the selected
+indices so a subset cannot be mistaken for a complete Contract execution.
 
 Every realized attempt is preserved. An attempt is retried only when
 `execution.validity` is `invalid`; the first valid attempt resolves the planned slot.
 Valid agent outcomes such as `timeout` or `max_steps` are not retried.
 
 The session completion manifest, `experiment_execution.yaml`, is written only after the
-whole plan has been traversed. If orchestration or persistence is interrupted, previously
+selected plan has been traversed. If orchestration or persistence is interrupted, previously
 published Run Records remain intact but the session has no completion manifest and cannot
 be mistaken for a completed collection.
 
@@ -574,7 +576,7 @@ The runtime pieces are:
 
 ```text
 src/acmm/adapters/hermes.py
-    Hermes process/Docker bridge + structured event normalization
+    Hermes process/Docker bridge + persisted-session evidence normalization
 
 src/acmm/pilots/magic_number.py
     magic-number fixture + deterministic opportunity evaluators
@@ -583,9 +585,10 @@ infrastructure/hermes/plugins/acmm-tools/
     repository-owned Hermes plugin exposing get_magic_number and add_numbers
 ```
 
-The adapter uses Hermes one-shot `stream-json` output rather than scraping the interactive
-terminal UI. The Contract model is passed explicitly; provider routing is left to the
-already-qualified Hermes profile unless an explicit adapter override is supplied.
+The adapter runs a quiet Hermes one-shot chat and then exports that exact persisted
+session as JSONL rather than scraping the interactive terminal UI. The normal live path
+relies on the already-qualified model/provider route and verifies the model reported by the
+exported session against the Contract.
 
 The magic number is provided by the runtime fixture and injected into the Hermes process or
 Docker container as `ACMM_MAGIC_NUMBER`. It is not hard-coded into the Hermes plugin.
@@ -662,6 +665,25 @@ smart model routing; uses a 90-turn baseline; and opts out of the full bundled-s
 catalog while retaining Hermes's essential skill. The `acmm` plugin toolset is an explicit
 experiment overlay rather than a default toolset.
 
+ACMM then applies a separate experiment-isolation policy on top of official Blank Slate:
+automatic title generation and background review are disabled, and Hermes Tool Search is
+set to `off`. These are ACMM methodological controls intended to remove auxiliary model
+calls and tool-routing indirection; they are not part of Hermes's definition of Blank
+Slate.
+
+For later repository-owned tool/plugin changes, the narrower reconciliation path is:
+
+```text
+acmm-infra hermes down
+acmm-infra hermes apply-tools
+acmm-infra hermes up
+acmm-infra hermes doctor
+```
+
+`apply-tools` replaces managed plugin bytes and reconciles plugin/tool-routing policy without
+reapplying the stable model route or Blank Slate baseline. Full `apply` remains required
+when the broader qualified baseline changes.
+
 `apply` requires the persistent Hermes gateway to be stopped. It reconciles all Hermes
 settings and managed-plugin enablement inside one bounded one-off Compose container rather
 than starting a new container for every setting. The batch prints sub-operation progress
@@ -682,7 +704,21 @@ acmm-infra hermes adopt-data /path/to/old/data --yes
 
 See `docs/infrastructure/hermes.md`.
 
-After `doctor` reports `READY`, the next runtime step is the researcher-facing live
-magic-number execution command, followed by inspection of the first persisted session and
-then deterministic CSV export.
+After `doctor` reports `READY`, execute only the first deterministic magic-number slot as
+the live smoke test:
+
+```text
+acmm run experiments/examples/magic_number/experiment.yaml --run-index 0
+```
+
+The command validates the Contract and harness compatibility, invokes the running
+`acmm-hermes` container with the explicit `acmm` toolset overlay, persists the exact Contract
+snapshot, Run Record, and evidence artifacts, and re-validates the persisted Run Record.
+The Contract's Hermes subject configuration also records the required ACMM experiment-isolation
+controls (title generation off, background review off, and Tool Search off), so the persisted
+Contract hash binds each run to that methodological baseline. `doctor` remains responsible for
+verifying that the live deployment actually matches the qualified profile before acquisition.
+
+Omit `--run-index` only after the single-slot artifacts have been inspected and the full
+five-repetition acquisition is desired. Deterministic CSV export remains the next layer.
 

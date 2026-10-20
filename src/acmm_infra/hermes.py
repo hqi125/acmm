@@ -137,6 +137,7 @@ class hermes_manager:
             ("model.default", self.profile.model_default),
             ("agent.reasoning_effort", self.profile.reasoning_effort),
             ("terminal.backend", self.profile.terminal_backend),
+            *_experiment_isolation_settings(self.profile),
         )
 
         extra_operations = 3 if self.profile.blank_slate.enabled else 0
@@ -183,7 +184,97 @@ class hermes_manager:
             "terminal_backend": self.profile.terminal_backend,
             "blank_slate": self.profile.blank_slate.enabled,
             "blank_slate_toolsets": self.profile.blank_slate.minimal_toolsets,
+            "experiment_isolation": {
+                "title_generation_enabled": (
+                    self.profile.experiment_isolation.title_generation_enabled
+                ),
+                "background_review_enabled": (
+                    self.profile.experiment_isolation.background_review_enabled
+                ),
+                "tool_search_enabled": (
+                    self.profile.experiment_isolation.tool_search_enabled
+                ),
+            },
             "plugins_synchronized": synchronized,
+            "provisioning_operations": operation_count,
+        }
+
+
+    def apply_tools(
+        self,
+        *,
+        timeout_seconds: float = 120.0,
+        progress: Callable[[str], None] | None = None,
+        output_mode: Literal["quiet", "normal", "verbose"] = "normal",
+    ) -> dict[str, Any]:
+        if timeout_seconds <= 0:
+            raise infrastructure_error(
+                "Hermes tool apply timeout must be greater than zero seconds."
+            )
+
+        if output_mode not in {"quiet", "normal", "verbose"}:
+            raise infrastructure_error(
+                f"Unknown Hermes tool apply output mode: '{output_mode}'."
+            )
+
+        report = progress if progress is not None else lambda message: None
+
+        if output_mode != "quiet":
+            report("[1/3] Verifying initialized Hermes deployment.")
+        self.initialize_deployment()
+
+        if self.docker.container_running():
+            raise infrastructure_error(
+                "Hermes gateway is running. Run 'acmm-infra hermes down' before "
+                "reconciling managed tools."
+            )
+
+        self._validate_existing_config_version()
+
+        if output_mode != "quiet":
+            report("[2/3] Replacing repository-managed Hermes tool plugins.")
+
+        synchronized: list[str] = []
+
+        for plugin in self.profile.plugins:
+            self._sync_plugin(plugin)
+            synchronized.append(plugin.name)
+
+        settings = (
+            (
+                "tools.tool_search.enabled",
+                self.profile.experiment_isolation.tool_search_enabled,
+            ),
+        )
+        script = _build_tool_provisioning_script(
+            settings=settings,
+            plugins=self.profile.plugins,
+        )
+        operation_count = len(settings) + len(self.profile.plugins)
+
+        if output_mode != "quiet":
+            report(
+                "[3/3] Applying "
+                f"{operation_count} managed-tool operation(s) in one "
+                f"provisioning container (timeout {timeout_seconds:g}s)."
+            )
+
+        result = self.docker.provision(
+            script,
+            timeout_seconds=timeout_seconds,
+            output_mode=output_mode,
+            output=report,
+        )
+        require_success(
+            result,
+            "Hermes managed-tool provisioning",
+        )
+
+        return {
+            "plugins_synchronized": synchronized,
+            "tool_search_enabled": (
+                self.profile.experiment_isolation.tool_search_enabled
+            ),
             "provisioning_operations": operation_count,
         }
 
@@ -212,7 +303,14 @@ class hermes_manager:
             "checkpoints_enabled": None,
             "smart_model_routing_enabled": None,
             "tool_progress": None,
+            "title_generation_enabled": None,
+            "background_review_enabled": None,
+            "tool_search_enabled": None,
             "bundled_skills_opt_out": None,
+            "bundled_skill_manifest": None,
+            "essential_skills": None,
+            "live_observation_ok": False,
+            "live_observation_error": None,
             "config_path": None,
             "env_path": None,
             "plugins_enabled": [],
@@ -231,6 +329,11 @@ class hermes_manager:
                         observation_result.stdout,
                         self.profile.plugins,
                     )
+                )
+                observed["live_observation_ok"] = True
+            else:
+                observed["live_observation_error"] = _result_detail(
+                    observation_result
                 )
 
         plugin_status = []
@@ -305,6 +408,17 @@ class hermes_manager:
                 "context_window": self.profile.context_window,
                 "reasoning_effort": self.profile.reasoning_effort,
                 "terminal_backend": self.profile.terminal_backend,
+                "experiment_isolation": {
+                    "title_generation_enabled": (
+                        self.profile.experiment_isolation.title_generation_enabled
+                    ),
+                    "background_review_enabled": (
+                        self.profile.experiment_isolation.background_review_enabled
+                    ),
+                    "tool_search_enabled": (
+                        self.profile.experiment_isolation.tool_search_enabled
+                    ),
+                },
                 "blank_slate": {
                     "enabled": self.profile.blank_slate.enabled,
                     "minimal_toolsets": list(
@@ -387,91 +501,177 @@ class hermes_manager:
                 ok=self.data_root.is_dir(),
                 detail=str(self.data_root),
             ),
+        ]
+
+        for plugin in status["plugins"]:
+            checks.append(
+                doctor_check(
+                    name=f"plugin_sync:{plugin['name']}",
+                    ok=bool(plugin["synchronized"]),
+                    detail=(
+                        f"source={plugin['source_sha256']}, "
+                        f"deployed={plugin['destination_sha256']}"
+                    ),
+                )
+            )
+
+        if not observed["container_running"]:
+            checks.append(
+                doctor_check(
+                    name="container_running",
+                    ok=False,
+                    detail=(
+                        "Hermes container is not running. Run "
+                        "'acmm-infra hermes up' before live readiness checks."
+                    ),
+                )
+            )
+            return doctor_report(checks=tuple(checks))
+
+        checks.append(
             doctor_check(
                 name="container_running",
-                ok=bool(observed["container_running"]),
-                detail=(
-                    "Hermes container is running."
-                    if observed["container_running"]
-                    else "Hermes container is not running."
+                ok=True,
+                detail="Hermes container is running.",
+            )
+        )
+
+        if not observed["live_observation_ok"]:
+            checks.append(
+                doctor_check(
+                    name="live_observation",
+                    ok=False,
+                    detail=(
+                        observed["live_observation_error"]
+                        or "Hermes live state could not be inspected."
+                    ),
+                )
+            )
+            return doctor_report(checks=tuple(checks))
+
+        checks.extend(
+            [
+                doctor_check(
+                    name="live_observation",
+                    ok=True,
+                    detail="Hermes live state was read successfully.",
                 ),
-            ),
-            doctor_check(
-                name="container_image",
-                ok=observed["container_image"] == desired["container_image"],
-                detail=(
-                    f"observed={observed['container_image']!r}, "
-                    f"expected={desired['container_image']!r}"
+                doctor_check(
+                    name="container_image",
+                    ok=observed["container_image"] == desired["container_image"],
+                    detail=(
+                        f"observed={observed['container_image']!r}, "
+                        f"expected={desired['container_image']!r}"
+                    ),
                 ),
-            ),
-            doctor_check(
-                name="hermes_version",
-                ok=_version_matches(
-                    observed["hermes_version"],
-                    desired["hermes_version"],
+                doctor_check(
+                    name="hermes_version",
+                    ok=_version_matches(
+                        observed["hermes_version"],
+                        desired["hermes_version"],
+                    ),
+                    detail=(
+                        f"observed={observed['hermes_version']!r}, "
+                        f"expected={desired['hermes_version']!r}"
+                    ),
                 ),
-                detail=(
-                    f"observed={observed['hermes_version']!r}, "
-                    f"expected={desired['hermes_version']!r}"
+                doctor_check(
+                    name="model_provider",
+                    ok=observed["model_provider"] == desired["model_provider"],
+                    detail=(
+                        f"observed={observed['model_provider']!r}, "
+                        f"expected={desired['model_provider']!r}"
+                    ),
                 ),
-            ),
-            doctor_check(
-                name="model_provider",
-                ok=observed["model_provider"] == desired["model_provider"],
-                detail=(
-                    f"observed={observed['model_provider']!r}, "
-                    f"expected={desired['model_provider']!r}"
+                doctor_check(
+                    name="model_base_url",
+                    ok=observed["model_base_url"] == desired["model_base_url"],
+                    detail=(
+                        f"observed={observed['model_base_url']!r}, "
+                        f"expected={desired['model_base_url']!r}"
+                    ),
                 ),
-            ),
-            doctor_check(
-                name="model_base_url",
-                ok=observed["model_base_url"] == desired["model_base_url"],
-                detail=(
-                    f"observed={observed['model_base_url']!r}, "
-                    f"expected={desired['model_base_url']!r}"
+                doctor_check(
+                    name="model_api_mode",
+                    ok=observed["model_api_mode"] == desired["model_api_mode"],
+                    detail=(
+                        f"observed={observed['model_api_mode']!r}, "
+                        f"expected={desired['model_api_mode']!r}"
+                    ),
                 ),
-            ),
-            doctor_check(
-                name="model_api_mode",
-                ok=observed["model_api_mode"] == desired["model_api_mode"],
-                detail=(
-                    f"observed={observed['model_api_mode']!r}, "
-                    f"expected={desired['model_api_mode']!r}"
+                doctor_check(
+                    name="model_context_length",
+                    ok=observed["context_window"] == desired["context_window"],
+                    detail=(
+                        f"observed={observed['context_window']!r}, "
+                        f"expected={desired['context_window']!r}"
+                    ),
                 ),
-            ),
-            doctor_check(
-                name="model_context_length",
-                ok=observed["context_window"] == desired["context_window"],
-                detail=(
-                    f"observed={observed['context_window']!r}, "
-                    f"expected={desired['context_window']!r}"
+                doctor_check(
+                    name="model_default",
+                    ok=observed["model_default"] == desired["model_default"],
+                    detail=(
+                        f"observed={observed['model_default']!r}, "
+                        f"expected={desired['model_default']!r}"
+                    ),
                 ),
-            ),
-            doctor_check(
-                name="model_default",
-                ok=observed["model_default"] == desired["model_default"],
-                detail=(
-                    f"observed={observed['model_default']!r}, "
-                    f"expected={desired['model_default']!r}"
+                doctor_check(
+                    name="reasoning_effort",
+                    ok=observed["reasoning_effort"] == desired["reasoning_effort"],
+                    detail=(
+                        f"observed={observed['reasoning_effort']!r}, "
+                        f"expected={desired['reasoning_effort']!r}"
+                    ),
                 ),
-            ),
-            doctor_check(
-                name="reasoning_effort",
-                ok=observed["reasoning_effort"] == desired["reasoning_effort"],
-                detail=(
-                    f"observed={observed['reasoning_effort']!r}, "
-                    f"expected={desired['reasoning_effort']!r}"
+                doctor_check(
+                    name="terminal_backend",
+                    ok=observed["terminal_backend"] == desired["terminal_backend"],
+                    detail=(
+                        f"observed={observed['terminal_backend']!r}, "
+                        f"expected={desired['terminal_backend']!r}"
+                    ),
                 ),
-            ),
-            doctor_check(
-                name="terminal_backend",
-                ok=observed["terminal_backend"] == desired["terminal_backend"],
-                detail=(
-                    f"observed={observed['terminal_backend']!r}, "
-                    f"expected={desired['terminal_backend']!r}"
+            ]
+        )
+
+        isolation = desired["experiment_isolation"]
+        checks.extend(
+            [
+                doctor_check(
+                    name="experiment_title_generation",
+                    ok=(
+                        observed["title_generation_enabled"]
+                        == isolation["title_generation_enabled"]
+                    ),
+                    detail=(
+                        f"observed={observed['title_generation_enabled']!r}, "
+                        f"expected={isolation['title_generation_enabled']!r}"
+                    ),
                 ),
-            ),
-        ]
+                doctor_check(
+                    name="experiment_background_review",
+                    ok=(
+                        observed["background_review_enabled"]
+                        == isolation["background_review_enabled"]
+                    ),
+                    detail=(
+                        f"observed={observed['background_review_enabled']!r}, "
+                        f"expected={isolation['background_review_enabled']!r}"
+                    ),
+                ),
+                doctor_check(
+                    name="experiment_tool_search",
+                    ok=(
+                        observed["tool_search_enabled"]
+                        == isolation["tool_search_enabled"]
+                    ),
+                    detail=(
+                        f"observed={observed['tool_search_enabled']!r}, "
+                        f"expected={isolation['tool_search_enabled']!r}"
+                    ),
+                ),
+            ]
+        )
 
         if desired["blank_slate"]["enabled"]:
             blank = desired["blank_slate"]
@@ -535,10 +735,7 @@ class hermes_manager:
                     ),
                     doctor_check(
                         name="blank_slate_memory",
-                        ok=(
-                            observed["memory_enabled"]
-                            == blank["memory_enabled"]
-                        ),
+                        ok=observed["memory_enabled"] == blank["memory_enabled"],
                         detail=(
                             f"observed={observed['memory_enabled']!r}, "
                             f"expected={blank['memory_enabled']!r}"
@@ -596,10 +793,7 @@ class hermes_manager:
                     doctor_check(
                         name="blank_slate_essential_skills",
                         ok=(
-                            isinstance(
-                                observed["bundled_skill_manifest"],
-                                list,
-                            )
+                            isinstance(observed["bundled_skill_manifest"], list)
                             and observed["bundled_skill_manifest"]
                             == observed["essential_skills"]
                         ),
@@ -612,16 +806,6 @@ class hermes_manager:
             )
 
         for plugin in status["plugins"]:
-            checks.append(
-                doctor_check(
-                    name=f"plugin_sync:{plugin['name']}",
-                    ok=bool(plugin["synchronized"]),
-                    detail=(
-                        f"source={plugin['source_sha256']}, "
-                        f"deployed={plugin['destination_sha256']}"
-                    ),
-                )
-            )
             checks.append(
                 doctor_check(
                     name=f"plugin_enabled:{plugin['name']}",
@@ -988,6 +1172,36 @@ def _build_observation_script(
                 "--json",
             ],
         ),
+        (
+            "title_generation_enabled",
+            [
+                HERMES_CLI,
+                "config",
+                "get",
+                "auxiliary.title_generation.enabled",
+                "--json",
+            ],
+        ),
+        (
+            "background_review_enabled",
+            [
+                HERMES_CLI,
+                "config",
+                "get",
+                "auxiliary.background_review.enabled",
+                "--json",
+            ],
+        ),
+        (
+            "tool_search_enabled",
+            [
+                HERMES_CLI,
+                "config",
+                "get",
+                "tools.tool_search.enabled",
+                "--json",
+            ],
+        ),
         ("config_path", [HERMES_CLI, "config", "path"]),
         ("env_path", [HERMES_CLI, "config", "env-path"]),
         (
@@ -1117,6 +1331,9 @@ def _parse_observation_output(
         "checkpoints_enabled",
         "smart_model_routing_enabled",
         "tool_progress",
+        "title_generation_enabled",
+        "background_review_enabled",
+        "tool_search_enabled",
         "expected_disabled_toolsets",
         "bundled_skills_opt_out",
         "bundled_skill_manifest",
@@ -1148,6 +1365,119 @@ def _parse_observation_output(
         )
 
     return observed
+
+
+
+def _experiment_isolation_settings(
+    profile: hermes_profile,
+) -> tuple[tuple[str, str], ...]:
+    isolation = profile.experiment_isolation
+
+    return (
+        (
+            "auxiliary.title_generation.enabled",
+            "true" if isolation.title_generation_enabled else "false",
+        ),
+        (
+            "auxiliary.background_review.enabled",
+            "true" if isolation.background_review_enabled else "false",
+        ),
+        (
+            "tools.tool_search.enabled",
+            isolation.tool_search_enabled,
+        ),
+    )
+
+
+def _build_tool_provisioning_script(
+    settings: tuple[tuple[str, str], ...],
+    plugins: tuple[managed_plugin, ...],
+) -> str:
+    operations: list[tuple[str, str]] = []
+
+    for key, value in settings:
+        command = [
+            HERMES_CLI,
+            "config",
+            "set",
+            key,
+            value,
+            "--force",
+        ]
+        operations.append(
+            (
+                f"set {key}",
+                " ".join(shlex.quote(part) for part in command),
+            )
+        )
+
+    operations.extend(_plugin_operations(plugins))
+    return _render_provisioning_operations(operations)
+
+
+def _plugin_operations(
+    plugins: tuple[managed_plugin, ...],
+) -> list[tuple[str, str]]:
+    operations: list[tuple[str, str]] = []
+
+    for plugin in plugins:
+        action = "enable" if plugin.enabled else "disable"
+        command = [
+            HERMES_CLI,
+            "plugins",
+            action,
+            plugin.name,
+        ]
+
+        if plugin.enabled:
+            command.append(
+                "--allow-tool-override"
+                if plugin.allow_tool_override
+                else "--no-allow-tool-override"
+            )
+
+        operations.append(
+            (
+                f"{action} plugin {plugin.name}",
+                " ".join(shlex.quote(part) for part in command),
+            )
+        )
+
+    return operations
+
+
+def _render_provisioning_operations(
+    operations: list[tuple[str, str]],
+) -> str:
+    lines = ["set -eu"]
+    total = len(operations)
+
+    for index, (description, command) in enumerate(
+        operations,
+        start=1,
+    ):
+        label = f"[Hermes {index}/{total}] {description}"
+        error_label = (
+            f"[Hermes ERROR] {index}/{total} {description} failed"
+        )
+        lines.append(f"printf '%s\\n' {shlex.quote(label)}")
+        lines.append(f"if {command}; then")
+        lines.append("    :")
+        lines.append("else")
+        lines.append("    status=$?")
+        lines.append(
+            "    printf '%s (exit=%s)\\n' "
+            + shlex.quote(error_label)
+            + ' "$status" >&2'
+        )
+        lines.append('    exit "$status"')
+        lines.append("fi")
+
+    lines.append(
+        f"printf '%s\\n' "
+        f"{shlex.quote('[Hermes] Provisioning batch complete.')}"
+    )
+    return "\n".join(lines)
 
 
 def _build_provisioning_script(
@@ -1221,58 +1551,8 @@ def _build_provisioning_script(
             )
         )
 
-    for plugin in plugins:
-        action = "enable" if plugin.enabled else "disable"
-        command = [
-            HERMES_CLI,
-            "plugins",
-            action,
-            plugin.name,
-        ]
-
-        if plugin.enabled:
-            command.append(
-                "--allow-tool-override"
-                if plugin.allow_tool_override
-                else "--no-allow-tool-override"
-            )
-
-        operations.append(
-            (
-                f"{action} plugin {plugin.name}",
-                " ".join(shlex.quote(part) for part in command),
-            )
-        )
-
-    lines = ["set -eu"]
-    total = len(operations)
-
-    for index, (description, command) in enumerate(
-        operations,
-        start=1,
-    ):
-        label = f"[Hermes {index}/{total}] {description}"
-        error_label = (
-            f"[Hermes ERROR] {index}/{total} {description} failed"
-        )
-        lines.append(f"printf '%s\\n' {shlex.quote(label)}")
-        lines.append(f"if {command}; then")
-        lines.append("    :")
-        lines.append("else")
-        lines.append("    status=$?")
-        lines.append(
-            "    printf '%s (exit=%s)\\n' "
-            + shlex.quote(error_label)
-            + ' "$status" >&2'
-        )
-        lines.append('    exit "$status"')
-        lines.append("fi")
-
-    lines.append(
-        f"printf '%s\\n' "
-        f"{shlex.quote('[Hermes] Provisioning batch complete.')}"
-    )
-    return "\n".join(lines)
+    operations.extend(_plugin_operations(plugins))
+    return _render_provisioning_operations(operations)
 
 
 def _blank_slate_apply_python(

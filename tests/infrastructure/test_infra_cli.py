@@ -33,6 +33,21 @@ def test_cli_exposes_infrastructure_commands() -> None:
     assert args.verbose is True
     assert args.quiet is False
 
+    args = parser.parse_args([
+        "hermes",
+        "apply-tools",
+        "--timeout-seconds",
+        "30",
+    ])
+    assert args.hermes_command == "apply-tools"
+    assert args.timeout_seconds == 30.0
+    assert args.quiet is False
+    assert args.verbose is False
+
+    args = parser.parse_args(["hermes", "apply-tools", "--quiet"])
+    assert args.quiet is True
+    assert args.verbose is False
+
     args = parser.parse_args(["hermes", "doctor", "--json"])
     assert args.hermes_command == "doctor"
     assert args.json is True

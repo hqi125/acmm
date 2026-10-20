@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Experiment-level execution walks the complete deterministic run plan and turns each planned
-slot into one or more persisted realized attempts.
+Experiment-level execution turns selected slots from the deterministic Contract plan into one
+or more persisted realized attempts. The default selection is the complete plan; explicit
+run-index selection is reserved for engineering/pilot executions.
 
 This layer performs data acquisition only. It does not compute ACMM compliance proportions,
 dimension scores, confidence intervals, statistical models, or plots.
@@ -52,12 +53,23 @@ results/
 `contract.yaml` is an exact byte-for-byte snapshot of the Experiment Contract artifact used
 for the session. Every Run Record stores the SHA-256 digest of those exact bytes.
 
-The execution UUID identifies this invocation of the full plan. It is separate from each
+The execution UUID identifies this orchestration invocation. It is separate from each
 realized run UUID.
+
+For a full execution, every Contract run index is selected. For an explicit subset execution,
+the manifest records:
+
+```text
+contract_run_count
+selected_run_indices
+planned_run_count
+```
+
+so a one-slot smoke test cannot be confused with a complete Contract acquisition.
 
 ## Completion marker
 
-`experiment_execution.yaml` is written only after the full plan has been traversed.
+`experiment_execution.yaml` is written only after the selected plan has been traversed.
 
 Therefore:
 
@@ -153,12 +165,29 @@ manifest is written.
 This deliberately favors preservation over rollback: once a realized run has been safely
 published, a later infrastructure failure does not delete it.
 
+## Researcher-facing command
+
+The first registered live runtime is the Hermes magic-number pilot. With the managed Hermes
+deployment already `READY`, execute one deterministic slot with:
+
+```text
+acmm run experiments/examples/magic_number/experiment.yaml --run-index 0
+```
+
+The command performs Contract validation, harness-compatibility validation, execution,
+persistence, and a second Run Record validation against the exact Contract SHA-256. A valid
+scientific execution resolves the selected slot even when its compliance judgments contain
+violations. Infrastructure-invalid attempts leave the slot unresolved and produce a nonzero
+command status.
+
+Omitting `--run-index` executes the entire Contract plan.
+
 ## Current exclusions
 
 Experiment-level execution does not yet:
 
-- expose an `acmm run` command;
-- provide concrete Hermes Agent, Open WebUI, or Agent Zero adapters;
+- provide Open WebUI or Agent Zero execution bindings;
+- provide a general runtime-binding registry beyond the current Hermes magic-number pilot;
 - validate a complete result collection across multiple sessions;
 - export CSV analysis tables;
 - compute ACMM estimators or scores;

@@ -49,6 +49,9 @@ class fake_docker:
         self.checkpoints_enabled = False
         self.smart_model_routing_enabled = False
         self.tool_progress = "all"
+        self.title_generation_enabled = False
+        self.background_review_enabled = False
+        self.tool_search_enabled = "off"
         self.bundled_skills_opt_out = True
         self.bundled_skill_manifest = ["hermes-agent"]
         self.essential_skills = ["hermes-agent"]
@@ -59,6 +62,7 @@ class fake_docker:
         self.provision_calls: list[tuple[str, float]] = []
         self.provision_output_modes: list[str] = []
         self.provision_result: command_result | None = None
+        self.exec_script_result: command_result | None = None
 
     def docker_version(self) -> command_result:
         return _ok(("docker", "--version"), "Docker version 27")
@@ -240,6 +244,10 @@ class fake_docker:
         timeout_seconds: float = 30.0,
     ) -> command_result:
         self.exec_script_calls.append((script, timeout_seconds))
+
+        if self.exec_script_result is not None:
+            return self.exec_script_result
+
         output = "\n".join(
             [
                 f"__ACMM__hermes_version={self.version}",
@@ -285,6 +293,18 @@ class fake_docker:
                 ),
                 f"__ACMM__tool_progress={json.dumps(self.tool_progress)}",
                 (
+                    "__ACMM__title_generation_enabled="
+                    + json.dumps(self.title_generation_enabled)
+                ),
+                (
+                    "__ACMM__background_review_enabled="
+                    + json.dumps(self.background_review_enabled)
+                ),
+                (
+                    "__ACMM__tool_search_enabled="
+                    + json.dumps(self.tool_search_enabled)
+                ),
+                (
                     "__ACMM__bundled_skills_opt_out="
                     + json.dumps(self.bundled_skills_opt_out)
                 ),
@@ -315,40 +335,53 @@ class fake_docker:
         self.provision_calls.append((script, timeout_seconds))
         self.provision_output_modes.append(output_mode)
 
+        full_apply = "model.provider" in script
+
         if output_mode == "normal" and output is not None:
-            output("[Hermes 1/11] set model.provider")
-            output("✓ Set model.provider = custom")
+            if full_apply:
+                output("[Hermes 1/14] set model.provider")
+                output("✓ Set model.provider = custom")
+            else:
+                output(
+                    "[Hermes 1/2] set tools.tool_search.enabled"
+                )
+                output("✓ Set tools.tool_search.enabled = off")
             output("[Hermes] Provisioning batch complete.")
 
         if self.provision_result is not None:
             return self.provision_result
 
-        self.model_provider = "custom"
-        self.model_base_url = "http://host.docker.internal:11434/v1"
-        self.model_api_mode = "chat_completions"
-        self.context_window = 64000
-        self.model_default = "nemotron-3-nano:30b-cloud"
-        self.reasoning_effort = "medium"
-        self.terminal_backend = "local"
-        self.platform_toolsets_cli = [
-            "file",
-            "skills",
-            "terminal",
-            "vision",
-        ]
-        self.disabled_toolsets = list(
-            self.expected_disabled_toolsets
-        )
-        self.max_turns = 90
-        self.compression_enabled = False
-        self.memory_enabled = False
-        self.user_profile_enabled = False
-        self.checkpoints_enabled = False
-        self.smart_model_routing_enabled = False
-        self.tool_progress = "all"
-        self.bundled_skills_opt_out = True
-        self.bundled_skill_manifest = ["hermes-agent"]
-        self.essential_skills = ["hermes-agent"]
+        if full_apply:
+            self.model_provider = "custom"
+            self.model_base_url = "http://host.docker.internal:11434/v1"
+            self.model_api_mode = "chat_completions"
+            self.context_window = 64000
+            self.model_default = "nemotron-3-nano:30b-cloud"
+            self.reasoning_effort = "medium"
+            self.terminal_backend = "local"
+            self.platform_toolsets_cli = [
+                "file",
+                "skills",
+                "terminal",
+                "vision",
+            ]
+            self.disabled_toolsets = list(
+                self.expected_disabled_toolsets
+            )
+            self.max_turns = 90
+            self.compression_enabled = False
+            self.memory_enabled = False
+            self.user_profile_enabled = False
+            self.checkpoints_enabled = False
+            self.smart_model_routing_enabled = False
+            self.tool_progress = "all"
+            self.title_generation_enabled = False
+            self.background_review_enabled = False
+            self.bundled_skills_opt_out = True
+            self.bundled_skill_manifest = ["hermes-agent"]
+            self.essential_skills = ["hermes-agent"]
+
+        self.tool_search_enabled = "off"
         self.plugins_enabled = ["acmm-tools"]
         return _ok(("provision",), "")
 
@@ -401,6 +434,11 @@ def test_apply_synchronizes_plugin_and_configures_hermes(tmp_path: Path) -> None
         "terminal",
         "vision",
     )
+    assert result["experiment_isolation"] == {
+        "title_generation_enabled": False,
+        "background_review_enabled": False,
+        "tool_search_enabled": "off",
+    }
     assert docker.model_provider == "custom"
     assert docker.model_base_url == "http://host.docker.internal:11434/v1"
     assert docker.model_api_mode == "chat_completions"
@@ -419,6 +457,9 @@ def test_apply_synchronizes_plugin_and_configures_hermes(tmp_path: Path) -> None
     assert "model.default" in script
     assert "agent.reasoning_effort" in script
     assert "terminal.backend" in script
+    assert "auxiliary.title_generation.enabled" in script
+    assert "auxiliary.background_review.enabled" in script
+    assert "tools.tool_search.enabled" in script
     assert "/opt/hermes/bin/hermes" in script
     assert "plugins enable acmm-tools --no-allow-tool-override" in script
     assert "apply Blank Slate policy" in script
@@ -432,7 +473,7 @@ def test_apply_synchronizes_plugin_and_configures_hermes(tmp_path: Path) -> None
     assert "/opt/hermes/.venv/bin/python" in script
     assert "/opt/hermes/.venv/bin/python" in script
     assert "'acmm'" in script
-    assert result["provisioning_operations"] == 11
+    assert result["provisioning_operations"] == 14
     assert docker.provision_output_modes == ["normal"]
 
 
@@ -467,6 +508,74 @@ def test_status_reports_desired_and_observed_state(tmp_path: Path) -> None:
     assert len(docker.exec_script_calls) == 1
     assert docker.exec_script_calls[0][1] == 30.0
     assert "/opt/hermes/bin/hermes" in docker.exec_script_calls[0][0]
+
+
+def test_status_is_safe_when_container_is_stopped(tmp_path: Path) -> None:
+    manager, docker = _manager(tmp_path)
+    manager.initialize_deployment()
+    manager.apply()
+    docker.running = False
+
+    status = manager.status()
+
+    assert status["observed"]["container_running"] is False
+    assert status["observed"]["bundled_skill_manifest"] is None
+    assert status["observed"]["essential_skills"] is None
+    assert status["observed"]["live_observation_ok"] is False
+
+
+def test_doctor_reports_stopped_container_without_live_checks(
+    tmp_path: Path,
+) -> None:
+    manager, docker = _manager(tmp_path)
+    manager.initialize_deployment()
+    manager.apply()
+    docker.running = False
+
+    report = manager.doctor()
+
+    assert not report.is_ready
+    names = [check.name for check in report.checks]
+    assert "plugin_sync:acmm-tools" in names
+    assert "container_running" in names
+    assert "model_provider" not in names
+    assert "blank_slate_essential_skills" not in names
+    check = next(
+        item
+        for item in report.checks
+        if item.name == "container_running"
+    )
+    assert not check.ok
+    assert "acmm-infra hermes up" in check.detail
+
+
+def test_doctor_reports_failed_live_observation_once(
+    tmp_path: Path,
+) -> None:
+    manager, docker = _manager(tmp_path)
+    manager.initialize_deployment()
+    manager.apply()
+    docker.running = True
+    docker.exec_script_result = command_result(
+        args=("exec-script",),
+        returncode=1,
+        stdout="",
+        stderr="live inspection failed",
+    )
+
+    report = manager.doctor()
+
+    assert not report.is_ready
+    names = [check.name for check in report.checks]
+    assert "live_observation" in names
+    assert "model_provider" not in names
+    check = next(
+        item
+        for item in report.checks
+        if item.name == "live_observation"
+    )
+    assert not check.ok
+    assert check.detail == "live inspection failed"
 
 
 def test_doctor_is_ready_for_matching_baseline(tmp_path: Path) -> None:
@@ -534,6 +643,104 @@ def test_apply_refuses_while_gateway_is_running(
     assert docker.provision_calls == []
 
 
+def test_apply_tools_reconciles_only_managed_tool_scope(
+    tmp_path: Path,
+) -> None:
+    manager, docker = _manager(tmp_path)
+    manager.initialize_deployment()
+
+    docker.model_provider = "custom-stable"
+    docker.model_default = "stable-model"
+    docker.context_window = 12345
+    docker.title_generation_enabled = True
+    docker.background_review_enabled = True
+    docker.tool_search_enabled = "auto"
+    docker.plugins_enabled = []
+
+    result = manager.apply_tools()
+
+    assert result == {
+        "plugins_synchronized": ["acmm-tools"],
+        "tool_search_enabled": "off",
+        "provisioning_operations": 2,
+    }
+    assert docker.model_provider == "custom-stable"
+    assert docker.model_default == "stable-model"
+    assert docker.context_window == 12345
+    assert docker.title_generation_enabled is True
+    assert docker.background_review_enabled is True
+    assert docker.tool_search_enabled == "off"
+    assert docker.plugins_enabled == ["acmm-tools"]
+
+    assert len(docker.provision_calls) == 1
+    script, timeout_seconds = docker.provision_calls[0]
+    assert timeout_seconds == 120.0
+    assert "tools.tool_search.enabled" in script
+    assert "plugins enable acmm-tools --no-allow-tool-override" in script
+    assert "model.provider" not in script
+    assert "model.default" not in script
+    assert "agent.reasoning_effort" not in script
+    assert "terminal.backend" not in script
+    assert "apply Blank Slate policy" not in script
+    assert "skills opt-out" not in script
+    assert "auxiliary.title_generation.enabled" not in script
+    assert "auxiliary.background_review.enabled" not in script
+
+
+def test_apply_tools_refuses_while_gateway_is_running(
+    tmp_path: Path,
+) -> None:
+    docker = fake_docker()
+    docker.running = True
+    manager, _ = _manager(tmp_path, docker)
+
+    with pytest.raises(infrastructure_error, match="gateway is running"):
+        manager.apply_tools()
+
+    assert docker.provision_calls == []
+
+
+def test_apply_tools_reports_narrow_progress(
+    tmp_path: Path,
+) -> None:
+    manager, _ = _manager(tmp_path)
+    messages: list[str] = []
+
+    manager.apply_tools(progress=messages.append)
+
+    assert messages == [
+        "[1/3] Verifying initialized Hermes deployment.",
+        "[2/3] Replacing repository-managed Hermes tool plugins.",
+        (
+            "[3/3] Applying 2 managed-tool operation(s) in one "
+            "provisioning container (timeout 120s)."
+        ),
+        "[Hermes 1/2] set tools.tool_search.enabled",
+        "✓ Set tools.tool_search.enabled = off",
+        "[Hermes] Provisioning batch complete.",
+    ]
+
+
+def test_doctor_detects_experiment_isolation_drift(
+    tmp_path: Path,
+) -> None:
+    manager, docker = _manager(tmp_path)
+    manager.initialize_deployment()
+    manager.apply()
+    docker.running = True
+    docker.title_generation_enabled = True
+    docker.background_review_enabled = True
+    docker.tool_search_enabled = "auto"
+
+    report = manager.doctor()
+
+    assert not report.is_ready
+    checks = {item.name: item for item in report.checks}
+    assert not checks["experiment_title_generation"].ok
+    assert not checks["experiment_background_review"].ok
+    assert not checks["experiment_tool_search"].ok
+
+
 def test_apply_timeout_is_reported_as_error(
     tmp_path: Path,
 ) -> None:
@@ -566,10 +773,10 @@ def test_apply_reports_progress_stages(
         "[1/4] Verifying initialized Hermes deployment.",
         "[2/4] Synchronizing repository-managed Hermes plugins.",
         (
-            "[3/4] Applying 11 Hermes operations in one provisioning container "
+            "[3/4] Applying 14 Hermes operations in one provisioning container "
             "(timeout 120s)."
         ),
-        "[Hermes 1/11] set model.provider",
+        "[Hermes 1/14] set model.provider",
         "✓ Set model.provider = custom",
         "[Hermes] Provisioning batch complete.",
         "[4/4] Hermes infrastructure baseline applied successfully.",
@@ -607,7 +814,7 @@ def test_apply_verbose_mode_uses_raw_provision_output(
         "[1/4] Verifying initialized Hermes deployment.",
         "[2/4] Synchronizing repository-managed Hermes plugins.",
         (
-            "[3/4] Applying 11 Hermes operations in one provisioning container "
+            "[3/4] Applying 14 Hermes operations in one provisioning container "
             "(timeout 120s)."
         ),
         "[4/4] Hermes infrastructure baseline applied successfully.",

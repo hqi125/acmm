@@ -137,7 +137,7 @@ class sequence_adapter:
                     "provider": "ollama_cloud",
                 },
                 "configuration": {
-                    "context_window": 65536,
+                    "context_window": 64000,
                 },
             },
         )
@@ -222,6 +222,8 @@ def test_execute_experiment_snapshots_contract_and_completes_plan(
         result.manifest_path.read_text(encoding="utf-8")
     )
 
+    assert manifest["execution"]["contract_run_count"] == 5
+    assert manifest["execution"]["selected_run_indices"] == [0, 1, 2, 3, 4]
     assert manifest["execution"]["planned_run_count"] == 5
     assert manifest["execution"]["resolved_run_count"] == 5
     assert manifest["execution"]["unresolved_run_indices"] == []
@@ -234,6 +236,64 @@ def test_execute_experiment_snapshots_contract_and_completes_plan(
 
         run_dir = result.session_dir / slot["attempts"][0]["result_path"]
         assert (run_dir / "run_record.yaml").is_file()
+
+
+def test_run_selection_executes_only_requested_slot(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    messages: list[str] = []
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=_registry(adapter),
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        max_attempts_per_run=1,
+        run_indices=(0,),
+        progress=messages.append,
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+    )
+
+    assert adapter.call_count == 1
+    assert len(result.slots) == 1
+    assert result.slots[0].planned.run_index == 0
+    assert result.unresolved_run_indices == ()
+
+    manifest = yaml.safe_load(
+        result.manifest_path.read_text(encoding="utf-8")
+    )
+
+    execution = manifest["execution"]
+    assert execution["contract_run_count"] == 5
+    assert execution["selected_run_indices"] == [0]
+    assert execution["planned_run_count"] == 1
+    assert execution["resolved_run_count"] == 1
+    assert [slot["run_index"] for slot in manifest["slots"]] == [0]
+    assert any("selected 1 of 5 planned run(s)" in item for item in messages)
+
+
+def test_run_selection_rejects_unknown_index_without_side_effects(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+
+    with pytest.raises(ValueError, match="Run index 99"):
+        execute_experiment(
+            contract=contract,
+            contract_path=CONTRACT_PATH,
+            registry=_registry(sequence_adapter()),
+            results_root=tmp_path,
+            harness_version="0.1.0",
+            run_indices=(99,),
+            execution_id_factory=lambda: EXECUTION_ID,
+        )
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_invalid_attempt_is_preserved_and_then_retried(

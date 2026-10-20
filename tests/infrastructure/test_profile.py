@@ -33,6 +33,9 @@ def test_hermes_profile_loads_repository_baseline() -> None:
     assert profile.blank_slate.smart_model_routing_enabled is False
     assert profile.blank_slate.tool_progress == "all"
     assert profile.blank_slate.bundled_skills == "essential_only"
+    assert profile.experiment_isolation.title_generation_enabled is False
+    assert profile.experiment_isolation.background_review_enabled is False
+    assert profile.experiment_isolation.tool_search_enabled == "off"
     assert profile.deployment_directory == Path("hermes")
     assert profile.data_directory == Path("data")
     assert profile.plugins[0].name == "acmm-tools"

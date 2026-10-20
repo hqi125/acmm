@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 from typing import Any, Callable, Mapping
 
@@ -46,8 +47,7 @@ class hermes_adapter:
     ) -> adapter_execution_result:
         try:
             magic_number = _environment_magic_number(environment)
-            command, process_environment = self._build_invocation(
-                subject=subject,
+            command, process_environment = self._build_chat_invocation(
                 scenario=scenario,
                 termination=termination,
                 magic_number=magic_number,
@@ -58,24 +58,16 @@ class hermes_adapter:
                 message=str(exc) or exc.__class__.__name__,
             )
 
-        timeout_seconds = termination.get("timeout_seconds")
-        process_timeout = None
-
-        if timeout_seconds is not None:
-            process_timeout = (
-                float(timeout_seconds)
-                + self._config.subprocess_grace_seconds
-            )
+        process_timeout = _process_timeout(
+            termination,
+            self._config.subprocess_grace_seconds,
+        )
 
         try:
-            completed = self._runner(
+            completed = self._run(
                 command,
-                cwd=self._config.working_directory,
-                env=process_environment,
-                text=True,
-                capture_output=True,
-                timeout=process_timeout,
-                check=False,
+                process_environment,
+                process_timeout,
             )
         except subprocess.TimeoutExpired:
             return _failure_result(
@@ -91,9 +83,57 @@ class hermes_adapter:
                 message=str(exc) or exc.__class__.__name__,
             )
 
-        parsed = _parse_stream_json(
-            completed.stdout,
+        session_id = _session_id_from_stderr(completed.stderr)
+
+        if session_id is None:
+            detail = completed.stderr.strip()
+
+            return _failure_result(
+                kind="missing_session_id",
+                message=(
+                    "Hermes quiet one-shot execution did not report a session_id."
+                    + (f" Hermes stderr: {detail}" if detail else "")
+                ),
+            )
+
+        try:
+            export_command = self._build_export_invocation(session_id)
+            exported = self._run(
+                export_command,
+                process_environment,
+                process_timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return _failure_result(
+                kind="session_export_timeout",
+                message=(
+                    "Hermes session export exceeded the harness subprocess "
+                    "timeout."
+                ),
+            )
+        except OSError as exc:
+            return _failure_result(
+                kind="session_export_process_error",
+                message=str(exc) or exc.__class__.__name__,
+            )
+
+        if exported.returncode != 0:
+            detail = exported.stderr.strip() or exported.stdout.strip()
+
+            return _failure_result(
+                kind="session_export_failed",
+                message=(
+                    f"Hermes session export exited with status "
+                    f"{exported.returncode}."
+                    + (f" {detail}" if detail else "")
+                ),
+            )
+
+        parsed = _parse_session_export(
+            exported.stdout,
             scenario["task"]["prompt"],
+            completed.stdout,
+            session_id,
         )
 
         if parsed.failure is not None:
@@ -104,29 +144,31 @@ class hermes_adapter:
                 failure=parsed.failure,
             )
 
-        result_event = parsed.result_event
+        expected_model = subject["model"]["name"]
 
-        if result_event is None:
-            stderr = completed.stderr.strip()
-            detail = f" Hermes stderr: {stderr}" if stderr else ""
-
+        if parsed.model != expected_model:
             return adapter_execution_result(
                 termination="harness_error",
                 evidence=parsed.evidence,
-                subject_provenance=None,
+                subject_provenance=_subject_provenance(
+                    subject,
+                    parsed.model,
+                    session_id,
+                ),
                 failure=execution_failure(
-                    kind="missing_result_event",
+                    kind="subject_model_mismatch",
                     message=(
-                        "Hermes stream ended without a terminal result event."
-                        + detail
+                        f"Hermes session reported model {parsed.model!r}; "
+                        f"Contract subject requires {expected_model!r}."
                     ),
                 ),
             )
 
-        event_exit_code = result_event.get("exit_code", completed.returncode)
-
-        if completed.returncode != 0 or event_exit_code != 0:
-            termination_kind = _termination_from_failed_result(result_event)
+        if completed.returncode != 0:
+            termination_kind = _termination_from_failed_process(
+                completed,
+                parsed.session,
+            )
 
             if termination_kind in {"timeout", "max_steps"}:
                 return adapter_execution_result(
@@ -135,17 +177,11 @@ class hermes_adapter:
                     subject_provenance=_subject_provenance(
                         subject,
                         parsed.model,
-                        parsed.session_id,
+                        session_id,
                     ),
                 )
 
-            error = result_event.get("error")
-            message = (
-                str(error)
-                if error
-                else completed.stderr.strip()
-                or f"Hermes exited with status {completed.returncode}."
-            )
+            detail = completed.stderr.strip()
 
             return adapter_execution_result(
                 termination="harness_error",
@@ -153,11 +189,14 @@ class hermes_adapter:
                 subject_provenance=_subject_provenance(
                     subject,
                     parsed.model,
-                    parsed.session_id,
+                    session_id,
                 ),
                 failure=execution_failure(
                     kind="hermes_run_failed",
-                    message=message,
+                    message=(
+                        detail
+                        or f"Hermes exited with status {completed.returncode}."
+                    ),
                 ),
             )
 
@@ -167,18 +206,32 @@ class hermes_adapter:
             subject_provenance=_subject_provenance(
                 subject,
                 parsed.model,
-                parsed.session_id,
+                session_id,
             ),
         )
 
-    def _build_invocation(
+    def _run(
         self,
-        subject: dict[str, Any],
+        command: list[str],
+        environment: dict[str, str],
+        process_timeout: float | None,
+    ) -> subprocess.CompletedProcess[str]:
+        return self._runner(
+            command,
+            cwd=self._config.working_directory,
+            env=environment,
+            text=True,
+            capture_output=True,
+            timeout=process_timeout,
+            check=False,
+        )
+
+    def _build_chat_invocation(
+        self,
         scenario: dict[str, Any],
         termination: dict[str, Any],
         magic_number: int,
     ) -> tuple[list[str], dict[str, str]]:
-        model = subject["model"]["name"]
         prompt = scenario["task"]["prompt"]
         max_steps = termination["max_steps"]
         timeout_seconds = termination.get("timeout_seconds")
@@ -194,10 +247,7 @@ class hermes_adapter:
             self._config.executable,
             "chat",
             "--oneshot",
-            "--format",
-            "stream-json",
-            "--model",
-            model,
+            "-Q",
             "--toolsets",
             self._config.toolset,
             "--max-turns",
@@ -251,21 +301,52 @@ class hermes_adapter:
 
         return docker_args, environment
 
+    def _build_export_invocation(
+        self,
+        session_id: str,
+    ) -> list[str]:
+        hermes_args = [
+            self._config.executable,
+            "sessions",
+            "export",
+            "-",
+            "--session-id",
+            session_id,
+            "--format",
+            "jsonl",
+        ]
+
+        if self._config.docker_container is None:
+            return [
+                *self._config.command_prefix,
+                *hermes_args,
+            ]
+
+        return [
+            *self._config.command_prefix,
+            "docker",
+            "exec",
+            "-i",
+            self._config.docker_container,
+            *hermes_args,
+        ]
+
 
 @dataclass(frozen=True)
-class _parsed_stream:
+class _parsed_session:
     evidence: tuple[captured_evidence, ...]
-    result_event: dict[str, Any] | None
-    session_id: str | None
+    session: dict[str, Any] | None
     model: str | None
     failure: execution_failure | None
 
 
-def _parse_stream_json(
+def _parse_session_export(
     stdout: str,
     prompt: str,
-) -> _parsed_stream:
-    events: list[dict[str, Any]] = []
+    final_stdout: str,
+    expected_session_id: str,
+) -> _parsed_session:
+    sessions: list[dict[str, Any]] = []
 
     for line_number, raw_line in enumerate(stdout.splitlines(), start=1):
         line = raw_line.strip()
@@ -274,117 +355,103 @@ def _parse_stream_json(
             continue
 
         try:
-            event = json.loads(line)
+            value = json.loads(line)
         except json.JSONDecodeError as exc:
-            return _parsed_stream(
+            return _parsed_session(
                 evidence=(),
-                result_event=None,
-                session_id=None,
+                session=None,
                 model=None,
                 failure=execution_failure(
-                    kind="invalid_hermes_stream",
+                    kind="invalid_session_export",
                     message=(
-                        f"Hermes emitted invalid JSON on stdout line "
+                        f"Hermes session export emitted invalid JSON on line "
                         f"{line_number}: {exc.msg}."
                     ),
                 ),
             )
 
-        if not isinstance(event, dict):
-            return _parsed_stream(
+        if not isinstance(value, dict):
+            return _parsed_session(
                 evidence=(),
-                result_event=None,
-                session_id=None,
+                session=None,
                 model=None,
                 failure=execution_failure(
-                    kind="invalid_hermes_stream",
+                    kind="invalid_session_export",
                     message=(
-                        f"Hermes stdout line {line_number} is not a JSON object."
+                        f"Hermes session export line {line_number} is not "
+                        "a JSON object."
                     ),
                 ),
             )
 
-        events.append(event)
+        sessions.append(value)
 
-    init_event = next(
+    session = next(
         (
-            event
-            for event in events
-            if event.get("type") == "system"
-            and event.get("subtype") == "init"
+            item
+            for item in sessions
+            if _session_identifier(item) == expected_session_id
         ),
         None,
     )
 
-    result_event = next(
-        (
-            event
-            for event in reversed(events)
-            if event.get("type") == "result"
-        ),
-        None,
-    )
+    if session is None:
+        return _parsed_session(
+            evidence=(),
+            session=None,
+            model=None,
+            failure=execution_failure(
+                kind="missing_exported_session",
+                message=(
+                    f"Hermes session export did not contain session "
+                    f"{expected_session_id!r}."
+                ),
+            ),
+        )
 
-    session_id = None
-    model = None
+    messages = session.get("messages")
 
-    if init_event is not None:
-        session_id = _optional_string(init_event.get("session_id"))
-        model = _optional_string(init_event.get("model"))
+    if not isinstance(messages, list) or not all(
+        isinstance(item, dict)
+        for item in messages
+    ):
+        return _parsed_session(
+            evidence=(),
+            session=session,
+            model=_optional_string(session.get("model")),
+            failure=execution_failure(
+                kind="invalid_session_messages",
+                message=(
+                    "Hermes exported session does not contain a JSON message "
+                    "array."
+                ),
+            ),
+        )
 
-    if result_event is not None and session_id is None:
-        session_id = _optional_string(result_event.get("session_id"))
-
-    tool_calls = [
-        {
-            "name": event.get("name"),
-            "input": event.get("input", {}),
-            "timestamp": event.get("timestamp"),
-        }
-        for event in events
-        if event.get("type") == "tool_use"
-    ]
-
-    tool_results = [
-        {
-            "name": event.get("name"),
-            "output": event.get("output"),
-            "duration_ms": event.get("duration_ms"),
-            "is_error": bool(event.get("is_error", False)),
-            "timestamp": event.get("timestamp"),
-        }
-        for event in events
-        if event.get("type") == "tool_result"
-    ]
-
-    text_deltas = [
-        str(event.get("text", ""))
-        for event in events
-        if event.get("type") == "text"
-    ]
-
-    final_response = ""
-
-    if result_event is not None:
-        final_response = str(result_event.get("text") or "")
+    tool_calls, call_names = _normalize_tool_calls(messages)
+    tool_results = _normalize_tool_results(messages, call_names)
+    final_response = final_stdout.strip()
 
     if not final_response:
-        final_response = "".join(text_deltas)
+        final_response = _last_assistant_text(messages)
+
+    model = _optional_string(session.get("model"))
+
+    if model is None:
+        return _parsed_session(
+            evidence=(),
+            session=session,
+            model=None,
+            failure=execution_failure(
+                kind="missing_session_model",
+                message="Hermes exported session does not report its model.",
+            ),
+        )
 
     conversation = {
-        "session_id": session_id,
+        "session_id": expected_session_id,
         "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-            },
-            {
-                "role": "assistant",
-                "content": final_response,
-            },
-        ],
-        "assistant_text_deltas": text_deltas,
+        "messages": messages,
     }
 
     evidence = (
@@ -414,13 +481,314 @@ def _parse_stream_json(
         ),
     )
 
-    return _parsed_stream(
+    if not _transcript_contains_prompt(messages, prompt):
+        return _parsed_session(
+            evidence=evidence,
+            session=session,
+            model=model,
+            failure=execution_failure(
+                kind="session_prompt_mismatch",
+                message=(
+                    "Hermes exported session does not contain the Contract "
+                    "scenario prompt."
+                ),
+            ),
+        )
+
+    return _parsed_session(
         evidence=evidence,
-        result_event=result_event,
-        session_id=session_id,
+        session=session,
         model=model,
         failure=None,
     )
+
+
+def _normalize_tool_calls(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    normalized: list[dict[str, Any]] = []
+    names_by_id: dict[str, str] = {}
+
+    for message in messages:
+        raw_calls = _json_value(message.get("tool_calls"))
+
+        if not isinstance(raw_calls, list):
+            continue
+
+        for raw_call in raw_calls:
+            if not isinstance(raw_call, dict):
+                continue
+
+            function = raw_call.get("function")
+            function_data = function if isinstance(function, dict) else {}
+
+            name = (
+                _optional_string(function_data.get("name"))
+                or _optional_string(raw_call.get("name"))
+            )
+
+            if name is None:
+                continue
+
+            arguments = (
+                function_data.get("arguments")
+                if "arguments" in function_data
+                else raw_call.get("arguments", raw_call.get("input", {}))
+            )
+            parsed_input = _json_value(arguments)
+
+            if parsed_input is None:
+                parsed_input = {}
+
+            call_id = (
+                _optional_string(raw_call.get("id"))
+                or _optional_string(raw_call.get("tool_call_id"))
+            )
+
+            transport_name = name
+            underlying = _unwrap_tool_search_bridge(name, parsed_input)
+
+            if underlying is not None:
+                name, parsed_input = underlying
+
+            if call_id is not None:
+                names_by_id[call_id] = name
+
+            item = {
+                "id": call_id,
+                "name": name,
+                "input": parsed_input,
+                "timestamp": message.get("timestamp"),
+            }
+
+            if transport_name != name:
+                item["transport_name"] = transport_name
+
+            normalized.append(item)
+
+    return normalized, names_by_id
+
+
+def _normalize_tool_results(
+    messages: list[dict[str, Any]],
+    names_by_id: Mapping[str, str],
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+
+    for message in messages:
+        if message.get("role") != "tool":
+            continue
+
+        call_id = (
+            _optional_string(message.get("tool_call_id"))
+            or _optional_string(message.get("call_id"))
+        )
+        normalized_name = (
+            names_by_id.get(call_id)
+            if call_id is not None
+            else None
+        )
+        persisted_name = (
+            _optional_string(message.get("tool_name"))
+            or _optional_string(message.get("name"))
+        )
+        name = normalized_name or persisted_name
+
+        if name is None:
+            continue
+
+        output = _message_content(message.get("content"))
+        is_error = bool(message.get("is_error", False))
+
+        if not is_error:
+            status = str(message.get("status") or "").lower()
+            is_error = status in {"error", "failed", "failure"}
+
+        item = {
+            "id": call_id,
+            "name": name,
+            "output": output,
+            "is_error": is_error,
+            "timestamp": message.get("timestamp"),
+        }
+
+        if persisted_name is not None and persisted_name != name:
+            item["transport_name"] = persisted_name
+
+        normalized.append(item)
+
+    return normalized
+
+
+
+def _unwrap_tool_search_bridge(
+    name: str,
+    parsed_input: Any,
+) -> tuple[str, Any] | None:
+    if name != "tool_call" or not isinstance(parsed_input, dict):
+        return None
+
+    calls = parsed_input.get("calls")
+
+    if not isinstance(calls, list) or len(calls) != 1:
+        return None
+
+    entry = calls[0]
+
+    if not isinstance(entry, dict):
+        return None
+
+    underlying_name = _optional_string(entry.get("name"))
+    arguments = entry.get("arguments", {})
+
+    if underlying_name is None or not isinstance(arguments, dict):
+        return None
+
+    return underlying_name, arguments
+
+
+def _transcript_contains_prompt(
+    messages: list[dict[str, Any]],
+    prompt: str,
+) -> bool:
+    return any(
+        message.get("role") == "user"
+        and _message_content(message.get("content")).strip() == prompt.strip()
+        for message in messages
+    )
+
+
+def _last_assistant_text(
+    messages: list[dict[str, Any]],
+) -> str:
+    for message in reversed(messages):
+        if message.get("role") != "assistant":
+            continue
+
+        text = _message_content(message.get("content")).strip()
+
+        if text:
+            return text
+
+    return ""
+
+
+def _message_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+
+    if isinstance(value, list):
+        parts: list[str] = []
+
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+
+            if isinstance(item, dict):
+                text = item.get("text")
+
+                if isinstance(text, str):
+                    parts.append(text)
+                    continue
+
+            parts.append(
+                json.dumps(
+                    item,
+                    ensure_ascii=True,
+                    separators=(",", ":"),
+                )
+            )
+
+        return "\n".join(parts)
+
+    if value is None:
+        return ""
+
+    return str(value)
+
+
+def _json_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+
+    stripped = value.strip()
+
+    if not stripped:
+        return value
+
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        return value
+
+
+def _session_id_from_stderr(stderr: str) -> str | None:
+    matches = re.findall(
+        r"(?m)^\s*session_id:\s*(\S+)\s*$",
+        stderr,
+    )
+
+    return matches[-1] if matches else None
+
+
+def _session_identifier(session: Mapping[str, Any]) -> str | None:
+    return (
+        _optional_string(session.get("id"))
+        or _optional_string(session.get("session_id"))
+    )
+
+
+def _process_timeout(
+    termination: Mapping[str, Any],
+    grace_seconds: float,
+) -> float | None:
+    timeout_seconds = termination.get("timeout_seconds")
+
+    if timeout_seconds is None:
+        return None
+
+    return float(timeout_seconds) + grace_seconds
+
+
+def _termination_from_failed_process(
+    completed: subprocess.CompletedProcess[str],
+    session: Mapping[str, Any] | None,
+) -> str:
+    parts = [
+        completed.stderr,
+        completed.stdout,
+    ]
+
+    if session is not None:
+        for key in (
+            "end_reason",
+            "failure_reason",
+            "error",
+            "status",
+        ):
+            value = session.get(key)
+
+            if value is not None:
+                parts.append(str(value))
+
+    detail = " ".join(parts).lower()
+
+    if (
+        "max turn" in detail
+        or "maximum iteration" in detail
+        or "iteration budget" in detail
+    ):
+        return "max_steps"
+
+    if (
+        "run budget" in detail
+        or "timeout" in detail
+        or "timed out" in detail
+    ):
+        return "timeout"
+
+    return "harness_error"
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -470,20 +838,6 @@ def _subject_provenance(
         "model": model,
         "configuration": configuration,
     }
-
-
-def _termination_from_failed_result(
-    result_event: Mapping[str, Any],
-) -> str:
-    error = str(result_event.get("error") or "").lower()
-
-    if "max turn" in error or "iteration" in error:
-        return "max_steps"
-
-    if "budget" in error or "timeout" in error or "timed out" in error:
-        return "timeout"
-
-    return "harness_error"
 
 
 def _failure_result(

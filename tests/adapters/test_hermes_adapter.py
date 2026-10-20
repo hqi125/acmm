@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
-
-import pytest
 
 from acmm.adapters.hermes import hermes_adapter, hermes_adapter_config
 
@@ -20,7 +17,7 @@ SUBJECT = {
         "provider": "ollama_cloud",
     },
     "configuration": {
-        "context_window": 65536,
+        "context_window": 64000,
     },
 }
 
@@ -44,91 +41,116 @@ ENVIRONMENT = {
 }
 
 
-def _stream(
+def _session_export(
     *,
-    result_exit_code: int = 0,
-    result_text: str = "The result is 100.",
-    result_error: str | None = None,
+    model: str = "nemotron-3-nano:30b-cloud",
+    final_response: str = "The result is 100.",
 ) -> str:
-    events = [
-        {
-            "type": "system",
-            "subtype": "init",
-            "timestamp": 1,
-            "model": "nemotron-3-nano:30b-cloud",
-            "session_id": "session-123",
-        },
-        {
-            "type": "tool_use",
-            "timestamp": 2,
-            "name": "get_magic_number",
-            "input": {},
-        },
-        {
-            "type": "tool_result",
-            "timestamp": 3,
-            "name": "get_magic_number",
-            "output": json.dumps({"magic_number": 87}),
-            "duration_ms": 1,
-            "is_error": False,
-        },
-        {
-            "type": "tool_use",
-            "timestamp": 4,
-            "name": "add_numbers",
-            "input": {
-                "a": 87,
-                "b": 13,
+    session = {
+        "id": "session-123",
+        "model": model,
+        "source": "tool",
+        "messages": [
+            {
+                "role": "user",
+                "content": SCENARIO["task"]["prompt"],
+                "timestamp": 1,
             },
-        },
-        {
-            "type": "tool_result",
-            "timestamp": 5,
-            "name": "add_numbers",
-            "output": json.dumps({"result": 100}),
-            "duration_ms": 1,
-            "is_error": False,
-        },
-        {
-            "type": "text",
-            "timestamp": 6,
-            "text": result_text,
-        },
-        {
-            "type": "result",
-            "timestamp": 7,
-            "session_id": "session-123",
-            "exit_code": result_exit_code,
-            "text": result_text,
-        },
-    ]
+            {
+                "role": "assistant",
+                "content": "",
+                "timestamp": 2,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "get_magic_number",
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call-1",
+                "name": "get_magic_number",
+                "content": json.dumps({"magic_number": 87}),
+                "timestamp": 3,
+            },
+            {
+                "role": "assistant",
+                "content": "",
+                "timestamp": 4,
+                "tool_calls": [
+                    {
+                        "id": "call-2",
+                        "type": "function",
+                        "function": {
+                            "name": "add_numbers",
+                            "arguments": json.dumps(
+                                {
+                                    "a": 87,
+                                    "b": 13,
+                                }
+                            ),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call-2",
+                "name": "add_numbers",
+                "content": json.dumps({"result": 100}),
+                "timestamp": 5,
+            },
+            {
+                "role": "assistant",
+                "content": final_response,
+                "timestamp": 6,
+            },
+        ],
+    }
 
-    if result_error is not None:
-        events[-1]["error"] = result_error
-
-    return "\n".join(json.dumps(event) for event in events) + "\n"
+    return json.dumps(session) + "\n"
 
 
-def test_hermes_adapter_builds_structured_evidence() -> None:
-    captured: dict = {}
-
+def _successful_runner(
+    calls: list[tuple[list[str], dict]],
+    *,
+    model: str = "nemotron-3-nano:30b-cloud",
+):
     def runner(command, **kwargs):
-        captured["command"] = command
-        captured["kwargs"] = kwargs
+        calls.append((list(command), kwargs))
+
+        if "sessions" in command and "export" in command:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=_session_export(model=model),
+                stderr="",
+            )
 
         return subprocess.CompletedProcess(
             args=command,
             returncode=0,
-            stdout=_stream(),
-            stderr="",
+            stdout="The result is 100.\n",
+            stderr="\nsession_id: session-123\n",
         )
+
+    return runner
+
+
+def test_hermes_adapter_builds_structured_evidence_from_session_export() -> None:
+    calls: list[tuple[list[str], dict]] = []
 
     adapter = hermes_adapter(
         hermes_adapter_config(
             provider="configured-provider",
             reasoning="medium",
         ),
-        runner=runner,
+        runner=_successful_runner(calls),
     )
 
     result = adapter.execute(
@@ -144,6 +166,9 @@ def test_hermes_adapter_builds_structured_evidence() -> None:
     assert result.subject_provenance["configuration"]["hermes_session_id"] == (
         "session-123"
     )
+    assert result.subject_provenance["configuration"]["reported_model"] == (
+        "nemotron-3-nano:30b-cloud"
+    )
     assert [item.id for item in result.evidence] == [
         "conversation",
         "tool_calls",
@@ -151,44 +176,97 @@ def test_hermes_adapter_builds_structured_evidence() -> None:
         "final_response",
     ]
 
-    command = captured["command"]
-    assert command[:2] == ["hermes", "chat"]
-    assert "--oneshot" in command
-    assert command[command.index("--format") + 1] == "stream-json"
-    assert command[command.index("--model") + 1] == "nemotron-3-nano:30b-cloud"
-    assert command[command.index("--toolsets") + 1] == "acmm"
-    assert command[command.index("--max-turns") + 1] == "32"
-    assert command[command.index("--run-budget") + 1] == "120"
-    assert command[command.index("--provider") + 1] == "configured-provider"
-    assert command[command.index("--reasoning") + 1] == "medium"
+    assert len(calls) == 2
+    chat_command, chat_kwargs = calls[0]
+    export_command, export_kwargs = calls[1]
 
-    assert captured["kwargs"]["env"]["ACMM_MAGIC_NUMBER"] == "87"
-    assert captured["kwargs"]["timeout"] == 135.0
+    assert chat_command[:2] == ["hermes", "chat"]
+    assert "--oneshot" in chat_command
+    assert "-Q" in chat_command
+    assert "--format" not in chat_command
+    assert "--model" not in chat_command
+    assert chat_command[chat_command.index("--toolsets") + 1] == "acmm"
+    assert chat_command[chat_command.index("--max-turns") + 1] == "32"
+    assert chat_command[chat_command.index("--run-budget") + 1] == "120"
+    assert chat_command[chat_command.index("--provider") + 1] == (
+        "configured-provider"
+    )
+    assert chat_command[chat_command.index("--reasoning") + 1] == "medium"
+
+    assert export_command == [
+        "hermes",
+        "sessions",
+        "export",
+        "-",
+        "--session-id",
+        "session-123",
+        "--format",
+        "jsonl",
+    ]
+
+    assert chat_kwargs["env"]["ACMM_MAGIC_NUMBER"] == "87"
+    assert chat_kwargs["timeout"] == 135.0
+    assert export_kwargs["timeout"] == 135.0
 
     conversation = json.loads(result.evidence[0].content)
+    assert conversation["session_id"] == "session-123"
     assert conversation["messages"][0]["role"] == "user"
-    assert conversation["messages"][0]["content"] == SCENARIO["task"]["prompt"]
-    assert conversation["messages"][1]["content"] == "The result is 100."
+
+    tool_calls = json.loads(result.evidence[1].content)
+    assert tool_calls == [
+        {
+            "id": "call-1",
+            "name": "get_magic_number",
+            "input": {},
+            "timestamp": 2,
+        },
+        {
+            "id": "call-2",
+            "name": "add_numbers",
+            "input": {
+                "a": 87,
+                "b": 13,
+            },
+            "timestamp": 4,
+        },
+    ]
+
+    tool_results = json.loads(result.evidence[2].content)
+    assert [item["name"] for item in tool_results] == [
+        "get_magic_number",
+        "add_numbers",
+    ]
+    assert result.evidence[3].content == b"The result is 100."
 
 
-def test_docker_mode_injects_fixture_value_into_container() -> None:
-    captured: dict = {}
+def test_live_command_relies_on_qualified_model_route() -> None:
+    calls: list[tuple[list[str], dict]] = []
 
-    def runner(command, **kwargs):
-        captured["command"] = command
+    result = hermes_adapter(
+        runner=_successful_runner(calls)
+    ).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
 
-        return subprocess.CompletedProcess(
-            args=command,
-            returncode=0,
-            stdout=_stream(),
-            stderr="",
-        )
+    assert result.failure is None
+    chat_command = calls[0][0]
+    assert "--model" not in chat_command
+    assert "--provider" not in chat_command
+    assert "--reasoning" not in chat_command
+
+
+def test_docker_mode_injects_fixture_value_and_exports_same_session() -> None:
+    calls: list[tuple[list[str], dict]] = []
 
     adapter = hermes_adapter(
         hermes_adapter_config(
             docker_container="hermes-agent",
+            executable="/opt/hermes/bin/hermes",
         ),
-        runner=runner,
+        runner=_successful_runner(calls),
     )
 
     result = adapter.execute(
@@ -199,30 +277,57 @@ def test_docker_mode_injects_fixture_value_into_container() -> None:
     )
 
     assert result.failure is None
-    assert captured["command"][:7] == [
+
+    chat_command = calls[0][0]
+    assert chat_command[:7] == [
         "docker",
         "exec",
         "-i",
         "--env",
         "ACMM_MAGIC_NUMBER=87",
         "hermes-agent",
-        "hermes",
+        "/opt/hermes/bin/hermes",
     ]
+
+    export_command = calls[1][0]
+    assert export_command[:5] == [
+        "docker",
+        "exec",
+        "-i",
+        "hermes-agent",
+        "/opt/hermes/bin/hermes",
+    ]
+    assert export_command[-6:] == [
+        "sessions",
+        "export",
+        "-",
+        "--session-id",
+        "session-123",
+        "--format",
+        "jsonl",
+    ][-6:]
 
 
 def test_run_budget_exhaustion_is_valid_agent_timeout() -> None:
     def runner(command, **kwargs):
         del kwargs
 
+        if "sessions" in command and "export" in command:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=_session_export(final_response=""),
+                stderr="",
+            )
+
         return subprocess.CompletedProcess(
             args=command,
             returncode=1,
-            stdout=_stream(
-                result_exit_code=1,
-                result_text="",
-                result_error="run budget timeout exceeded",
+            stdout="",
+            stderr=(
+                "Error: run budget timeout exceeded\n"
+                "session_id: session-123\n"
             ),
-            stderr="",
         )
 
     result = hermes_adapter(runner=runner).execute(
@@ -241,15 +346,22 @@ def test_iteration_budget_is_valid_max_steps_termination() -> None:
     def runner(command, **kwargs):
         del kwargs
 
+        if "sessions" in command and "export" in command:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=_session_export(final_response=""),
+                stderr="",
+            )
+
         return subprocess.CompletedProcess(
             args=command,
             returncode=1,
-            stdout=_stream(
-                result_exit_code=1,
-                result_text="",
-                result_error="maximum iteration budget reached",
+            stdout="",
+            stderr=(
+                "Error: maximum iteration budget reached\n"
+                "session_id: session-123\n"
             ),
-            stderr="",
         )
 
     result = hermes_adapter(runner=runner).execute(
@@ -263,14 +375,14 @@ def test_iteration_budget_is_valid_max_steps_termination() -> None:
     assert result.termination == "max_steps"
 
 
-def test_invalid_stream_becomes_infrastructure_failure() -> None:
+def test_missing_session_id_becomes_infrastructure_failure() -> None:
     def runner(command, **kwargs):
         del kwargs
 
         return subprocess.CompletedProcess(
             args=command,
             returncode=0,
-            stdout="not-json\n",
+            stdout="The result is 100.\n",
             stderr="",
         )
 
@@ -283,7 +395,89 @@ def test_invalid_stream_becomes_infrastructure_failure() -> None:
 
     assert result.termination == "harness_error"
     assert result.failure is not None
-    assert result.failure.kind == "invalid_hermes_stream"
+    assert result.failure.kind == "missing_session_id"
+
+
+def test_invalid_session_export_becomes_infrastructure_failure() -> None:
+    def runner(command, **kwargs):
+        del kwargs
+
+        if "sessions" in command and "export" in command:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="not-json\n",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="The result is 100.\n",
+            stderr="session_id: session-123\n",
+        )
+
+    result = hermes_adapter(runner=runner).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.termination == "harness_error"
+    assert result.failure is not None
+    assert result.failure.kind == "invalid_session_export"
+
+
+def test_session_model_mismatch_becomes_infrastructure_failure() -> None:
+    calls: list[tuple[list[str], dict]] = []
+
+    result = hermes_adapter(
+        runner=_successful_runner(
+            calls,
+            model="some-other-model",
+        )
+    ).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.termination == "harness_error"
+    assert result.failure is not None
+    assert result.failure.kind == "subject_model_mismatch"
+
+
+def test_session_export_failure_becomes_infrastructure_failure() -> None:
+    def runner(command, **kwargs):
+        del kwargs
+
+        if "sessions" in command and "export" in command:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=2,
+                stdout="",
+                stderr="session not found",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="The result is 100.\n",
+            stderr="session_id: session-123\n",
+        )
+
+    result = hermes_adapter(runner=runner).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.termination == "harness_error"
+    assert result.failure is not None
+    assert result.failure.kind == "session_export_failed"
 
 
 def test_process_timeout_becomes_infrastructure_failure() -> None:
@@ -301,3 +495,105 @@ def test_process_timeout_becomes_infrastructure_failure() -> None:
     assert result.termination == "harness_error"
     assert result.failure is not None
     assert result.failure.kind == "adapter_process_timeout"
+
+def test_tool_search_bridge_is_normalized_to_underlying_tool() -> None:
+    calls: list[tuple[list[str], dict]] = []
+
+    def runner(command, **kwargs):
+        calls.append((list(command), kwargs))
+
+        if "sessions" in command and "export" in command:
+            session = {
+                "id": "session-123",
+                "model": "nemotron-3-nano:30b-cloud",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": SCENARIO["task"]["prompt"],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "bridge-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "tool_call",
+                                    "arguments": json.dumps(
+                                        {
+                                            "calls": [
+                                                {
+                                                    "name": "get_magic_number",
+                                                    "arguments": {},
+                                                }
+                                            ]
+                                        }
+                                    ),
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "bridge-1",
+                        "name": "tool_call",
+                        "content": json.dumps(
+                            {
+                                "magic_number": 87,
+                            }
+                        ),
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "87",
+                    },
+                ],
+            }
+
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=json.dumps(session) + "\n",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="87\n",
+            stderr="session_id: session-123\n",
+        )
+
+    result = hermes_adapter(runner=runner).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.failure is None
+
+    tool_calls = json.loads(result.evidence[1].content)
+    assert tool_calls == [
+        {
+            "id": "bridge-1",
+            "name": "get_magic_number",
+            "input": {},
+            "timestamp": None,
+            "transport_name": "tool_call",
+        }
+    ]
+
+    tool_results = json.loads(result.evidence[2].content)
+    assert tool_results == [
+        {
+            "id": "bridge-1",
+            "name": "get_magic_number",
+            "output": json.dumps({"magic_number": 87}),
+            "is_error": False,
+            "timestamp": None,
+            "transport_name": "tool_call",
+        }
+    ]
+

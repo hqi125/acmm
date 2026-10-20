@@ -23,7 +23,13 @@ provenance:
       name: nemotron-3-nano:30b-cloud
       provider: ollama_cloud
     configuration:
-      context_window: 65536
+      context_window: 64000
+      reasoning_effort: medium
+      agent_baseline: blank_slate
+      experiment_isolation:
+        title_generation_enabled: false
+        background_review_enabled: false
+        tool_search_enabled: "off"
   environment:
     fixture: magic_number_environment_v1
     configuration: {}

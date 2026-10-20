@@ -94,6 +94,9 @@ model.context_length
 model.default
 agent.reasoning_effort
 terminal.backend
+auxiliary.title_generation.enabled
+auxiliary.background_review.enabled
+tools.tool_search.enabled
 managed plugin enablement
 ```
 
@@ -213,6 +216,60 @@ subsequent launches.
 `doctor` verifies all of these facts from the running Hermes instance, including a dynamic
 recomputation of the expected disabled-toolset list and the bundled-skill manifest.
 
+## ACMM experiment isolation
+
+Blank Slate is an official Hermes setup policy. ACMM adds a separate experiment-isolation
+policy for features that Blank Slate does not disable but that can introduce hidden model
+calls or routing indirection:
+
+```text
+auxiliary.title_generation.enabled   false
+auxiliary.background_review.enabled  false
+tools.tool_search.enabled            off
+```
+
+This separation is deliberate. These settings are ACMM methodological controls, not claims
+about Hermes's definition of Blank Slate.
+
+Title generation is disabled because Hermes can make an auxiliary model request to generate
+a session title. Background review is disabled because it can create a separate review run.
+Tool Search is disabled so the explicitly requested `acmm` toolset is presented directly to
+the subject instead of being deferred behind Hermes's `tool_call` routing bridge.
+
+`status` reports these values and `doctor` requires them to match before an experiment is
+READY.
+
+## Managed-tool-only reconciliation
+
+Repository-owned experiment tools are expected to evolve more often than the qualified
+subject baseline. After a plugin/tool change, use:
+
+```text
+acmm-infra hermes down
+acmm-infra hermes apply-tools
+acmm-infra hermes up
+acmm-infra hermes doctor
+```
+
+`apply-tools` atomically replaces each managed plugin directory from the repository and
+reconciles only:
+
+```text
+managed plugin bytes
+managed plugin enable/disable policy
+managed plugin tool-override policy
+tools.tool_search.enabled
+```
+
+It deliberately does not replay provider/model/context/reasoning/terminal settings, Blank
+Slate minimization, bundled-skill cleanup, title-generation policy, or background-review
+policy.
+
+Use full `apply` whenever those broader baseline settings change. `doctor` remains the
+conservative gate: stale deployed plugin bytes still produce `NOT READY` until one of the
+appropriate reconciliation paths is run.
+
+
 ## Plugin consent
 
 The ACMM pilot plugin does not need to replace Hermes built-in tools. The desired profile
@@ -286,6 +343,17 @@ acmm-infra hermes adopt-data /path/to/old/data --yes
 
 This is now a migration/fallback path rather than the main installation path. Fresh
 initialization plus deterministic `apply` is the preferred reproducible baseline.
+
+
+## Offline doctor behavior
+
+`doctor` separates checks that can be evaluated from deployment files from checks that require
+a running Hermes process. If Hermes is stopped, Docker/Compose/deployment/plugin-sync checks
+still run, then readiness ends with a clear failed `container_running` check. Live model, Blank
+Slate, plugin-enable, and plugin-policy checks are not fabricated from missing observations.
+
+If Hermes is running but the single batched live inspection fails, `doctor` reports one
+`live_observation` failure and stops the dependent live checks.
 
 ## Readiness
 

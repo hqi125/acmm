@@ -126,7 +126,7 @@ class fake_adapter:
                     "provider": "ollama_cloud",
                 },
                 "configuration": {
-                    "context_window": 65536,
+                    "context_window": 64000,
                 },
             },
             failure=self.failure,
