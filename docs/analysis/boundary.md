@@ -84,3 +84,21 @@ demonstrates a concrete benefit.
 
 The statistical workspace should be able to run independently from `src/acmm` once its
 versioned CSV inputs have been produced.
+## Implemented CSV export
+
+The mechanical export boundary is now implemented by `acmm export`. A completed execution is
+validated against its Contract snapshot, Run Records, execution manifest, and persisted evidence
+hashes before two deterministic tables are published:
+
+```text
+runs.csv       one row per realized attempt, including invalid retries
+judgments.csv  one row per recorded opportunity judgment
+```
+
+The export keeps `selected`, `validity`, and `termination` explicit so downstream analysis can
+choose its population without the Python layer silently dropping attempts. It joins only stable
+Contract metadata such as requirement ID, dimension, check ID, and evaluator; it does not add
+methodological denominator flags or statistical quantities.
+
+See `docs/analysis/export.md` for the exact table and determinism rules.
+

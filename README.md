@@ -560,6 +560,34 @@ be mistaken for a completed collection.
 
 See `docs/runtime/experiment_execution.md` for the acquisition and retry semantics.
 
+## Analysis-ready CSV export
+
+A completed execution can now be projected into deterministic downstream analysis tables:
+
+```text
+acmm export results/<experiment_id>/execution_<execution_id>
+```
+
+The default output is separate from canonical results:
+
+```text
+exports/<experiment_id>/execution_<execution_id>/
+├── runs.csv
+├── judgments.csv
+└── export_manifest.yaml
+```
+
+`runs.csv` preserves every realized attempt, including invalid retries, and marks the selected
+scientifically valid attempt explicitly. `judgments.csv` preserves recorded opportunity outcomes
+and joins requirement/dimension/check metadata from the Contract. No ACMM estimators or scores are
+computed by the exporter.
+
+Before publishing, export verifies the Contract snapshot hash, manifest-to-Run-Record bindings,
+Run Record validity, and persisted evidence SHA-256 values. Existing export directories are not
+overwritten implicitly.
+
+See `docs/analysis/export.md`.
+
 ## Statistical-analysis boundary
 
 The experiment automation intentionally stops before statistical interpretation.

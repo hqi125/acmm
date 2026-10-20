@@ -138,3 +138,19 @@ def test_plan_command_allows_contract_warnings(capsys) -> None:
     assert "unused_check" in output
     assert "Experiment: minimal_valid" in output
     assert "Runs: 1" in output
+
+
+def test_export_command_parses_analysis_export_arguments() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "export",
+            "results/example/execution_123",
+            "--output-root",
+            "exports-test",
+        ]
+    )
+
+    assert args.command == "export"
+    assert args.execution == "results/example/execution_123"
+    assert args.output_root == "exports-test"

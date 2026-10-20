@@ -8,6 +8,7 @@ import sys
 from typing import Any
 
 from acmm.adapters.hermes import hermes_adapter_config
+from acmm.analysis.export import analysis_export_error, export_execution
 from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import load_schema, validate_contract
@@ -434,6 +435,38 @@ def _print_magic_number_evidence_summary(run_dir: Path) -> None:
             print(f"      final response: {one_line}")
 
 
+def _run_export(args: argparse.Namespace) -> int:
+    try:
+        result = export_execution(
+            execution_dir=Path(args.execution),
+            output_root=Path(args.output_root),
+            contract_schema_path=(
+                Path(args.contract_schema)
+                if args.contract_schema is not None
+                else None
+            ),
+            run_record_schema_path=(
+                Path(args.record_schema)
+                if args.record_schema is not None
+                else None
+            ),
+        )
+    except (analysis_export_error, FileExistsError, OSError, ValueError) as exc:
+        print(f"ERROR: Analysis export failed: {exc}", file=sys.stderr)
+        return 2
+
+    print("Analysis export completed successfully.")
+    print(f"  source execution: {result.execution_id}")
+    print(f"  output:           {result.output_dir}")
+    print(f"  runs:             {result.runs_path} ({result.run_rows} row(s))")
+    print(
+        f"  judgments:        {result.judgments_path} "
+        f"({result.judgment_rows} row(s))"
+    )
+    print(f"  manifest:         {result.manifest_path}")
+    return 0
+
+
 def _run_validate_record(args: argparse.Namespace) -> int:
     record_path = Path(args.record)
     contract_path = Path(args.contract)
@@ -595,6 +628,41 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_parser.set_defaults(handler=_run_experiment)
+
+    export_parser = subparsers.add_parser(
+        "export",
+        help=(
+            "Export one completed experiment execution into deterministic "
+            "analysis-ready CSV tables."
+        ),
+    )
+    export_parser.add_argument(
+        "execution",
+        help=(
+            "Path to a completed execution_<id> directory containing "
+            "contract.yaml and experiment_execution.yaml."
+        ),
+    )
+    export_parser.add_argument(
+        "--output-root",
+        default="exports",
+        help="Analysis export root directory (default: exports).",
+    )
+    export_parser.add_argument(
+        "--record-schema",
+        help=(
+            "Path to a Run Record JSON Schema. "
+            "Defaults to records/v0_1/run_record.schema.json."
+        ),
+    )
+    export_parser.add_argument(
+        "--contract-schema",
+        help=(
+            "Path to a Contract JSON Schema. "
+            "Defaults to contracts/v0_1/contract.schema.json."
+        ),
+    )
+    export_parser.set_defaults(handler=_run_export)
 
     record_parser = subparsers.add_parser(
         "validate-record",
