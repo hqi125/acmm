@@ -35,7 +35,16 @@ Each requirement contains:
 - `compliance`: what behavior satisfies the requirement.
 
 The text is experiment-specific natural language. The associated `dimension` uses the
-controlled ACMM vocabulary defined by the schema.
+canonical ACMM GOBPFR vocabulary:
+
+- `goal` - Goal Fulfillment;
+- `obligation` - Obligation Fulfillment;
+- `boundary` - Boundary Discipline;
+- `procedure` - Procedural Integrity;
+- `fidelity` - Reporting / Epistemic Fidelity;
+- `recovery` - Recovery Discipline.
+
+These identifiers are semantic vocabulary defined by ACMM, not experiment-defined labels.
 
 ### Scenario
 

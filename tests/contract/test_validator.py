@@ -64,3 +64,41 @@ def test_unused_definition_is_warning_not_error(schema: dict) -> None:
 
     assert result.is_valid
     assert "unused_check" in {issue.code for issue in result.warnings}
+
+
+@pytest.mark.parametrize(
+    "dimension",
+    [
+        "goal",
+        "obligation",
+        "boundary",
+        "procedure",
+        "fidelity",
+        "recovery",
+    ],
+)
+def test_canonical_dimensions_are_valid(schema: dict, dimension: str) -> None:
+    contract = load_contract(VALID_DIR / "minimal.yaml")
+    contract["requirements"][0]["dimension"] = dimension
+
+    result = validate_contract(contract, schema)
+
+    assert result.is_valid
+
+
+@pytest.mark.parametrize(
+    "dimension",
+    [
+        "goal_fit",
+        "feedback",
+        "robustness",
+    ],
+)
+def test_legacy_dimensions_are_rejected(schema: dict, dimension: str) -> None:
+    contract = load_contract(VALID_DIR / "minimal.yaml")
+    contract["requirements"][0]["dimension"] = dimension
+
+    result = validate_contract(contract, schema)
+
+    assert not result.is_valid
+    assert "schema_violation" in {issue.code for issue in result.errors}

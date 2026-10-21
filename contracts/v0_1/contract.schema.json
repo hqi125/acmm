@@ -149,12 +149,12 @@
         "dimension": {
           "type": "string",
           "enum": [
-            "goal_fit",
+            "goal",
             "obligation",
             "boundary",
             "procedure",
-            "feedback",
-            "robustness"
+            "fidelity",
+            "recovery"
           ]
         },
         "statement": {
