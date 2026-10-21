@@ -593,13 +593,27 @@ See `docs/analysis/export.md`.
 The experiment automation intentionally stops before statistical interpretation.
 
 Canonical Contracts, Run Records, execution manifests, and evidence remain the source of
-truth. A later deterministic export layer will project selected experimental facts into
-CSV tables for a separate R/RStudio analysis workspace.
+truth. `acmm export` projects validated experimental facts into CSV tables for the separate
+`analysis/r/` statistical workspace.
 
-ACMM statistics such as compliance proportions, `S_D`, confidence intervals, statistical
-models, and plots do not belong in `src/acmm`.
+The R workspace validates export manifests/hashes and reconstructs the selected valid
+population before computing opportunity-, run-, and scenario-weighted compliance rates.
+Requirement-level grouping is the default; dimension aggregation, `S_D`, confidence
+intervals, statistical models, and plots remain later analysis stages.
 
-See `docs/analysis/boundary.md` for the full data-flow rule.
+Run the R regression suite with:
+
+```text
+Rscript analysis/r/tests/run_tests.R
+```
+
+Analyze one validated export with:
+
+```text
+Rscript analysis/r/scripts/analyze_export.R <export-directory>
+```
+
+See `docs/analysis/boundary.md`, `docs/analysis/export.md`, and `analysis/r/README.md`.
 
 ## First concrete pilot: Hermes magic number
 

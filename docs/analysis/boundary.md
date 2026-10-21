@@ -102,3 +102,45 @@ methodological denominator flags or statistical quantities.
 
 See `docs/analysis/export.md` for the exact table and determinism rules.
 
+
+## Implemented R analysis workspace
+
+The first downstream statistical layer now lives under `analysis/r/`. It is intentionally
+separate from `src/acmm` and consumes only deterministic export artifacts.
+
+The loader verifies the export manifest, CSV SHA-256 values, exact v0.1 columns, typed field
+syntax, retry/selection consistency, run-to-judgment bindings, and execution completeness before
+an estimator is allowed to run. Invalid retry attempts remain available as diagnostics but are
+not part of the selected valid statistical population.
+
+The initial estimator surface is requirement-level and implements three alternatives already
+defined by ACMM quantification work:
+
+```text
+opportunity-weighted compliance
+run-weighted compliance
+scenario-weighted compliance
+```
+
+`unadjudicable` contributes to coverage but not the compliance-rate denominator;
+`not_applicable` is excluded from both. A zero estimable denominator produces `NA` rather than an
+invented numerical result.
+
+The second statistical milestone adds uncertainty estimation without changing the underlying
+estimands. `interval_acmm_hierarchical()` performs scenario-to-run cluster resampling and percentile
+intervals while retaining opportunities inside sampled runs. It refuses scenario-generalized
+intervals when fewer than two scenario clusters are observed. `interval_acmm_wilson()` is available
+only as an explicitly opted-in independent-binomial opportunity baseline.
+
+Dimension aggregation, `S_D`, hypothesis tests, statistical models, and plots remain outside the
+current analysis scope.
+
+See `analysis/r/README.md` for setup, validation rules, estimators, and uncertainty commands.
+
+## R dimension aggregation
+
+The downstream R analysis layer may aggregate validated requirement-level compliance estimates into
+dimension-level `S_D` point scores. The aggregation method must remain explicit: arithmetic,
+geometric, harmonic, or minimum. The initial implementation uses equal requirement weights only and
+refuses to renormalize over missing requirement estimates. Statistical uncertainty propagation through
+`S_D` remains a later analysis concern.
