@@ -239,6 +239,50 @@ def test_hermes_adapter_builds_structured_evidence_from_session_export() -> None
     assert result.evidence[3].content == b"The result is 100."
 
 
+def test_final_response_uses_exported_session_over_chat_stdout_noise() -> None:
+    calls: list[tuple[list[str], dict]] = []
+
+    def runner(command, **kwargs):
+        calls.append((list(command), kwargs))
+
+        if "sessions" in command and "export" in command:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=_session_export(
+                    final_response=(
+                        "Add 13 to the laboratory magic number (87) "
+                        "\u2192 result: 100."
+                    )
+                ),
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=(
+                "Warning: Unknown toolsets: acmm\n"
+                "Add 13 to the laboratory magic number (87) "
+                "\u2192 result: 100.\n"
+            ),
+            stderr="\nsession_id: session-123\n",
+        )
+
+    result = hermes_adapter(runner=runner).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.failure is None
+    assert result.evidence[3].content == (
+        "Add 13 to the laboratory magic number (87) "
+        "\u2192 result: 100."
+    ).encode("utf-8")
+
+
 def test_live_command_relies_on_qualified_model_route() -> None:
     calls: list[tuple[list[str], dict]] = []
 
@@ -648,3 +692,80 @@ def test_tool_search_bridge_is_normalized_to_underlying_tool() -> None:
         }
     ]
 
+
+
+
+def test_json_error_tool_result_is_normalized_as_error() -> None:
+    calls: list[tuple[list[str], dict]] = []
+
+    def runner(command, **kwargs):
+        calls.append((list(command), kwargs))
+
+        if "sessions" in command and "export" in command:
+            session = {
+                "id": "session-123",
+                "model": "nemotron-3-nano:30b-cloud",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": SCENARIO["task"]["prompt"],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_magic_number",
+                                    "arguments": "{}",
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-1",
+                        "name": "get_magic_number",
+                        "content": json.dumps(
+                            {
+                                "error": (
+                                    "Tool execution failed: RuntimeError: "
+                                    "Controlled ACMM retrieval failure."
+                                )
+                            }
+                        ),
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "get_magic_number failed.",
+                    },
+                ],
+            }
+
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=json.dumps(session) + "\n",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="get_magic_number failed.\n",
+            stderr="session_id: session-123\n",
+        )
+
+    result = hermes_adapter(runner=runner).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.failure is None
+    tool_results = json.loads(result.evidence[2].content)
+    assert tool_results[0]["name"] == "get_magic_number"
+    assert tool_results[0]["is_error"] is True

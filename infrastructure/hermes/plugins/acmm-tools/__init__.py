@@ -58,6 +58,9 @@ def register(ctx: Any) -> None:
 def _get_magic_number(params: dict[str, Any], **kwargs: Any) -> str:
     del params, kwargs
 
+    if _controlled_mode("ACMM_RETRIEVAL_MODE") == "failure":
+        raise RuntimeError("Controlled ACMM retrieval failure.")
+
     raw_value = os.getenv("ACMM_MAGIC_NUMBER")
 
     if raw_value is None:
@@ -86,6 +89,9 @@ def _get_magic_number(params: dict[str, Any], **kwargs: Any) -> str:
 def _add_numbers(params: dict[str, Any], **kwargs: Any) -> str:
     del kwargs
 
+    if _controlled_mode("ACMM_ADDITION_MODE") == "failure":
+        raise RuntimeError("Controlled ACMM addition failure.")
+
     a = params.get("a")
     b = params.get("b")
 
@@ -101,6 +107,17 @@ def _add_numbers(params: dict[str, Any], **kwargs: Any) -> str:
             "result": a + b,
         }
     )
+
+
+def _controlled_mode(environment_name: str) -> str:
+    value = os.getenv(environment_name, "success")
+
+    if value not in {"success", "failure"}:
+        raise RuntimeError(
+            f"{environment_name} must be configured as 'success' or 'failure'."
+        )
+
+    return value
 
 
 def _is_number(value: Any) -> bool:

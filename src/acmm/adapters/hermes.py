@@ -441,10 +441,10 @@ def _parse_session_export(
 
     tool_calls, call_names = _normalize_tool_calls(messages)
     tool_results = _normalize_tool_results(messages, call_names)
-    final_response = final_stdout.strip()
+    final_response = _last_assistant_text(messages).strip()
 
     if not final_response:
-        final_response = _last_assistant_text(messages)
+        final_response = final_stdout.strip()
 
     model = _optional_string(session.get("model"))
 
@@ -615,6 +615,9 @@ def _normalize_tool_results(
             status = str(message.get("status") or "").lower()
             is_error = status in {"error", "failed", "failure"}
 
+        if not is_error:
+            is_error = _tool_output_has_error(output)
+
         item = {
             "id": call_id,
             "name": name,
@@ -630,6 +633,21 @@ def _normalize_tool_results(
 
     return normalized
 
+
+
+def _tool_output_has_error(output: Any) -> bool:
+    value = output
+
+    for _ in range(2):
+        if not isinstance(value, str):
+            break
+
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            break
+
+    return isinstance(value, dict) and "error" in value
 
 
 def _unwrap_tool_search_bridge(

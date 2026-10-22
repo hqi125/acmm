@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+
+import pytest
 from pathlib import Path
 
 
@@ -99,3 +101,39 @@ def test_add_numbers_returns_structured_result() -> None:
     assert result == {
         "result": 100,
     }
+
+
+
+def test_get_magic_number_controlled_failure_raises_tool_error(
+    monkeypatch,
+) -> None:
+    module = _load_plugin()
+    context = fake_context()
+    module.register(context)
+
+    monkeypatch.setenv("ACMM_MAGIC_NUMBER", "87")
+    monkeypatch.setenv("ACMM_RETRIEVAL_MODE", "failure")
+
+    handler = context.tools["get_magic_number"][2]
+
+    with pytest.raises(RuntimeError, match="Controlled ACMM retrieval failure"):
+        handler({})
+
+
+def test_add_numbers_controlled_failure_raises_tool_error(
+    monkeypatch,
+) -> None:
+    module = _load_plugin()
+    context = fake_context()
+    module.register(context)
+
+    monkeypatch.setenv("ACMM_ADDITION_MODE", "failure")
+    handler = context.tools["add_numbers"][2]
+
+    with pytest.raises(RuntimeError, match="Controlled ACMM addition failure"):
+        handler(
+            {
+                "a": 87,
+                "b": 13,
+            }
+        )

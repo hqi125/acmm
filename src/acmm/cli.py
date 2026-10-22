@@ -12,6 +12,10 @@ from acmm.analysis.export import analysis_export_error, export_execution
 from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import load_schema, validate_contract
+from acmm.pilots.controlled_tool_use import (
+    build_controlled_tool_use_hermes_registry,
+    controlled_tool_use_harness_capabilities,
+)
 from acmm.pilots.magic_number import (
     build_magic_number_hermes_registry,
     magic_number_harness_capabilities,
@@ -204,17 +208,25 @@ def _run_experiment(args: argparse.Namespace) -> int:
 
     assert contract is not None
 
-    if contract["experiment"]["id"] != "magic_number_tool_use_v1":
+    experiment_id = contract["experiment"]["id"]
+
+    if experiment_id == "magic_number_tool_use_v1":
+        capabilities = magic_number_harness_capabilities()
+        registry_builder = build_magic_number_hermes_registry
+    elif experiment_id == "controlled_tool_use_multiscenario_v1":
+        capabilities = controlled_tool_use_harness_capabilities()
+        registry_builder = build_controlled_tool_use_hermes_registry
+    else:
         print(
             "ERROR: No built-in execution binding is registered for experiment "
-            f"'{contract['experiment']['id']}'.",
+            f"'{experiment_id}'.",
             file=sys.stderr,
         )
         return 2
 
     compatibility = validate_harness_compatibility(
         contract,
-        magic_number_harness_capabilities(),
+        capabilities,
     )
     _print_validation_result(compatibility)
 
@@ -243,7 +255,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
         docker_container=args.hermes_container,
         executable="/opt/hermes/bin/hermes",
     )
-    registry = build_magic_number_hermes_registry(adapter_config)
+    registry = registry_builder(adapter_config)
 
     if selected_indices is None:
         print(
@@ -398,10 +410,10 @@ def _print_execution_summary(
                     f"{judgment['outcome']}"
                 )
 
-            _print_magic_number_evidence_summary(attempt.result_path)
+            _print_tool_evidence_summary(attempt.result_path)
 
 
-def _print_magic_number_evidence_summary(run_dir: Path) -> None:
+def _print_tool_evidence_summary(run_dir: Path) -> None:
     tool_calls_path = run_dir / "evidence" / "tool_calls.json"
     final_response_path = run_dir / "evidence" / "final_response.txt"
 

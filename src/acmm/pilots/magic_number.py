@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from acmm.adapters.hermes import hermes_adapter, hermes_adapter_config
+from acmm.evidence.artifacts import (
+    load_json_object_array_evidence,
+    load_text_evidence,
+)
+from acmm.evidence.text import contains_numeric_value
 from acmm.runtime.interfaces import (
-    captured_evidence,
     evaluation_context,
     judgment_result,
     prepared_environment,
@@ -53,8 +56,8 @@ class magic_number_retrieval_evaluator:
         context: evaluation_context,
     ) -> judgment_result:
         expected_value = context.check["parameters"]["expected_value"]
-        tool_calls = _load_json_evidence(context.evidence, "tool_calls")
-        tool_results = _load_json_evidence(context.evidence, "tool_results")
+        tool_calls = load_json_object_array_evidence(context.evidence, "tool_calls")
+        tool_results = load_json_object_array_evidence(context.evidence, "tool_results")
 
         matching_calls = [
             call
@@ -128,9 +131,9 @@ class magic_number_addition_evaluator:
         expected_result = parameters["expected_result"]
         expected_magic_number = expected_result - addend
 
-        tool_calls = _load_json_evidence(context.evidence, "tool_calls")
-        tool_results = _load_json_evidence(context.evidence, "tool_results")
-        final_response = _load_text_evidence(
+        tool_calls = load_json_object_array_evidence(context.evidence, "tool_calls")
+        tool_results = load_json_object_array_evidence(context.evidence, "tool_results")
+        final_response = load_text_evidence(
             context.evidence,
             "final_response",
         )
@@ -206,7 +209,7 @@ class magic_number_addition_evaluator:
                 ),
             )
 
-        if not _response_contains_number(final_response, expected_result):
+        if not contains_numeric_value(final_response, expected_result):
             return judgment_result(
                 outcome="violation",
                 evidence_ids=(
@@ -284,57 +287,6 @@ def build_magic_number_hermes_registry(
     )
 
 
-def _load_json_evidence(
-    evidence: tuple[captured_evidence, ...],
-    evidence_id: str,
-) -> list[dict[str, Any]]:
-    artifact = _find_evidence(evidence, evidence_id)
-
-    try:
-        value = json.loads(artifact.content.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(
-            f"Evidence '{evidence_id}' is not valid UTF-8 JSON."
-        ) from exc
-
-    if not isinstance(value, list):
-        raise ValueError(
-            f"Evidence '{evidence_id}' must contain a JSON array."
-        )
-
-    if not all(isinstance(item, dict) for item in value):
-        raise ValueError(
-            f"Evidence '{evidence_id}' must contain JSON objects."
-        )
-
-    return value
-
-
-def _load_text_evidence(
-    evidence: tuple[captured_evidence, ...],
-    evidence_id: str,
-) -> str:
-    artifact = _find_evidence(evidence, evidence_id)
-
-    try:
-        return artifact.content.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise ValueError(
-            f"Evidence '{evidence_id}' is not valid UTF-8 text."
-        ) from exc
-
-
-def _find_evidence(
-    evidence: tuple[captured_evidence, ...],
-    evidence_id: str,
-) -> captured_evidence:
-    for artifact in evidence:
-        if artifact.id == evidence_id:
-            return artifact
-
-    raise ValueError(f"Required evidence '{evidence_id}' is missing.")
-
-
 def _decode_tool_output(output: Any) -> Any:
     value = output
 
@@ -383,13 +335,3 @@ def _addition_inputs_match(
         (a == first and b == second)
         or (a == second and b == first)
     )
-
-
-def _response_contains_number(
-    response: str,
-    expected: Any,
-) -> bool:
-    return re.search(
-        rf"(?<![0-9]){re.escape(str(expected))}(?![0-9])",
-        response,
-    ) is not None
