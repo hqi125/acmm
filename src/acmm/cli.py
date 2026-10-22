@@ -12,14 +12,7 @@ from acmm.analysis.export import analysis_export_error, export_execution
 from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import load_schema, validate_contract
-from acmm.pilots.controlled_tool_use import (
-    build_controlled_tool_use_hermes_registry,
-    controlled_tool_use_harness_capabilities,
-)
-from acmm.pilots.magic_number import (
-    build_magic_number_hermes_registry,
-    magic_number_harness_capabilities,
-)
+from acmm.experiments.catalog import lookup_experiment_execution_binding
 from acmm.record.loader import load_run_record, run_record_load_error
 from acmm.record.validator import (
     load_run_record_schema,
@@ -209,14 +202,9 @@ def _run_experiment(args: argparse.Namespace) -> int:
     assert contract is not None
 
     experiment_id = contract["experiment"]["id"]
+    binding = lookup_experiment_execution_binding(experiment_id)
 
-    if experiment_id == "magic_number_tool_use_v1":
-        capabilities = magic_number_harness_capabilities()
-        registry_builder = build_magic_number_hermes_registry
-    elif experiment_id == "controlled_tool_use_multiscenario_v1":
-        capabilities = controlled_tool_use_harness_capabilities()
-        registry_builder = build_controlled_tool_use_hermes_registry
-    else:
+    if binding is None:
         print(
             "ERROR: No built-in execution binding is registered for experiment "
             f"'{experiment_id}'.",
@@ -226,7 +214,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
 
     compatibility = validate_harness_compatibility(
         contract,
-        capabilities,
+        binding.capabilities,
     )
     _print_validation_result(compatibility)
 
@@ -255,7 +243,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
         docker_container=args.hermes_container,
         executable="/opt/hermes/bin/hermes",
     )
-    registry = registry_builder(adapter_config)
+    registry = binding.registry_builder(adapter_config)
 
     if selected_indices is None:
         print(
