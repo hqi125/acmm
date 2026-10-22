@@ -289,6 +289,62 @@ acmm_point_estimates_for_group <- function(judgments, groupBy)
     estimate_acmm_compliance(population, groupBy)
 }
 
+acmm_mean_or_na <- function(values)
+{
+    finiteValues <- values[!is.na(values)]
+    if (length(finiteValues) == 0)
+    {
+        return(NA_real_)
+    }
+    mean(finiteValues)
+}
+
+acmm_bootstrap_run_units <- function(judgments)
+{
+    acmm_run_unit_summaries(judgments, character(0))
+}
+
+acmm_bootstrap_estimates_from_run_units <- function(
+    runUnits,
+    sampledUnitRows,
+    sampledScenarioIndexes
+)
+{
+    sampledUnits <- runUnits[sampledUnitRows, , drop = FALSE]
+    counts <- c(
+        compliant = sum(sampledUnits$compliant),
+        violation = sum(sampledUnits$violation),
+        unadjudicable = sum(sampledUnits$unadjudicable),
+        not_applicable = sum(sampledUnits$not_applicable)
+    )
+    opportunity <- acmm_counts_to_summary(counts)
+
+    scenarioRows <- split(
+        seq_len(nrow(sampledUnits)),
+        sampledScenarioIndexes,
+        drop = TRUE
+    )
+    scenarioPHat <- vapply(
+        scenarioRows,
+        function(rows) acmm_mean_or_na(sampledUnits$p_hat[rows]),
+        numeric(1)
+    )
+    scenarioCoverage <- vapply(
+        scenarioRows,
+        function(rows) acmm_mean_or_na(sampledUnits$coverage[rows]),
+        numeric(1)
+    )
+
+    c(
+        opportunity_p_hat = opportunity[["p_hat"]],
+        opportunity_coverage = opportunity[["coverage"]],
+        run_p_hat = acmm_mean_or_na(sampledUnits$p_hat),
+        run_coverage = acmm_mean_or_na(sampledUnits$coverage),
+        scenario_p_hat = acmm_mean_or_na(scenarioPHat),
+        scenario_coverage = acmm_mean_or_na(scenarioCoverage)
+    )
+}
+
 acmm_bootstrap_values_for_group <- function(judgments, groupBy, bootstrapReplicates)
 {
     result <- list(
@@ -300,17 +356,57 @@ acmm_bootstrap_values_for_group <- function(judgments, groupBy, bootstrapReplica
         scenario_coverage = rep(NA_real_, bootstrapReplicates)
     )
 
+    runUnits <- acmm_bootstrap_run_units(judgments)
+    scenarioIds <- unique(judgments$scenario_id)
+    runIdsByScenario <- lapply(
+        scenarioIds,
+        function(scenarioId)
+        {
+            unique(judgments$run_id[judgments$scenario_id == scenarioId])
+        }
+    )
+    names(runIdsByScenario) <- scenarioIds
+    unitRowByRunId <- seq_len(nrow(runUnits))
+    names(unitRowByRunId) <- runUnits$run_id
+
     for (replicateIndex in seq_len(bootstrapReplicates))
     {
-        sampledJudgments <- acmm_bootstrap_group_judgments(judgments)
-        estimates <- acmm_point_estimates_for_group(sampledJudgments, groupBy)
+        sampledScenarios <- sample(
+            scenarioIds,
+            size = length(scenarioIds),
+            replace = TRUE
+        )
+        sampledUnitRows <- integer(0)
+        sampledScenarioIndexes <- integer(0)
 
-        result$opportunity_p_hat[[replicateIndex]] <- estimates$opportunity$p_hat[[1]]
-        result$opportunity_coverage[[replicateIndex]] <- estimates$opportunity$coverage[[1]]
-        result$run_p_hat[[replicateIndex]] <- estimates$run$p_hat[[1]]
-        result$run_coverage[[replicateIndex]] <- estimates$run$coverage[[1]]
-        result$scenario_p_hat[[replicateIndex]] <- estimates$scenario$p_hat[[1]]
-        result$scenario_coverage[[replicateIndex]] <- estimates$scenario$coverage[[1]]
+        for (scenarioIndex in seq_along(sampledScenarios))
+        {
+            sourceScenario <- sampledScenarios[[scenarioIndex]]
+            sourceRunIds <- runIdsByScenario[[sourceScenario]]
+            sampledRunIds <- sample(
+                sourceRunIds,
+                size = length(sourceRunIds),
+                replace = TRUE
+            )
+            sampledUnitRows <- c(
+                sampledUnitRows,
+                unname(unitRowByRunId[sampledRunIds])
+            )
+            sampledScenarioIndexes <- c(
+                sampledScenarioIndexes,
+                rep.int(scenarioIndex, length(sampledRunIds))
+            )
+        }
+
+        estimates <- acmm_bootstrap_estimates_from_run_units(
+            runUnits,
+            sampledUnitRows,
+            sampledScenarioIndexes
+        )
+        for (name in names(result))
+        {
+            result[[name]][[replicateIndex]] <- estimates[[name]]
+        }
     }
     result
 }

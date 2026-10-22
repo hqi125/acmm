@@ -36,6 +36,16 @@ confidenceLevel <- if (length(arguments) == 4) {
 
 exportData <- load_acmm_export(arguments[[1]])
 population <- build_acmm_population(exportData)
+
+cat("ACMM uncertainty input validated successfully.\n")
+cat("Execution:", exportData$binding$execution_id, "\n")
+cat("Experiment:", exportData$binding$experiment_id, "\n")
+cat("Bootstrap replicates:", bootstrapReplicates, "\n")
+cat("Seed:", seed, "\n")
+cat("Confidence level:", confidenceLevel, "\n")
+cat("Computing hierarchical intervals...\n")
+flush(stdout())
+
 intervals <- interval_acmm_hierarchical(
     population,
     confidenceLevel = confidenceLevel,
@@ -43,13 +53,7 @@ intervals <- interval_acmm_hierarchical(
     seed = seed
 )
 
-cat("ACMM uncertainty input validated successfully.\n")
-cat("Execution:", exportData$binding$execution_id, "\n")
-cat("Experiment:", exportData$binding$experiment_id, "\n")
-cat("Bootstrap replicates:", bootstrapReplicates, "\n")
-cat("Seed:", seed, "\n")
-cat("Confidence level:", confidenceLevel, "\n\n")
-
+cat("Hierarchical interval computation complete.\n\n")
 cat("Opportunity-weighted hierarchical intervals:\n")
 print(intervals$opportunity, row.names = FALSE)
 cat("\nRun-weighted hierarchical intervals:\n")

@@ -1,0 +1,335 @@
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+from typing import Any, Sequence
+
+import yaml
+
+
+BOOTSTRAP_REPLICATES = 2000
+BOOTSTRAP_SEED = 12345
+CONFIDENCE_LEVEL = 0.95
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_EXPORT_ROOT = _REPO_ROOT / "exports"
+_R_SCRIPT_ROOT = _REPO_ROOT / "analysis" / "r" / "scripts"
+_R_STAGES = (
+    (
+        "Requirement estimates",
+        "analyze_export.R",
+        "point_estimates.txt",
+        (),
+    ),
+    (
+        "Hierarchical uncertainty",
+        "analyze_uncertainty.R",
+        "hierarchical_intervals.txt",
+        (
+            str(BOOTSTRAP_REPLICATES),
+            str(BOOTSTRAP_SEED),
+            str(CONFIDENCE_LEVEL),
+        ),
+    ),
+    (
+        "Dimension scores",
+        "analyze_dimensions.R",
+        "dimension_scores.txt",
+        (),
+    ),
+)
+
+
+class analysis_workflow_error(ValueError):
+    """Raised when the repository analysis workflow cannot proceed safely."""
+
+
+def _load_yaml(path: Path, label: str) -> dict[str, Any]:
+    try:
+        with path.open("r", encoding="utf-8") as file:
+            value = yaml.safe_load(file)
+    except (OSError, yaml.YAMLError) as exc:
+        raise analysis_workflow_error(
+            f"Could not read {label} '{path}': {exc}"
+        ) from exc
+
+    if not isinstance(value, dict):
+        raise analysis_workflow_error(
+            f"{label.capitalize()} '{path}' must contain a YAML mapping."
+        )
+
+    return value
+
+
+def _load_execution_identity(execution_dir: Path) -> tuple[str, str]:
+    manifest = _load_yaml(
+        execution_dir / "experiment_execution.yaml",
+        "execution manifest",
+    )
+    execution = manifest.get("execution")
+
+    if not isinstance(execution, dict):
+        raise analysis_workflow_error(
+            "Execution manifest must define an 'execution' mapping."
+        )
+
+    execution_id = execution.get("id")
+    experiment_id = execution.get("experiment_id")
+
+    if not isinstance(execution_id, str) or not execution_id:
+        raise analysis_workflow_error(
+            "Execution manifest must define a non-empty execution ID."
+        )
+
+    if not isinstance(experiment_id, str) or not experiment_id:
+        raise analysis_workflow_error(
+            "Execution manifest must define a non-empty experiment ID."
+        )
+
+    expected_name = f"execution_{execution_id}"
+
+    if execution_dir.name != expected_name:
+        raise analysis_workflow_error(
+            "Execution directory name does not match manifest execution ID: "
+            f"expected '{expected_name}', found '{execution_dir.name}'."
+        )
+
+    return execution_id, experiment_id
+
+
+def _resolve_program(name: str) -> str:
+    path = shutil.which(name)
+
+    if path is None:
+        raise analysis_workflow_error(
+            f"Required command '{name}' was not found on PATH."
+        )
+
+    return path
+
+
+def _preflight() -> tuple[str, str]:
+    acmm_command = _resolve_program("acmm")
+    rscript_command = _resolve_program("Rscript")
+
+    for _, script_name, _, _ in _R_STAGES:
+        script_path = _R_SCRIPT_ROOT / script_name
+
+        if not script_path.is_file():
+            raise analysis_workflow_error(
+                f"Required R analysis script is missing: '{script_path}'."
+            )
+
+    return acmm_command, rscript_command
+
+
+def _validate_reusable_export(
+    export_dir: Path,
+    execution_id: str,
+    experiment_id: str,
+) -> None:
+    for name in ("runs.csv", "judgments.csv", "export_manifest.yaml"):
+        if not (export_dir / name).is_file():
+            raise analysis_workflow_error(
+                f"Existing export is incomplete; missing '{name}'."
+            )
+
+    manifest = _load_yaml(export_dir / "export_manifest.yaml", "export manifest")
+    source = manifest.get("source")
+
+    if not isinstance(source, dict):
+        raise analysis_workflow_error(
+            "Existing export manifest must define a 'source' mapping."
+        )
+
+    if (
+        source.get("execution_id") != execution_id
+        or source.get("experiment_id") != experiment_id
+    ):
+        raise analysis_workflow_error(
+            "Existing export does not match the requested execution."
+        )
+
+
+def _run_command(command: Sequence[str]) -> int:
+    try:
+        return subprocess.run(
+            list(command),
+            cwd=_REPO_ROOT,
+            check=False,
+        ).returncode
+    except OSError as exc:
+        raise analysis_workflow_error(
+            f"Could not execute '{command[0]}': {exc}"
+        ) from exc
+
+
+def _failed_output_path(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.stem}.failed{output_path.suffix}")
+
+
+def _run_and_save(command: Sequence[str], output_path: Path) -> int:
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = output_path.with_name(f".{output_path.name}.tmp")
+        failed_path = _failed_output_path(output_path)
+        temp_path.unlink(missing_ok=True)
+        failed_path.unlink(missing_ok=True)
+        process = subprocess.Popen(
+            list(command),
+            cwd=_REPO_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+    except OSError as exc:
+        raise analysis_workflow_error(
+            f"Could not start analysis command '{command[0]}': {exc}"
+        ) from exc
+
+    assert process.stdout is not None
+
+    try:
+        with temp_path.open("w", encoding="utf-8", newline="") as output_file:
+            for line in process.stdout:
+                print(line, end="", flush=True)
+                output_file.write(line)
+    except KeyboardInterrupt:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+        if temp_path.exists():
+            temp_path.replace(failed_path)
+        print("\nAnalysis command interrupted by user.", file=sys.stderr)
+        return 130
+    except OSError as exc:
+        process.kill()
+        process.wait()
+        temp_path.unlink(missing_ok=True)
+        raise analysis_workflow_error(
+            f"Could not save analysis output '{output_path}': {exc}"
+        ) from exc
+
+    return_code = process.wait()
+
+    try:
+        if return_code == 0:
+            temp_path.replace(output_path)
+        else:
+            temp_path.replace(failed_path)
+    except OSError as exc:
+        raise analysis_workflow_error(
+            f"Could not publish analysis output '{output_path}': {exc}"
+        ) from exc
+
+    return return_code
+
+
+def run_analysis_workflow(execution: str | Path) -> int:
+    execution_dir = Path(execution).expanduser().resolve()
+
+    if not execution_dir.is_dir():
+        raise analysis_workflow_error(
+            f"Execution directory does not exist: '{execution_dir}'."
+        )
+
+    execution_id, experiment_id = _load_execution_identity(execution_dir)
+    acmm_command, rscript_command = _preflight()
+    export_dir = _EXPORT_ROOT / experiment_id / f"execution_{execution_id}"
+
+    if export_dir.exists():
+        print("[1/4] Reusing existing analysis export...")
+        _validate_reusable_export(export_dir, execution_id, experiment_id)
+        print(f"      export: {export_dir}")
+    else:
+        print("[1/4] Exporting execution...")
+        return_code = _run_command(
+            (
+                acmm_command,
+                "export",
+                str(execution_dir),
+                "--output-root",
+                str(_EXPORT_ROOT),
+            )
+        )
+
+        if return_code != 0:
+            print(
+                f"ERROR: acmm export failed with exit code {return_code}.",
+                file=sys.stderr,
+            )
+            print("Analysis stopped. No R commands were executed.", file=sys.stderr)
+            return return_code if return_code > 0 else 1
+
+        _validate_reusable_export(export_dir, execution_id, experiment_id)
+
+    analysis_output_dir = export_dir / "analysis_output"
+
+    for stage_index, (label, script_name, output_name, arguments) in enumerate(
+        _R_STAGES,
+        start=2,
+    ):
+        output_path = analysis_output_dir / output_name
+        command = (
+            rscript_command,
+            str(_R_SCRIPT_ROOT / script_name),
+            str(export_dir),
+            *arguments,
+        )
+
+        print(f"[{stage_index}/4] Running {label.lower()}...")
+        return_code = _run_and_save(command, output_path)
+
+        if return_code != 0:
+            print(
+                f"ERROR: {script_name} failed with exit code {return_code}.",
+                file=sys.stderr,
+            )
+            print(
+                f"Failed output: {_failed_output_path(output_path)}",
+                file=sys.stderr,
+            )
+            print("Analysis stopped.", file=sys.stderr)
+            return return_code if return_code > 0 else 1
+
+        print(f"      output: {output_path}")
+
+    print("\nAnalysis workflow completed successfully.")
+    print(f"  execution:       {execution_id}")
+    print(f"  experiment:      {experiment_id}")
+    print(f"  export:          {export_dir}")
+    print(f"  analysis output: {analysis_output_dir}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Export one completed ACMM execution and run the repository R analysis workflow."
+        )
+    )
+    parser.add_argument("execution", help="Path to a completed execution_<id> directory.")
+    args = parser.parse_args()
+
+    try:
+        return run_analysis_workflow(args.execution)
+    except KeyboardInterrupt:
+        print("\nAnalysis interrupted by user.", file=sys.stderr)
+        return 130
+    except analysis_workflow_error as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

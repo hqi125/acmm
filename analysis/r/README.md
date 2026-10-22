@@ -204,3 +204,27 @@ Rscript analysis/r/scripts/analyze_dimensions.R \
 This reports arithmetic, geometric, harmonic, and minimum `S_D` values separately for the
 opportunity-, run-, and scenario-weighted requirement estimands. It reports point scores only; the
 current hierarchical uncertainty intervals are not yet propagated through the dimension aggregation.
+
+
+## Repository workflow wrapper
+
+For routine processing of one completed execution, the repository also provides a thin Python
+orchestration tool:
+
+```text
+python tools/analyze_execution.py \
+    results/<experiment_id>/execution_<execution_id>
+```
+
+The wrapper does not implement statistics and is not part of the `acmm` CLI. It follows repository
+storage conventions to:
+
+1. run `acmm export` when the canonical export does not already exist;
+2. verify and safely reuse a matching existing export when rerunning after an analysis-stage failure;
+3. run the point-estimate, hierarchical-uncertainty, and dimension-score R scripts in order;
+4. stop immediately when any stage fails; and
+5. store successful R console output under `<export-directory>/analysis_output/`.
+
+The current analysis protocol is intentionally fixed in this research tool at 2,000 hierarchical
+bootstrap replicates, seed 12,345, and confidence level 0.95. Statistical calculations remain entirely
+inside the R analysis subsystem.

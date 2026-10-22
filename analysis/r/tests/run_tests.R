@@ -351,6 +351,43 @@ assert_true(
 assert_equal(singleScenarioIntervals$opportunity$scenario_clusters, 1)
 assert_equal(singleScenarioIntervals$opportunity$p_hat_bootstrap_replicates, 0)
 
+set.seed(654)
+legacyBootstrapJudgments <- acmm_bootstrap_group_judgments(weightedJudgments)
+legacyBootstrapEstimates <- acmm_point_estimates_for_group(
+    legacyBootstrapJudgments,
+    acmmDefaultGroupBy
+)
+set.seed(654)
+optimizedBootstrapValues <- acmm_bootstrap_values_for_group(
+    weightedJudgments,
+    acmmDefaultGroupBy,
+    1
+)
+assert_equal(
+    optimizedBootstrapValues$opportunity_p_hat[[1]],
+    legacyBootstrapEstimates$opportunity$p_hat[[1]]
+)
+assert_equal(
+    optimizedBootstrapValues$opportunity_coverage[[1]],
+    legacyBootstrapEstimates$opportunity$coverage[[1]]
+)
+assert_equal(
+    optimizedBootstrapValues$run_p_hat[[1]],
+    legacyBootstrapEstimates$run$p_hat[[1]]
+)
+assert_equal(
+    optimizedBootstrapValues$run_coverage[[1]],
+    legacyBootstrapEstimates$run$coverage[[1]]
+)
+assert_equal(
+    optimizedBootstrapValues$scenario_p_hat[[1]],
+    legacyBootstrapEstimates$scenario$p_hat[[1]]
+)
+assert_equal(
+    optimizedBootstrapValues$scenario_coverage[[1]],
+    legacyBootstrapEstimates$scenario$coverage[[1]]
+)
+
 hierarchicalFirst <- interval_acmm_hierarchical(
     weightedPopulation,
     bootstrapReplicates = 200,
