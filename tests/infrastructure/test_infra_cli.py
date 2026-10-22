@@ -1,4 +1,5 @@
-from acmm_infra.cli import _build_parser
+from acmm_infra.agent_cli import STANDARD_AGENT_COMMANDS
+from acmm_infra.cli import AGENT_CLIS, _build_parser
 
 
 def test_cli_exposes_infrastructure_commands() -> None:
@@ -69,3 +70,39 @@ def test_cli_exposes_hermes_data_adoption() -> None:
     assert args.hermes_command == "adopt-data"
     assert args.source == "/tmp/old-hermes-data"
     assert args.yes is True
+
+
+def test_cli_exposes_open_webui_lifecycle() -> None:
+    parser = _build_parser()
+
+    args = parser.parse_args(["open-webui", "init"])
+    assert args.command == "open-webui"
+    assert args.open_webui_command == "init"
+
+    args = parser.parse_args(["open-webui", "up"])
+    assert args.open_webui_command == "up"
+    assert args.timeout_seconds == 60.0
+
+    args = parser.parse_args(["open-webui", "apply"])
+    assert args.open_webui_command == "apply"
+    assert args.timeout_seconds == 120.0
+
+    args = parser.parse_args(["open-webui", "apply-tools"])
+    assert args.open_webui_command == "apply-tools"
+    assert args.timeout_seconds == 60.0
+
+    for command in ["down", "status", "doctor"]:
+        args = parser.parse_args(["open-webui", command])
+        assert args.open_webui_command == command
+
+    args = parser.parse_args(["open-webui", "reset", "configuration", "--yes"])
+    assert args.scope == "configuration"
+    assert args.yes is True
+
+
+def test_all_agent_clis_expose_standard_lifecycle() -> None:
+    expected = {definition.name for definition in STANDARD_AGENT_COMMANDS}
+
+    for agent in AGENT_CLIS:
+        actual = {definition.name for definition in agent.command_definitions()}
+        assert expected <= actual

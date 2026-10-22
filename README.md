@@ -666,6 +666,36 @@ pytest
 Before the live execution command, the repository now includes a reproducible infrastructure
 management layer.
 
+## Open WebUI infrastructure checkpoint
+
+Open WebUI now has a repository-managed deployment and Tool baseline alongside Hermes. The
+pinned subject is Open WebUI `v0.11.4` at the qualified image digest recorded in
+`infrastructure/open-webui/profile.yaml`. The lifecycle is:
+
+```text
+acmm-infra open-webui init
+acmm-infra open-webui apply
+acmm-infra open-webui up
+acmm-infra open-webui apply-tools
+acmm-infra open-webui status
+acmm-infra open-webui doctor
+acmm-infra open-webui down
+```
+
+`apply` is the full Open WebUI baseline reconciler: it updates deployment state, temporarily
+starts the backend, waits for readiness, reconciles persistent provider settings and managed
+Tools through Open WebUI's supported APIs, then stops the provisioning service. `apply-tools`
+is the narrower running-service shortcut for Tool-only changes. `up` waits for `/ready` before
+returning. `doctor` checks persisted provider configuration, experiment-model availability,
+and exact managed-Tool state in addition to Docker/deployment state. ACMM does not modify
+`webui.db` directly. See `infrastructure/open-webui/README.md` for the current boundary.
+
+The experiment-facing Open WebUI runtime adapter now lives under `src/acmm/adapters/`. It
+uses the backend native multi-round Tool loop, creates and removes fresh chat state per run,
+sets controlled Tool Valves from the fixture, and normalizes persisted Tool activity into the
+existing ACMM evidence channels. See `docs/runtime/open_webui_adapter.md` and
+`integrations/open-webui/README.md`. The frozen Experiment 1 binding remains unchanged.
+
 ## Infrastructure management
 
 `acmm-infra` separates the repository's installation definitions from mutable deployed

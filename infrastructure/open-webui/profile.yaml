@@ -1,0 +1,57 @@
+schema_version: "0.1"
+
+agent:
+  name: Open WebUI
+  expected_version: "0.11.4"
+
+container:
+  service: open-webui
+  name: acmm-open-webui
+  image: ghcr.io/open-webui/open-webui:v0.11.4@sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f
+  web_port: 3000
+
+runtime:
+  deployment_directory: open-webui
+  data_directory: data
+
+baseline:
+  ollama_base_url: http://host.docker.internal:11434
+  model_default: nemotron-3-nano:30b-cloud
+  webui_auth: false
+  secret_key_file: /app/backend/data/.webui_secret_key
+  ollama_api_enabled: true
+  openai_api_enabled: false
+  plugins_enabled: true
+  pip_install_frontmatter_requirements_enabled: false
+  telemetry_enabled: false
+
+experiment_isolation:
+  direct_connections_enabled: false
+  direct_integrations_enabled: false
+  web_search_enabled: false
+  code_execution_enabled: false
+  code_interpreter_enabled: false
+  memories_enabled: false
+  memory_system_context_enabled: false
+  memory_background_review_enabled: false
+  image_generation_enabled: false
+  image_prompt_generation_enabled: false
+  title_generation_enabled: false
+  tags_generation_enabled: false
+  follow_up_generation_enabled: false
+  autocomplete_generation_enabled: false
+  search_query_generation_enabled: false
+  retrieval_query_generation_enabled: false
+  external_tool_servers_enabled: false
+  terminal_servers_enabled: false
+
+tools:
+  managed:
+    - id: acmm_tools
+      name: ACMM Tools
+      description: Minimal controlled tools used by ACMM compliance experiments.
+      source: tools/acmm_tools.py
+
+reset_scopes:
+  configuration:
+    - webui.db

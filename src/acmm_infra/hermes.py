@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import shlex
@@ -11,6 +10,7 @@ from typing import Any, Callable, Literal
 
 import yaml
 
+from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.profile import hermes_profile, managed_plugin
 
@@ -18,26 +18,6 @@ from acmm_infra.profile import hermes_profile, managed_plugin
 HERMES_CLI = "/opt/hermes/bin/hermes"
 HERMES_PYTHON = "/opt/hermes/.venv/bin/python"
 HERMES_CONFIG_SUPPORT_FLOOR = 12
-
-
-class infrastructure_error(RuntimeError):
-    """Raised when infrastructure state cannot be safely managed."""
-
-
-@dataclass(frozen=True)
-class doctor_check:
-    name: str
-    ok: bool
-    detail: str
-
-
-@dataclass(frozen=True)
-class doctor_report:
-    checks: tuple[doctor_check, ...]
-
-    @property
-    def is_ready(self) -> bool:
-        return all(check.ok for check in self.checks)
 
 
 class hermes_manager:

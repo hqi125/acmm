@@ -11,32 +11,34 @@ The default mutable runtime root is:
 ~/acmm_runtime
 ```
 
-The current managed agent is Hermes:
+The currently managed agents are Hermes and Open WebUI:
 
 ```text
 infrastructure/
-└── hermes/
-    ├── profile.yaml
-    ├── defaults/
-    │   ├── compose.yaml
-    │   └── env.defaults
-    ├── plugins/
-    │   └── acmm-tools/
-    └── README.md
+|-- hermes/
+|   |-- profile.yaml
+|   |-- defaults/
+|   `-- plugins/acmm-tools/
+`-- open-webui/
+    |-- profile.yaml
+    |-- defaults/
+    `-- tools/acmm_tools.py
 ```
 
-`profile.yaml` is the ACMM-relevant desired-state summary for Hermes. The `defaults/`
-directory contains ready-to-deploy installation files used by `acmm-infra hermes init`.
+Each agent directory describes version-controlled desired state. Mutable deployed state lives
+under the matching sibling directory in `~/acmm_runtime/`. Agent Zero will use the same
+source/deployment split when it is integrated.
 
-The source and deployment roots are deliberately separate:
+## Infrastructure CLI architecture
 
-```text
-~/acmm_repo
-    version-controlled definitions
+`acmm-infra` exposes a common lifecycle for every managed agent: `init`, `up`, `down`,
+`apply`, `apply-tools`, `status`, `doctor`, and `reset`. Full `apply` means reconcile the
+qualified baseline for that agent; `apply-tools` is always a narrower Tool-only path. The
+implementation may differ by product: Hermes uses a one-off provisioning container, while
+Open WebUI temporarily starts its backend because supported application configuration lives
+behind authenticated APIs.
 
-~/acmm_runtime/hermes
-    initialized Hermes deployment
-```
-
-The same layout can later be extended with sibling agent directories such as
-`infrastructure/agent_zero/` and `infrastructure/open_webui/`.
+The root CLI only integrates agent CLI adapters. Each adapter owns its command-specific
+arguments, orchestration, and presentation while the agent manager remains focused on
+infrastructure state and operations. Agent-specific commands may extend the common lifecycle
+when needed.

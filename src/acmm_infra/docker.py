@@ -5,7 +5,7 @@ from typing import Callable, Literal, Sequence
 import uuid
 
 from acmm_infra.process import command_result, command_runner
-from acmm_infra.profile import hermes_profile
+from acmm_infra.profile import hermes_profile, open_webui_profile
 
 
 class docker_error(RuntimeError):
@@ -17,7 +17,7 @@ class docker_client:
         self,
         repo_root: str | Path,
         runtime_root: str | Path,
-        profile: hermes_profile,
+        profile: hermes_profile | open_webui_profile,
         runner: command_runner | None = None,
     ) -> None:
         self._repo_root = Path(repo_root).resolve()
