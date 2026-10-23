@@ -8,7 +8,7 @@ import pytest
 from acmm_infra.docker import docker_error
 from acmm_infra.hermes import hermes_manager, infrastructure_error
 from acmm_infra.process import command_result
-from acmm_infra.profile import load_hermes_profile
+from acmm_infra.profiles.hermes import load_hermes_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]

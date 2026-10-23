@@ -12,7 +12,7 @@ import yaml
 
 from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
 from acmm_infra.docker import docker_client, require_success
-from acmm_infra.profile import hermes_profile, managed_plugin
+from acmm_infra.profiles.hermes import hermes_profile, managed_hermes_plugin
 
 
 HERMES_CLI = "/opt/hermes/bin/hermes"
@@ -967,7 +967,7 @@ class hermes_manager:
         shutil.copy2(source, destination)
         return "created"
 
-    def _sync_plugin(self, plugin: managed_plugin) -> None:
+    def _sync_plugin(self, plugin: managed_hermes_plugin) -> None:
         source = (self.repo_root / plugin.source).resolve()
         destination = _safe_runtime_target(self.data_root, plugin.destination)
 
@@ -1281,7 +1281,7 @@ def _build_observation_script(
 
 def _parse_observation_output(
     stdout: str,
-    managed_plugins: tuple[managed_plugin, ...],
+    managed_hermes_plugins: tuple[managed_hermes_plugin, ...],
 ) -> dict[str, Any]:
     raw: dict[str, str] = {}
 
@@ -1337,7 +1337,7 @@ def _parse_observation_output(
 
     observed["plugin_tool_overrides"] = {}
 
-    for plugin in managed_plugins:
+    for plugin in managed_hermes_plugins:
         raw_value = raw.get(f"plugin_override:{plugin.name}", "")
         value = _parse_json_scalar(raw_value) if raw_value else None
         observed["plugin_tool_overrides"][plugin.name] = (
@@ -1371,7 +1371,7 @@ def _experiment_isolation_settings(
 
 def _build_tool_provisioning_script(
     settings: tuple[tuple[str, str], ...],
-    plugins: tuple[managed_plugin, ...],
+    plugins: tuple[managed_hermes_plugin, ...],
 ) -> str:
     operations: list[tuple[str, str]] = []
 
@@ -1396,7 +1396,7 @@ def _build_tool_provisioning_script(
 
 
 def _plugin_operations(
-    plugins: tuple[managed_plugin, ...],
+    plugins: tuple[managed_hermes_plugin, ...],
 ) -> list[tuple[str, str]]:
     operations: list[tuple[str, str]] = []
 
@@ -1462,7 +1462,7 @@ def _render_provisioning_operations(
 
 def _build_provisioning_script(
     settings: tuple[tuple[str, str], ...],
-    plugins: tuple[managed_plugin, ...],
+    plugins: tuple[managed_hermes_plugin, ...],
     profile: hermes_profile,
 ) -> str:
     operations: list[tuple[str, str]] = []
@@ -1620,7 +1620,7 @@ print(
 
 
 def _managed_overlay_toolsets(
-    plugins: tuple[managed_plugin, ...],
+    plugins: tuple[managed_hermes_plugin, ...],
 ) -> tuple[str, ...]:
     toolsets = {
         toolset

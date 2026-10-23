@@ -3,7 +3,7 @@ from pathlib import Path
 
 from acmm_infra.agent_zero import agent_zero_manager
 from acmm_infra.process import command_result
-from acmm_infra.profile import load_agent_zero_profile
+from acmm_infra.profiles.agent_zero import load_agent_zero_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]

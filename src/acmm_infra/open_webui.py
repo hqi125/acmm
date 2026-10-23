@@ -8,7 +8,7 @@ from typing import Any, Callable
 from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.open_webui_api import open_webui_api_client, open_webui_api_error
-from acmm_infra.profile import managed_open_webui_tool, open_webui_profile
+from acmm_infra.profiles.open_webui import managed_open_webui_tool, open_webui_profile
 
 
 class open_webui_manager:

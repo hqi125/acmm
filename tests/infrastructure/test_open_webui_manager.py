@@ -2,7 +2,7 @@ from pathlib import Path
 
 from acmm_infra.open_webui import open_webui_manager
 from acmm_infra.process import command_result
-from acmm_infra.profile import load_open_webui_profile
+from acmm_infra.profiles.open_webui import load_open_webui_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]

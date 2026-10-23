@@ -9,7 +9,7 @@ from acmm_infra.common import infrastructure_error
 from acmm_infra.docker import docker_error
 from acmm_infra.hermes_cli import hermes_cli
 from acmm_infra.open_webui_cli import open_webui_cli
-from acmm_infra.profile import default_repo_root, default_runtime_root, profile_error
+from acmm_infra.profiles.common import default_repo_root, default_runtime_root, profile_error
 
 
 AGENT_CLIS = (

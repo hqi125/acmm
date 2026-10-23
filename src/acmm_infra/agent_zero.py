@@ -13,7 +13,7 @@ import yaml
 from acmm_infra.agent_zero_api import agent_zero_api_client, agent_zero_api_error
 from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
 from acmm_infra.docker import docker_client, require_success
-from acmm_infra.profile import agent_zero_profile, managed_agent_zero_plugin
+from acmm_infra.profiles.agent_zero import agent_zero_profile, managed_agent_zero_plugin
 
 
 _RETIRED_ENV_KEYS = (

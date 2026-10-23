@@ -8,7 +8,7 @@ import sys
 from acmm_infra.agent_cli import agent_cli
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.open_webui import open_webui_manager
-from acmm_infra.profile import load_open_webui_profile
+from acmm_infra.profiles.open_webui import load_open_webui_profile
 
 
 class open_webui_cli(agent_cli):

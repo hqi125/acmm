@@ -7,7 +7,7 @@ import json
 import uuid
 
 from acmm_infra.process import command_result, command_runner
-from acmm_infra.profile import (
+from acmm_infra.profiles import (
     agent_zero_profile,
     hermes_profile,
     open_webui_profile,
