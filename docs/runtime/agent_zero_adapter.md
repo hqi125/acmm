@@ -92,12 +92,11 @@ terminate the context.
 
 Agent Zero v2.14 does not expose an exact supported per-run mapping for the Contract's
 `termination.max_steps` budget. Its internal message loop continues until the agent produces a
-final response or execution is otherwise interrupted. The adapter therefore does not claim exact
-step-budget enforcement yet.
-
-This must be resolved or explicitly qualified before Agent Zero is bound into acquisition where
-step-budget termination could affect results. The frozen Experiment 1 catalog is intentionally
-unchanged by this adapter checkpoint.
+final response or execution is otherwise interrupted. The qualified subject binding therefore
+advertises timeout-only termination support, and `acmm run` rejects an Agent Zero Contract
+containing `max_steps` before acquisition. The frozen Experiment 1 Contract remains ineligible
+for this binding until its termination policy is deliberately revised or an exact
+upstream-supported mapping becomes available.
 
 ## Live smoke qualification
 

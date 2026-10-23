@@ -837,6 +837,11 @@ through the qualified subject execution catalog, invokes the running `acmm-herme
 with the explicit `acmm` toolset overlay, persists the exact Contract snapshot, Run Record, and
 evidence artifacts, and re-validates the persisted Run Record. Agent-specific runtime wiring
 stays in the subject catalog rather than in the top-level experiment CLI.
+The subject catalog also declares which per-run termination controls each qualified runtime can
+enforce. Execution fails before acquisition when a Contract requests an unsupported control.
+Hermes supports the current `max_steps` plus `timeout_seconds` policy; smoke-qualified Open WebUI
+and Agent Zero bindings currently support timeout-only Contracts because neither product exposes
+an exact supported per-run mapping for `max_steps`.
 The Contract's Hermes subject configuration also records the required ACMM experiment-isolation
 controls (title generation off, background review off, and Tool Search off), so the persisted
 Contract hash binds each run to that methodological baseline. `doctor` remains responsible for

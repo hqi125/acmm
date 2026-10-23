@@ -47,9 +47,12 @@ The chat id is provenance only; the corresponding chat is normally deleted after
 `timeout_seconds` is enforced at the HTTP execution boundary with a small adapter transport
 allowance. Open WebUI 0.11.4's native Tool-loop iteration limit is configured at process
 startup through `CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS`, rather than through the individual
-chat request. Consequently, the Contract's per-run `max_steps` budget does not yet have an
-exact supported mapping in this adapter. This must be resolved or methodologically qualified
-before relying on step-budget termination in Open WebUI acquisition.
+chat request. Consequently, the Contract's per-run `max_steps` budget has no exact supported
+mapping in this adapter. The qualified subject binding therefore advertises timeout-only
+termination support, and `acmm run` rejects an Open WebUI Contract containing `max_steps` before
+acquisition. The frozen Experiment 1 Contract remains ineligible for this binding until its
+termination policy is deliberately revised or an exact upstream-supported mapping becomes
+available.
 ## Live smoke qualification
 
 The repository provides `tools/smoke_open_webui.py` for a live end-to-end qualification run

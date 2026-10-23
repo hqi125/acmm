@@ -12,7 +12,10 @@ from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import load_schema, validate_contract
 from acmm.experiments.catalog import lookup_experiment_execution_binding
-from acmm.subjects.catalog import lookup_subject_execution_binding
+from acmm.subjects.catalog import (
+    lookup_subject_execution_binding,
+    unsupported_termination_controls,
+)
 from acmm.record.loader import load_run_record, run_record_load_error
 from acmm.record.validator import (
     load_run_record_schema,
@@ -250,6 +253,20 @@ def _run_experiment(args: argparse.Namespace) -> int:
             print(
                 "ERROR: No qualified execution binding is registered for subject "
                 f"'{subject_id}'.",
+                file=sys.stderr,
+            )
+            return 2
+
+        unsupported = unsupported_termination_controls(
+            subject_binding,
+            contract["run_protocol"]["termination"],
+        )
+        if unsupported:
+            print(
+                "ERROR: Subject "
+                f"'{subject_id}' cannot enforce the Contract termination control(s) "
+                + ", ".join(unsupported)
+                + " exactly for one run.",
                 file=sys.stderr,
             )
             return 2

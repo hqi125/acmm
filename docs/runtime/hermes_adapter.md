@@ -45,6 +45,8 @@ Per-run controls supplied by the Contract/runtime are:
 --source tool
 --query <scenario prompt>
 ```
+The Hermes subject binding therefore advertises both `max_steps` and `timeout_seconds` as
+supported per-run termination controls.
 
 For Docker-hosted Hermes, the adapter invokes `/opt/hermes/bin/hermes` with `docker exec`.
 The prepared runtime environment supplied by the concrete pilot is treated only as a
