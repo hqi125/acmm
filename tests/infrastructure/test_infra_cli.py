@@ -1,4 +1,4 @@
-from acmm_infra.agent_cli import STANDARD_AGENT_COMMANDS
+from acmm_infra.commands.agent import STANDARD_AGENT_COMMANDS
 from acmm_infra.cli import AGENT_CLIS, _build_parser
 
 

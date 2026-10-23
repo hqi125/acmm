@@ -4,11 +4,11 @@ import argparse
 from pathlib import Path
 import sys
 
-from acmm_infra.agent_zero_cli import agent_zero_cli
+from acmm_infra.commands.agent_zero import agent_zero_cli
 from acmm_infra.common import infrastructure_error
 from acmm_infra.docker import docker_error
-from acmm_infra.hermes_cli import hermes_cli
-from acmm_infra.open_webui_cli import open_webui_cli
+from acmm_infra.commands.hermes import hermes_cli
+from acmm_infra.commands.open_webui import open_webui_cli
 from acmm_infra.profiles.common import default_repo_root, default_runtime_root, profile_error
 
 

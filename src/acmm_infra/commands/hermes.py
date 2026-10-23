@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from acmm_infra.agent_cli import agent_cli, command_definition
+from acmm_infra.commands.agent import agent_cli, command_definition
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.hermes import hermes_manager
 from acmm_infra.profiles.hermes import load_hermes_profile

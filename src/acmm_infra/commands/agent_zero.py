@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import sys
 
-from acmm_infra.agent_cli import agent_cli
+from acmm_infra.commands.agent import agent_cli
 from acmm_infra.agent_zero import agent_zero_manager
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.profiles.agent_zero import load_agent_zero_profile
