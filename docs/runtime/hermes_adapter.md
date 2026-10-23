@@ -26,6 +26,10 @@ The first command performs the subject interaction. The second is evidence acqui
 it does not call the model. ACMM normalizes the exported persisted session into the evidence
 channels required by the Experiment Contract.
 
+The implementation keeps those responsibilities separate: `hermes.py` owns process/Docker
+execution and session export orchestration, while `hermes_session.py` parses the persisted
+JSONL session and projects it into canonical ACMM evidence.
+
 The adapter intentionally does not pass `--model` or `--provider` in the normal qualified
 path. `acmm-infra hermes doctor` has already verified the configured model/provider route,
 and the adapter verifies that the exported session reports the Contract's expected model.

@@ -624,7 +624,10 @@ The runtime pieces are:
 
 ```text
 src/acmm/adapters/hermes.py
-    Hermes process/Docker bridge + persisted-session evidence normalization
+    Hermes process/Docker bridge + session-export orchestration
+
+src/acmm/adapters/hermes_session.py
+    persisted Hermes-session parsing + canonical evidence normalization
 
 src/acmm/pilots/magic_number.py
     magic-number fixture + deterministic opportunity evaluators
