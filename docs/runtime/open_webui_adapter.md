@@ -61,7 +61,12 @@ Prepare the qualified service with `acmm-infra open-webui up` and
 `acmm-infra open-webui doctor`, then run `python tools/smoke_open_webui.py`. The program is
 intentionally outside `pytest` because it invokes the live cloud-backed model.
 
-The first live run should be treated as qualification evidence rather than as a reason to tune
-the adapter preemptively. In particular, request count, redundant Tool calls, persisted output
-shape, and final-response behavior should be observed before changing the runtime contract.
+The first live qualification run passed end to end: Open WebUI executed exactly the required
+`get_magic_number` and `add_numbers` calls, reported 100, and produced three upstream Ollama
+model requests with no redundant controlled Tool calls.
+
+The smoke now shares its controlled success fixture and checker with Agent Zero. End-to-end
+correctness is the pass criterion; redundant controlled Tool calls and upstream request count are
+reported as operational observations rather than silently tuned away or treated as experiment
+judgments.
 

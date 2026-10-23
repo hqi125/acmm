@@ -9,11 +9,21 @@ command surfaces.
 Runs the repository analysis workflow for a completed execution and coordinates the canonical
 CSV export with the R analysis stages.
 
-## `smoke_agent_zero.py`
+## Controlled-tool smoke programs
 
-Runs one live Agent Zero/Nemotron controlled-tool smoke interaction against an already-running
-and qualified Agent Zero service. It prints normalized termination, final-response, Tool-call,
-and Tool-result evidence.
+`smoke_agent_zero.py` and `smoke_open_webui.py` exercise the same controlled success fixture:
+`get_magic_number` must yield 87, `add_numbers` must then add 13, and the final response must
+report 100. Both programs share the checker in `controlled_tool_smoke.py`.
+
+The smoke checker treats end-to-end correctness as the qualification criterion. It requires an
+`agent_completed` termination, parseable normalized evidence, the required retrieval-then-addition
+dependency path, and a final response reporting 100. Additional successful controlled Tool calls
+are reported as redundant-call observations rather than infrastructure failures. Upstream model
+request count is also an external observation and is intentionally not a smoke pass criterion.
+
+These programs invoke the live cloud-backed model and are intentionally outside `pytest`.
+
+### Agent Zero
 
 Prepare the service first:
 
@@ -28,14 +38,10 @@ Then run:
 python tools/smoke_agent_zero.py
 ```
 
-This program invokes the live cloud-backed model and is intentionally not part of `pytest`.
 The runtime adapter design and current qualification notes live in
 `docs/runtime/agent_zero_adapter.md`.
-## `smoke_open_webui.py`
 
-Runs one live Open WebUI/Nemotron controlled-tool smoke interaction against an already-running
-and qualified Open WebUI service. It uses the backend API execution path and prints normalized
-termination, final-response, Tool-call, and Tool-result evidence.
+### Open WebUI
 
 Prepare the service first:
 
@@ -50,7 +56,5 @@ Then run:
 python tools/smoke_open_webui.py
 ```
 
-This program invokes the live cloud-backed model and is intentionally not part of `pytest`.
 The runtime adapter design and qualification notes live in
 `docs/runtime/open_webui_adapter.md`.
-

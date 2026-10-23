@@ -116,8 +116,12 @@ acmm-infra agent-zero doctor
 ```
 
 The smoke program is intentionally outside `pytest` because it invokes the live cloud-backed
-model. The Agent Zero freeze-candidate end-to-end smoke completed successfully with the
-controlled retrieval and addition Tools and a correct final result. The last qualification run
-also produced one redundant `get_magic_number` call and four upstream Ollama model requests.
-That request count is retained as an operational observation for later cross-agent smoke
-tightening; it is not corrected by the adapter and is not treated as an infrastructure failure.
+model. It shares the controlled success fixture and checker with the Open WebUI smoke. The
+checker requires the successful retrieval-then-addition dependency path and final result, while
+reporting additional successful controlled Tool calls as observations rather than infrastructure
+failures.
+
+The Agent Zero freeze-candidate end-to-end smoke completed successfully with a correct final
+result. The last qualification run also produced one redundant `get_magic_number` call and four
+upstream Ollama model requests. The redundant call remains preserved agent behavior. Upstream
+request count is recorded externally and is not a smoke pass criterion.
