@@ -11,7 +11,7 @@ The default mutable runtime root is:
 ~/acmm_runtime
 ```
 
-The currently managed agents are Hermes and Open WebUI:
+The currently managed agents are Hermes, Open WebUI, and Agent Zero:
 
 ```text
 infrastructure/
@@ -19,24 +19,28 @@ infrastructure/
 |   |-- profile.yaml
 |   |-- defaults/
 |   `-- plugins/acmm-tools/
-`-- open-webui/
+|-- open-webui/
+|   |-- profile.yaml
+|   |-- defaults/
+|   `-- tools/acmm_tools.py
+`-- agent-zero/
     |-- profile.yaml
     |-- defaults/
-    `-- tools/acmm_tools.py
+    `-- plugins/acmm_tools/
 ```
 
 Each agent directory describes version-controlled desired state. Mutable deployed state lives
-under the matching sibling directory in `~/acmm_runtime/`. Agent Zero will use the same
-source/deployment split when it is integrated.
+under the matching sibling directory in `~/acmm_runtime/`. Agent Zero follows the same source/deployment split, with mutable `/a0/usr` state under `~/acmm_runtime/agent-zero/usr`.
 
 ## Infrastructure CLI architecture
 
 `acmm-infra` exposes a common lifecycle for every managed agent: `init`, `up`, `down`,
 `apply`, `apply-tools`, `status`, `doctor`, and `reset`. Full `apply` means reconcile the
 qualified baseline for that agent; `apply-tools` is always a narrower Tool-only path. The
-implementation may differ by product: Hermes uses a one-off provisioning container, while
+implementation may differ by product: Hermes uses a one-off provisioning container,
 Open WebUI temporarily starts its backend because supported application configuration lives
-behind authenticated APIs.
+behind authenticated APIs, and Agent Zero reconciles its file-owned profile/plugin state while
+stopped before using one temporary service lifetime to persist and verify application settings.
 
 The root CLI only integrates agent CLI adapters. Each adapter owns its command-specific
 arguments, orchestration, and presentation while the agent manager remains focused on

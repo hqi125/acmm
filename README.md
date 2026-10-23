@@ -693,8 +693,46 @@ and exact managed-Tool state in addition to Docker/deployment state. ACMM does n
 The experiment-facing Open WebUI runtime adapter now lives under `src/acmm/adapters/`. It
 uses the backend native multi-round Tool loop, creates and removes fresh chat state per run,
 sets controlled Tool Valves from the fixture, and normalizes persisted Tool activity into the
-existing ACMM evidence channels. See `docs/runtime/open_webui_adapter.md` and
-`integrations/open-webui/README.md`. The frozen Experiment 1 binding remains unchanged.
+existing ACMM evidence channels. See `docs/runtime/open_webui_adapter.md`. The frozen Experiment 1 binding remains unchanged.
+
+## Agent Zero infrastructure checkpoint
+
+Agent Zero now has the same repository-managed lifecycle surface as Hermes and Open WebUI.
+The pinned subject is Agent Zero `v2.14` at the immutable multi-platform image digest recorded
+in `infrastructure/agent-zero/profile.yaml`. The managed lifecycle is:
+
+```text
+acmm-infra agent-zero init
+acmm-infra agent-zero apply
+acmm-infra agent-zero up
+acmm-infra agent-zero apply-tools
+acmm-infra agent-zero status
+acmm-infra agent-zero doctor
+acmm-infra agent-zero down
+```
+
+Agent Zero persists only its `/a0/usr` user-state tree into the ACMM runtime root; framework
+code remains owned by the pinned image. Full `apply` reconciles deployment state, managed
+ACMM Tool/plugin files, the `acmm` Agent Profile, the v2.14 `_model_config` `Default` preset,
+and experiment-isolation files, including narrow local-model communication/solving/initial-message prompt
+overrides, then uses one temporary service lifetime to persist and verify core settings through
+Agent Zero's own APIs. `apply-tools` remains the narrower Tool/plugin-only subset.
+
+The qualified Agent Zero baseline pins main and utility roles to
+`nemotron-3-nano:30b-cloud` through Windows Ollama with 64K contexts. The `acmm` profile
+blocks all Tools by default except the controlled `get_magic_number` and `add_numbers` Tools,
+blocks Skills and MCP Tools by default, disables memory recall/memorization/consolidation and
+automatic chat naming, and disables MCP/A2A servers, update checks, project inheritance, and
+automatic RFC Docker behavior. `doctor` verifies persistent settings, effective model config,
+and model availability in addition to the deployment layer. See
+`infrastructure/agent-zero/README.md`.
+
+The experiment-facing Agent Zero runtime adapter now lives under `src/acmm/adapters/`. It
+reuses the persistent running Agent Zero service, configures per-run `acmm_tools` state through
+the supported plugin API, creates and removes a fresh context, executes through the external
+API, and normalizes Agent Zero Tool logs into the existing ACMM evidence channels. See `docs/runtime/agent_zero_adapter.md`; the standalone live smoke helper is
+`tools/smoke_agent_zero.py`. Exact per-run `termination.max_steps` enforcement remains a
+qualification item, so the frozen Experiment 1 catalog is intentionally unchanged.
 
 ## Infrastructure management
 

@@ -1,0 +1,62 @@
+schema_version: "0.1"
+
+agent:
+  name: Agent Zero
+  expected_version: "v2.14"
+
+container:
+  service: agent-zero
+  name: acmm-agent-zero
+  image: agent0ai/agent-zero:v2.14@sha256:b0c9763df7b8c4c5ddbdac9c101e8f84de8b7cdf9185203e446e2d7d8ebf2f1c
+  web_port: 50080
+
+runtime:
+  deployment_directory: agent-zero
+  data_directory: usr
+
+baseline:
+  agent_profile: acmm
+  model_preset: Default
+  model_provider: ollama
+  model_base_url: http://host.docker.internal:11434
+  model_default: nemotron-3-nano:30b-cloud
+  context_window: 64000
+  utility_model_provider: ollama
+  utility_model_base_url: http://host.docker.internal:11434
+  utility_model_default: nemotron-3-nano:30b-cloud
+  utility_context_window: 64000
+  embedding_model_provider: huggingface
+  embedding_model_default: sentence-transformers/all-MiniLM-L6-v2
+
+experiment_isolation:
+  mcp_server_enabled: false
+  a2a_server_enabled: false
+  update_check_enabled: false
+  chat_inherit_project: false
+  rfc_auto_docker: false
+  tool_policy:
+    default: block
+    mcp_default: block
+    allowed:
+      - plugin:acmm_tools:get_magic_number
+      - plugin:acmm_tools:add_numbers
+  skills_policy:
+    default: block
+  memory:
+    recall_enabled: false
+    memorize_enabled: false
+    memorize_consolidation: false
+  chat_naming:
+    automatic_naming: false
+
+plugins:
+  managed:
+    - name: acmm_tools
+      source: plugins/acmm_tools
+      destination: plugins/acmm_tools
+
+reset_scopes:
+  configuration:
+    - settings.json
+    - agents/acmm
+    - plugins/_model_config/presets.yaml

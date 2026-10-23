@@ -1,0 +1,28 @@
+services:
+  agent-zero:
+    image: ${AGENT_ZERO_IMAGE}
+    container_name: ${AGENT_ZERO_CONTAINER_NAME:-acmm-agent-zero}
+    restart: unless-stopped
+
+    volumes:
+      - ./usr:/a0/usr
+
+    environment:
+      A0_SET_agent_profile: "${AGENT_ZERO_AGENT_PROFILE}"
+      A0_SET_mcp_servers: '${AGENT_ZERO_MCP_SERVERS}'
+      A0_SET_mcp_server_enabled: "${AGENT_ZERO_MCP_SERVER_ENABLED}"
+      A0_SET_a2a_server_enabled: "${AGENT_ZERO_A2A_SERVER_ENABLED}"
+      A0_SET_update_check_enabled: "${AGENT_ZERO_UPDATE_CHECK_ENABLED}"
+      A0_SET_chat_inherit_project: "${AGENT_ZERO_CHAT_INHERIT_PROJECT}"
+      A0_SET_rfc_auto_docker: "${AGENT_ZERO_RFC_AUTO_DOCKER}"
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    ports:
+      - "127.0.0.1:${AGENT_ZERO_PORT:-50080}:80"
+
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535

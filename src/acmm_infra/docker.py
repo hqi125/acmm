@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Literal, Sequence
+from typing import Callable, Literal, Mapping, Sequence
+import base64
+import json
 import uuid
 
 from acmm_infra.process import command_result, command_runner
-from acmm_infra.profile import hermes_profile, open_webui_profile
+from acmm_infra.profile import (
+    agent_zero_profile,
+    hermes_profile,
+    open_webui_profile,
+)
 
 
 class docker_error(RuntimeError):
@@ -17,7 +23,7 @@ class docker_client:
         self,
         repo_root: str | Path,
         runtime_root: str | Path,
-        profile: hermes_profile | open_webui_profile,
+        profile: hermes_profile | open_webui_profile | agent_zero_profile,
         runner: command_runner | None = None,
     ) -> None:
         self._repo_root = Path(repo_root).resolve()
@@ -104,6 +110,41 @@ class docker_client:
                 "sh",
                 "-lc",
                 script,
+            ],
+            timeout_seconds=timeout_seconds,
+        )
+
+    def replace_container_tree(
+        self,
+        root: str,
+        files: Mapping[str, bytes],
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> command_result:
+        payload = {
+            path: base64.b64encode(content).decode("ascii")
+            for path, content in files.items()
+        }
+        script = (
+            "import base64,json,pathlib,shutil,sys; "
+            "root=pathlib.Path(sys.argv[1]); "
+            "data=json.loads(sys.argv[2]); "
+            "shutil.rmtree(root, ignore_errors=True); "
+            "[(root.joinpath(path).parent.mkdir(parents=True, exist_ok=True), "
+            "root.joinpath(path).write_bytes(base64.b64decode(value))) "
+            "for path,value in data.items()]"
+        )
+        return self._runner.run(
+            [
+                "docker",
+                "exec",
+                "-i",
+                self._profile.container_name,
+                "python3",
+                "-c",
+                script,
+                root,
+                json.dumps(payload, separators=(",", ":")),
             ],
             timeout_seconds=timeout_seconds,
         )

@@ -3,6 +3,15 @@
 The Open WebUI adapter is the experiment-facing boundary for the pinned Open WebUI 0.11.4
 baseline. It talks to the backend API directly; browser UI state is outside the execution path.
 
+
+## Runtime boundary
+
+The infrastructure baseline owns the pinned Open WebUI image, provider configuration,
+application isolation, managed Tool source, and readiness qualification. The runtime adapter
+reuses that qualified service; it owns only run-specific Tool Valves, fresh chat state,
+execution, evidence normalization, and cleanup. Browser automation is never part of the run
+path.
+
 ## Isolation model
 
 A run receives fresh conversation state rather than reusing an earlier chat. Run-specific

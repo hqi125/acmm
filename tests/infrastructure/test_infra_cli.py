@@ -106,3 +106,28 @@ def test_all_agent_clis_expose_standard_lifecycle() -> None:
     for agent in AGENT_CLIS:
         actual = {definition.name for definition in agent.command_definitions()}
         assert expected <= actual
+
+
+
+def test_cli_exposes_agent_zero_lifecycle() -> None:
+    parser = _build_parser()
+
+    args = parser.parse_args(["agent-zero", "init"])
+    assert args.command == "agent-zero"
+    assert args.agent_zero_command == "init"
+
+    args = parser.parse_args(["agent-zero", "up"])
+    assert args.agent_zero_command == "up"
+    assert args.timeout_seconds == 120.0
+
+    args = parser.parse_args(["agent-zero", "apply"])
+    assert args.agent_zero_command == "apply"
+    assert args.timeout_seconds == 120.0
+
+    for command in ["apply-tools", "down", "status", "doctor"]:
+        args = parser.parse_args(["agent-zero", command])
+        assert args.agent_zero_command == command
+
+    args = parser.parse_args(["agent-zero", "reset", "configuration", "--yes"])
+    assert args.scope == "configuration"
+    assert args.yes is True
