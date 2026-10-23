@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 
 from acmm.contract.loader import load_contract
-from acmm.pilots.magic_number import build_magic_number_hermes_registry
+from acmm.pilots.magic_number import build_magic_number_registry
 from acmm.record.validator import (
     load_run_record_schema,
     sha256_file,
@@ -14,6 +14,7 @@ from acmm.record.validator import (
 )
 from acmm.runtime.execution import execute_planned_run
 from acmm.runtime.planner import build_experiment_plan
+from acmm.subjects.catalog import lookup_subject_execution_binding
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,6 +32,16 @@ RECORD_SCHEMA_PATH = (
     / "run_record.schema.json"
 )
 RUN_ID = "1c78416a-ea4a-4432-af26-c190ad45a9f6"
+
+
+def _magic_number_registry():
+    binding = lookup_subject_execution_binding("hermes_nemotron30b")
+    assert binding is not None
+    return build_magic_number_registry(
+        {
+            "hermes_nemotron30b": binding.adapter_builder(),
+        }
+    )
 
 
 def _session_export() -> str:
@@ -165,7 +176,7 @@ def test_magic_number_pipeline_produces_valid_compliant_run(
         contract=contract,
         planned=planned,
         contract_sha256=digest,
-        registry=build_magic_number_hermes_registry(),
+        registry=_magic_number_registry(),
         harness_version="0.1.0",
         now=_clock(),
         run_id_factory=lambda: RUN_ID,
@@ -319,7 +330,7 @@ def test_tool_search_bridge_transcript_is_adjudicated_on_real_tools(
         contract=contract,
         planned=planned,
         contract_sha256=digest,
-        registry=build_magic_number_hermes_registry(),
+        registry=_magic_number_registry(),
         harness_version="0.1.0",
         now=_clock(),
         run_id_factory=lambda: RUN_ID,

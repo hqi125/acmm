@@ -4,28 +4,28 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Callable, Mapping, TypeAlias
 
-from acmm.adapters.hermes import hermes_adapter_config
 from acmm.harness.capabilities import harness_capabilities
 from acmm.pilots.controlled_tool_use import (
-    build_controlled_tool_use_hermes_registry,
+    build_controlled_tool_use_registry,
     controlled_tool_use_harness_capabilities,
 )
 from acmm.pilots.magic_number import (
-    build_magic_number_hermes_registry,
+    build_magic_number_registry,
     magic_number_harness_capabilities,
 )
+from acmm.runtime.interfaces import subject_adapter
 from acmm.runtime.registry import execution_registry
 
 
 experiment_registry_builder: TypeAlias = Callable[
-    [hermes_adapter_config | None],
+    [Mapping[str, subject_adapter]],
     execution_registry,
 ]
 
 
 @dataclass(frozen=True)
 class experiment_execution_binding:
-    """Execution wiring for one built-in experiment contract."""
+    """Execution components for one built-in experiment contract."""
 
     capabilities: harness_capabilities
     registry_builder: experiment_registry_builder
@@ -35,11 +35,11 @@ def _build_catalog() -> Mapping[str, experiment_execution_binding]:
     bindings = {
         "magic_number_tool_use_v1": experiment_execution_binding(
             capabilities=magic_number_harness_capabilities(),
-            registry_builder=build_magic_number_hermes_registry,
+            registry_builder=build_magic_number_registry,
         ),
         "controlled_tool_use_multiscenario_v1": experiment_execution_binding(
             capabilities=controlled_tool_use_harness_capabilities(),
-            registry_builder=build_controlled_tool_use_hermes_registry,
+            registry_builder=build_controlled_tool_use_registry,
         ),
     }
 

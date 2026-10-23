@@ -7,12 +7,12 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from acmm.adapters.hermes import hermes_adapter_config
 from acmm.analysis.export import analysis_export_error, export_execution
 from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import load_schema, validate_contract
 from acmm.experiments.catalog import lookup_experiment_execution_binding
+from acmm.subjects.catalog import lookup_subject_execution_binding
 from acmm.record.loader import load_run_record, run_record_load_error
 from acmm.record.validator import (
     load_run_record_schema,
@@ -239,11 +239,27 @@ def _run_experiment(args: argparse.Namespace) -> int:
 
         selected_indices = (args.run_index,)
 
-    adapter_config = hermes_adapter_config(
-        docker_container=args.hermes_container,
-        executable="/opt/hermes/bin/hermes",
-    )
-    registry = binding.registry_builder(adapter_config)
+    subject_adapters = {}
+    subject_runtime_descriptions: list[tuple[str, str]] = []
+
+    for subject in contract["subjects"]:
+        subject_id = subject["id"]
+        subject_binding = lookup_subject_execution_binding(subject_id)
+
+        if subject_binding is None:
+            print(
+                "ERROR: No qualified execution binding is registered for subject "
+                f"'{subject_id}'.",
+                file=sys.stderr,
+            )
+            return 2
+
+        subject_adapters[subject_id] = subject_binding.adapter_builder()
+        subject_runtime_descriptions.append(
+            (subject_id, subject_binding.runtime_description)
+        )
+
+    registry = binding.registry_builder(subject_adapters)
 
     if selected_indices is None:
         print(
@@ -258,10 +274,9 @@ def _run_experiment(args: argparse.Namespace) -> int:
             f"repetition={planned.repetition}."
         )
 
-    print(
-        f"Hermes container: {args.hermes_container}; "
-        "toolset overlay: acmm."
-    )
+    print("Execution subject runtime:")
+    for subject_id, description in subject_runtime_descriptions:
+        print(f"  {subject_id}: {description}")
     pacing = contract["run_protocol"].get("pacing", {})
     inter_run_delay = pacing.get("inter_run_delay_seconds", 0)
 
@@ -617,14 +632,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Maximum attempts for an invalid execution of a selected run "
             "(default: 1)."
-        ),
-    )
-    run_parser.add_argument(
-        "--hermes-container",
-        default="acmm-hermes",
-        help=(
-            "Running Hermes Docker container name "
-            "(default: acmm-hermes)."
         ),
     )
     run_parser.set_defaults(handler=_run_experiment)

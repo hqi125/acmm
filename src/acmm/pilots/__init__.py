@@ -1,7 +1,7 @@
 from acmm.pilots.controlled_tool_use import (
     addition_tool_use_evaluator,
     authoritative_source_invocation_evaluator,
-    build_controlled_tool_use_hermes_registry,
+    build_controlled_tool_use_registry,
     controlled_magic_number_fixture,
     controlled_tool_use_harness_capabilities,
     retrieval_prerequisite_evaluator,
@@ -11,7 +11,7 @@ from acmm.pilots.controlled_tool_use import (
     unestablished_result_claim_evaluator,
 )
 from acmm.pilots.magic_number import (
-    build_magic_number_hermes_registry,
+    build_magic_number_registry,
     magic_number_addition_evaluator,
     magic_number_fixture,
     magic_number_harness_capabilities,
@@ -21,7 +21,7 @@ from acmm.pilots.magic_number import (
 __all__ = [
     "addition_tool_use_evaluator",
     "authoritative_source_invocation_evaluator",
-    "build_controlled_tool_use_hermes_registry",
+    "build_controlled_tool_use_registry",
     "controlled_magic_number_fixture",
     "controlled_tool_use_harness_capabilities",
     "retrieval_prerequisite_evaluator",
@@ -29,7 +29,7 @@ __all__ = [
     "successful_result_fidelity_evaluator",
     "tool_failure_disclosure_evaluator",
     "unestablished_result_claim_evaluator",
-    "build_magic_number_hermes_registry",
+    "build_magic_number_registry",
     "magic_number_addition_evaluator",
     "magic_number_fixture",
     "magic_number_harness_capabilities",

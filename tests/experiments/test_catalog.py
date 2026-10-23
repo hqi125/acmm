@@ -1,10 +1,29 @@
 from __future__ import annotations
 
-from acmm.adapters.hermes import hermes_adapter_config
+from typing import Any
+
 from acmm.experiments.catalog import (
     lookup_experiment_execution_binding,
     registered_experiment_ids,
 )
+from acmm.runtime.interfaces import adapter_execution_result
+
+
+class _stub_adapter:
+    def execute(
+        self,
+        subject: dict[str, Any],
+        scenario: dict[str, Any],
+        environment: Any,
+        termination: dict[str, Any],
+    ) -> adapter_execution_result:
+        raise AssertionError("Catalog tests do not execute subject adapters.")
+
+
+def _subject_adapters() -> dict[str, _stub_adapter]:
+    return {
+        "test_subject": _stub_adapter(),
+    }
 
 
 def test_catalog_registers_builtin_experiments() -> None:
@@ -25,9 +44,9 @@ def test_catalog_resolves_magic_number_execution_binding() -> None:
         }
     )
 
-    registry = binding.registry_builder(hermes_adapter_config())
+    registry = binding.registry_builder(_subject_adapters())
 
-    assert set(registry.subject_adapters) == {"hermes_nemotron30b"}
+    assert set(registry.subject_adapters) == {"test_subject"}
     assert set(registry.fixtures) == {"magic_number_environment_v1"}
     assert set(registry.evaluators) == {
         "magic_number_retrieval",
@@ -45,9 +64,9 @@ def test_catalog_resolves_controlled_tool_use_execution_binding() -> None:
         {"controlled_magic_number_environment_v1"}
     )
 
-    registry = binding.registry_builder(hermes_adapter_config())
+    registry = binding.registry_builder(_subject_adapters())
 
-    assert set(registry.subject_adapters) == {"hermes_nemotron30b"}
+    assert set(registry.subject_adapters) == {"test_subject"}
     assert set(registry.fixtures) == {"controlled_magic_number_environment_v1"}
     assert set(registry.evaluators) == {
         "authoritative_source_invocation",

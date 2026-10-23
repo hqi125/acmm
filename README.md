@@ -832,9 +832,11 @@ the live smoke test:
 acmm run experiments/examples/magic_number/experiment.yaml --run-index 0
 ```
 
-The command validates the Contract and harness compatibility, invokes the running
-`acmm-hermes` container with the explicit `acmm` toolset overlay, persists the exact Contract
-snapshot, Run Record, and evidence artifacts, and re-validates the persisted Run Record.
+The command validates the Contract and harness compatibility, resolves each Contract subject
+through the qualified subject execution catalog, invokes the running `acmm-hermes` container
+with the explicit `acmm` toolset overlay, persists the exact Contract snapshot, Run Record, and
+evidence artifacts, and re-validates the persisted Run Record. Agent-specific runtime wiring
+stays in the subject catalog rather than in the top-level experiment CLI.
 The Contract's Hermes subject configuration also records the required ACMM experiment-isolation
 controls (title generation off, background review off, and Tool Search off), so the persisted
 Contract hash binds each run to that methodological baseline. `doctor` remains responsible for

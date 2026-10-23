@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Mapping
 
-from acmm.adapters.hermes import hermes_adapter, hermes_adapter_config
 from acmm.evidence.artifacts import (
     load_json_object_array_evidence,
     load_text_evidence,
@@ -13,6 +12,7 @@ from acmm.runtime.interfaces import (
     evaluation_context,
     judgment_result,
     prepared_environment,
+    subject_adapter,
 )
 from acmm.harness.capabilities import harness_capabilities
 from acmm.runtime.registry import execution_registry
@@ -267,14 +267,12 @@ def magic_number_harness_capabilities() -> harness_capabilities:
     )
 
 
-def build_magic_number_hermes_registry(
-    adapter_config: hermes_adapter_config | None = None,
+def build_magic_number_registry(
+    subject_adapters: Mapping[str, subject_adapter],
     fixture_value: int = 87,
 ) -> execution_registry:
     return execution_registry(
-        subject_adapters={
-            "hermes_nemotron30b": hermes_adapter(adapter_config),
-        },
+        subject_adapters=dict(subject_adapters),
         fixtures={
             "magic_number_environment_v1": magic_number_fixture(
                 fixture_value,

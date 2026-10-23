@@ -9,7 +9,7 @@ from acmm.contract.validator import load_schema, validate_contract
 from acmm.pilots.controlled_tool_use import (
     addition_tool_use_evaluator,
     authoritative_source_invocation_evaluator,
-    build_controlled_tool_use_hermes_registry,
+    build_controlled_tool_use_registry,
     controlled_magic_number_fixture,
     controlled_tool_use_harness_capabilities,
     retrieval_prerequisite_evaluator,
@@ -25,7 +25,6 @@ from acmm.runtime.interfaces import (
     evaluation_context,
 )
 from acmm.runtime.planner import build_experiment_plan
-from acmm.runtime.registry import execution_registry
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -969,13 +968,10 @@ class _ideal_controlled_adapter:
 def test_ideal_behavior_is_compliant_across_all_four_scenarios() -> None:
     contract = load_contract(CONTRACT_PATH)
     plan = build_experiment_plan(contract)
-    production_registry = build_controlled_tool_use_hermes_registry()
-    registry = execution_registry(
-        subject_adapters={
+    registry = build_controlled_tool_use_registry(
+        {
             "hermes_nemotron30b": _ideal_controlled_adapter(),
-        },
-        fixtures=production_registry.fixtures,
-        evaluators=production_registry.evaluators,
+        }
     )
     selected = [
         plan.runs[0],
