@@ -9,6 +9,7 @@ from typing import Any, Callable, Literal
 import yaml
 
 from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
+from acmm_infra.deployment import install_default_if_missing
 from acmm_infra.docker import docker_client
 from acmm_infra.profiles.hermes import hermes_profile, managed_hermes_plugin
 from acmm_infra.hermes_client import hermes_client, managed_overlay_toolsets
@@ -52,11 +53,11 @@ class hermes_manager:
     def initialize_deployment(self) -> dict[str, str]:
         self.init_runtime()
 
-        compose_state = self._install_default_if_missing(
+        compose_state = install_default_if_missing(
             self.defaults_root / "compose.yaml",
             self.deployment_root / "compose.yaml",
         )
-        env_state = self._install_default_if_missing(
+        env_state = install_default_if_missing(
             self.defaults_root / "env.defaults",
             self.deployment_root / ".env",
         )
@@ -900,23 +901,6 @@ class hermes_manager:
             raise infrastructure_error(
                 f"Could not secure Hermes secret store '{env_path}': {exc}"
             ) from exc
-
-    def _install_default_if_missing(
-        self,
-        source: Path,
-        destination: Path,
-    ) -> str:
-        if not source.is_file():
-            raise infrastructure_error(
-                f"Shipped infrastructure default does not exist: '{source}'."
-            )
-
-        if destination.exists():
-            return "preserved"
-
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        return "created"
 
     def _sync_plugin(self, plugin: managed_hermes_plugin) -> None:
         source = (self.repo_root / plugin.source).resolve()

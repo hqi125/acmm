@@ -12,6 +12,13 @@ import yaml
 
 from acmm_infra.agent_zero_api import agent_zero_api_client, agent_zero_api_error
 from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
+from acmm_infra.deployment import (
+    bool_text,
+    files_equal,
+    install_default_if_missing,
+    read_env,
+    write_env,
+)
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.profiles.agent_zero import agent_zero_profile, managed_agent_zero_plugin
 
@@ -60,11 +67,11 @@ class agent_zero_manager:
         self.deployment_root.mkdir(parents=True, exist_ok=True)
         self.data_root.mkdir(parents=True, exist_ok=True)
 
-        compose_state = self._install_default_if_missing(
+        compose_state = install_default_if_missing(
             self.defaults_root / "compose.yaml",
             self.deployment_root / "compose.yaml",
         )
-        env_state = self._install_default_if_missing(
+        env_state = install_default_if_missing(
             self.defaults_root / "env.defaults",
             self.deployment_root / ".env",
         )
@@ -202,7 +209,7 @@ class agent_zero_manager:
             if result.succeeded:
                 observed_version = result.stdout.strip() or None
 
-        env_values = _read_env(env_path) if env_path.is_file() else {}
+        env_values = read_env(env_path) if env_path.is_file() else {}
         managed_plugins = {
             plugin.name: self._plugin_status(plugin)
             for plugin in self.profile.plugins
@@ -216,7 +223,7 @@ class agent_zero_manager:
             "data_root": str(self.data_root),
             "deployment": {
                 "compose_path": str(compose_path),
-                "compose_matches_default": _files_equal(compose_path, default_compose),
+                "compose_matches_default": files_equal(compose_path, default_compose),
                 "env_path": str(env_path),
             },
             "desired": {
@@ -438,11 +445,18 @@ class agent_zero_manager:
             self.deployment_root / "compose.yaml",
         )
         env_path = self.deployment_root / ".env"
-        values = _read_env(env_path)
+        values = read_env(env_path)
         for key in _RETIRED_ENV_KEYS:
             values.pop(key, None)
         values.update(self._managed_env())
-        _write_env(env_path, values)
+        write_env(
+            env_path,
+            values,
+            header_lines=(
+                "# ACMM Agent Zero deployment configuration.",
+                "# Managed keys are reconciled by 'acmm-infra agent-zero apply'.",
+            ),
+        )
 
     def _reconcile_plugins(self) -> tuple[str, ...]:
         synchronized: list[str] = []
@@ -490,11 +504,11 @@ class agent_zero_manager:
             "AGENT_ZERO_PORT": str(self.profile.web_port),
             "AGENT_ZERO_AGENT_PROFILE": self.profile.agent_profile,
             "AGENT_ZERO_MCP_SERVERS": '{"mcpServers":{}}',
-            "AGENT_ZERO_MCP_SERVER_ENABLED": _bool_text(isolation.mcp_server_enabled),
-            "AGENT_ZERO_A2A_SERVER_ENABLED": _bool_text(isolation.a2a_server_enabled),
-            "AGENT_ZERO_UPDATE_CHECK_ENABLED": _bool_text(isolation.update_check_enabled),
-            "AGENT_ZERO_CHAT_INHERIT_PROJECT": _bool_text(isolation.chat_inherit_project),
-            "AGENT_ZERO_RFC_AUTO_DOCKER": _bool_text(isolation.rfc_auto_docker),
+            "AGENT_ZERO_MCP_SERVER_ENABLED": bool_text(isolation.mcp_server_enabled),
+            "AGENT_ZERO_A2A_SERVER_ENABLED": bool_text(isolation.a2a_server_enabled),
+            "AGENT_ZERO_UPDATE_CHECK_ENABLED": bool_text(isolation.update_check_enabled),
+            "AGENT_ZERO_CHAT_INHERIT_PROJECT": bool_text(isolation.chat_inherit_project),
+            "AGENT_ZERO_RFC_AUTO_DOCKER": bool_text(isolation.rfc_auto_docker),
         }
 
     def _managed_settings(self) -> dict[str, Any]:
@@ -860,48 +874,6 @@ class agent_zero_manager:
             return True, f"HTTP {status}"
         return False, f"HTTP {status}"
 
-    def _install_default_if_missing(self, source: Path, destination: Path) -> str:
-        if not source.is_file():
-            raise infrastructure_error(
-                f"Shipped infrastructure default does not exist: '{source}'."
-            )
-        if destination.exists():
-            return "preserved"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        return "created"
-
-
-def _read_env(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not path.is_file():
-        return values
-
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", maxsplit=1)
-        values[key.strip()] = value.strip()
-    return values
-
-
-def _write_env(path: Path, values: dict[str, str]) -> None:
-    lines = ["# ACMM Agent Zero deployment configuration."]
-    lines.append("# Managed keys are reconciled by 'acmm-infra agent-zero apply'.")
-    lines.append("")
-    for key in sorted(values):
-        lines.append(f"{key}={values[key]}")
-    lines.append("")
-    path.write_text("\n".join(lines), encoding="utf-8")
-
-
-def _files_equal(left: Path, right: Path) -> bool:
-    if not left.is_file() or not right.is_file():
-        return False
-    return left.read_bytes() == right.read_bytes()
-
-
 def _directories_equal(left: Path, right: Path) -> bool:
     if not left.is_dir() or not right.is_dir():
         return False
@@ -923,10 +895,6 @@ def _directories_equal(left: Path, right: Path) -> bool:
         (left / relative).read_bytes() == (right / relative).read_bytes()
         for relative in left_files
     )
-
-
-def _bool_text(value: bool) -> str:
-    return "true" if value else "false"
 
 
 def _json_bytes(value: Any) -> bytes:

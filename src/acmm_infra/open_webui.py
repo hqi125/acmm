@@ -6,6 +6,13 @@ import time
 from typing import Any, Callable
 
 from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
+from acmm_infra.deployment import (
+    bool_text,
+    files_equal,
+    install_default_if_missing,
+    read_env,
+    write_env,
+)
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.open_webui_api import open_webui_api_client, open_webui_api_error
 from acmm_infra.profiles.open_webui import managed_open_webui_tool, open_webui_profile
@@ -44,11 +51,11 @@ class open_webui_manager:
         self.deployment_root.mkdir(parents=True, exist_ok=True)
         self.data_root.mkdir(parents=True, exist_ok=True)
 
-        compose_state = self._install_default_if_missing(
+        compose_state = install_default_if_missing(
             self.defaults_root / "compose.yaml",
             self.deployment_root / "compose.yaml",
         )
-        env_state = self._install_default_if_missing(
+        env_state = install_default_if_missing(
             self.defaults_root / "env.defaults",
             self.deployment_root / ".env",
         )
@@ -168,7 +175,7 @@ class open_webui_manager:
             if result.succeeded:
                 observed_version = result.stdout.strip() or None
 
-        env_values = _read_env(env_path) if env_path.is_file() else {}
+        env_values = read_env(env_path) if env_path.is_file() else {}
         backend = self._backend_status() if running else _empty_backend_status(self.profile)
 
         return {
@@ -177,7 +184,7 @@ class open_webui_manager:
             "data_root": str(self.data_root),
             "deployment": {
                 "compose_path": str(compose_path),
-                "compose_matches_default": _files_equal(compose_path, default_compose),
+                "compose_matches_default": files_equal(compose_path, default_compose),
                 "env_path": str(env_path),
             },
             "desired": {
@@ -407,9 +414,17 @@ class open_webui_manager:
         )
 
         env_path = self.deployment_root / ".env"
-        values = _read_env(env_path)
+        values = read_env(env_path)
         values.update(self._managed_env())
-        _write_env(env_path, values)
+        write_env(
+            env_path,
+            values,
+            header_lines=(
+                "# ACMM Open WebUI deployment configuration.",
+                "# Managed keys are reconciled by 'acmm-infra open-webui apply'.",
+            ),
+            line_ending="\r\n",
+        )
 
     def _wait_until_ready(self, timeout_seconds: float) -> None:
         deadline = time.monotonic() + timeout_seconds
@@ -637,83 +652,73 @@ class open_webui_manager:
             "OPEN_WEBUI_CONTAINER_NAME": self.profile.container_name,
             "OPEN_WEBUI_PORT": str(self.profile.web_port),
             "OPEN_WEBUI_OLLAMA_BASE_URL": self.profile.ollama_base_url,
-            "OPEN_WEBUI_AUTH": _bool_text(self.profile.webui_auth),
+            "OPEN_WEBUI_AUTH": bool_text(self.profile.webui_auth),
             "OPEN_WEBUI_SECRET_KEY_FILE": self.profile.secret_key_file,
-            "OPEN_WEBUI_ENABLE_OLLAMA_API": _bool_text(
+            "OPEN_WEBUI_ENABLE_OLLAMA_API": bool_text(
                 self.profile.ollama_api_enabled
             ),
-            "OPEN_WEBUI_ENABLE_OPENAI_API": _bool_text(
+            "OPEN_WEBUI_ENABLE_OPENAI_API": bool_text(
                 self.profile.openai_api_enabled
             ),
-            "OPEN_WEBUI_ENABLE_PLUGINS": _bool_text(
+            "OPEN_WEBUI_ENABLE_PLUGINS": bool_text(
                 self.profile.plugins_enabled
             ),
-            "OPEN_WEBUI_ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS": _bool_text(
+            "OPEN_WEBUI_ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS": bool_text(
                 self.profile.pip_install_frontmatter_requirements_enabled
             ),
             **_isolation_env(self.profile),
-            "OPEN_WEBUI_SCARF_NO_ANALYTICS": _bool_text(not telemetry),
-            "OPEN_WEBUI_DO_NOT_TRACK": _bool_text(not telemetry),
-            "OPEN_WEBUI_ANONYMIZED_TELEMETRY": _bool_text(telemetry),
+            "OPEN_WEBUI_SCARF_NO_ANALYTICS": bool_text(not telemetry),
+            "OPEN_WEBUI_DO_NOT_TRACK": bool_text(not telemetry),
+            "OPEN_WEBUI_ANONYMIZED_TELEMETRY": bool_text(telemetry),
         }
 
-    def _install_default_if_missing(self, source: Path, destination: Path) -> str:
-        if not source.is_file():
-            raise infrastructure_error(
-                f"Shipped infrastructure default does not exist: '{source}'."
-            )
-        if destination.exists():
-            return "preserved"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        return "created"
 
 
 def _isolation_env(profile: open_webui_profile) -> dict[str, str]:
     isolation = profile.experiment_isolation
     return {
-        "OPEN_WEBUI_ENABLE_DIRECT_CONNECTIONS": _bool_text(
+        "OPEN_WEBUI_ENABLE_DIRECT_CONNECTIONS": bool_text(
             isolation.direct_connections_enabled
         ),
-        "OPEN_WEBUI_ENABLE_DIRECT_INTEGRATIONS": _bool_text(
+        "OPEN_WEBUI_ENABLE_DIRECT_INTEGRATIONS": bool_text(
             isolation.direct_integrations_enabled
         ),
-        "OPEN_WEBUI_ENABLE_WEB_SEARCH": _bool_text(isolation.web_search_enabled),
-        "OPEN_WEBUI_ENABLE_CODE_EXECUTION": _bool_text(
+        "OPEN_WEBUI_ENABLE_WEB_SEARCH": bool_text(isolation.web_search_enabled),
+        "OPEN_WEBUI_ENABLE_CODE_EXECUTION": bool_text(
             isolation.code_execution_enabled
         ),
-        "OPEN_WEBUI_ENABLE_CODE_INTERPRETER": _bool_text(
+        "OPEN_WEBUI_ENABLE_CODE_INTERPRETER": bool_text(
             isolation.code_interpreter_enabled
         ),
-        "OPEN_WEBUI_ENABLE_MEMORIES": _bool_text(isolation.memories_enabled),
-        "OPEN_WEBUI_ENABLE_MEMORY_SYSTEM_CONTEXT": _bool_text(
+        "OPEN_WEBUI_ENABLE_MEMORIES": bool_text(isolation.memories_enabled),
+        "OPEN_WEBUI_ENABLE_MEMORY_SYSTEM_CONTEXT": bool_text(
             isolation.memory_system_context_enabled
         ),
-        "OPEN_WEBUI_ENABLE_MEMORY_BACKGROUND_REVIEW": _bool_text(
+        "OPEN_WEBUI_ENABLE_MEMORY_BACKGROUND_REVIEW": bool_text(
             isolation.memory_background_review_enabled
         ),
-        "OPEN_WEBUI_ENABLE_IMAGE_GENERATION": _bool_text(
+        "OPEN_WEBUI_ENABLE_IMAGE_GENERATION": bool_text(
             isolation.image_generation_enabled
         ),
-        "OPEN_WEBUI_ENABLE_IMAGE_PROMPT_GENERATION": _bool_text(
+        "OPEN_WEBUI_ENABLE_IMAGE_PROMPT_GENERATION": bool_text(
             isolation.image_prompt_generation_enabled
         ),
-        "OPEN_WEBUI_ENABLE_TITLE_GENERATION": _bool_text(
+        "OPEN_WEBUI_ENABLE_TITLE_GENERATION": bool_text(
             isolation.title_generation_enabled
         ),
-        "OPEN_WEBUI_ENABLE_TAGS_GENERATION": _bool_text(
+        "OPEN_WEBUI_ENABLE_TAGS_GENERATION": bool_text(
             isolation.tags_generation_enabled
         ),
-        "OPEN_WEBUI_ENABLE_FOLLOW_UP_GENERATION": _bool_text(
+        "OPEN_WEBUI_ENABLE_FOLLOW_UP_GENERATION": bool_text(
             isolation.follow_up_generation_enabled
         ),
-        "OPEN_WEBUI_ENABLE_AUTOCOMPLETE_GENERATION": _bool_text(
+        "OPEN_WEBUI_ENABLE_AUTOCOMPLETE_GENERATION": bool_text(
             isolation.autocomplete_generation_enabled
         ),
-        "OPEN_WEBUI_ENABLE_SEARCH_QUERY_GENERATION": _bool_text(
+        "OPEN_WEBUI_ENABLE_SEARCH_QUERY_GENERATION": bool_text(
             isolation.search_query_generation_enabled
         ),
-        "OPEN_WEBUI_ENABLE_RETRIEVAL_QUERY_GENERATION": _bool_text(
+        "OPEN_WEBUI_ENABLE_RETRIEVAL_QUERY_GENERATION": bool_text(
             isolation.retrieval_query_generation_enabled
         ),
         "OPEN_WEBUI_TOOL_SERVER_CONNECTIONS": "[]",
@@ -862,32 +867,3 @@ def _required_text(data: dict[str, Any], key: str, context: str) -> str:
     return value
 
 
-def _read_env(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not path.is_file():
-        return values
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", maxsplit=1)
-        values[key.strip()] = value.strip()
-    return values
-
-
-def _write_env(path: Path, values: dict[str, str]) -> None:
-    lines = [
-        "# ACMM Open WebUI deployment configuration.",
-        "# Managed keys are reconciled by 'acmm-infra open-webui apply'.",
-        "",
-    ]
-    lines.extend(f"{key}={value}" for key, value in sorted(values.items()))
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\r\n")
-
-
-def _files_equal(left: Path, right: Path) -> bool:
-    return left.is_file() and right.is_file() and left.read_bytes() == right.read_bytes()
-
-
-def _bool_text(value: bool) -> str:
-    return "true" if value else "false"
