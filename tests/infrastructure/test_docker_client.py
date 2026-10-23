@@ -253,18 +253,18 @@ class filtering_runner(recording_runner):
 
         if "compose" in args and "run" in args and line_handler is not None:
             for line in (
-                "s6-rc: info: noisy bootstrap",
-                "[Hermes 1/8] set model.provider",
-                "✓ Set model.provider = custom",
-                "[Hermes] Provisioning batch complete.",
-                "s6-rc: info: noisy shutdown",
+                "container bootstrap",
+                "provision step 1",
+                "configuration updated",
+                "provisioning complete",
+                "container shutdown",
             ):
                 line_handler(line)
 
         return result
 
 
-def test_provision_normal_mode_filters_container_noise(
+def test_provision_normal_mode_uses_caller_line_handler(
     tmp_path: Path,
 ) -> None:
     attributes = test_deployment_attributes()
@@ -281,13 +281,46 @@ def test_provision_normal_mode_filters_container_noise(
         "echo provisioning",
         timeout_seconds=42.0,
         output_mode="normal",
-        output=messages.append,
+        line_handler=messages.append,
     )
 
     assert result.succeeded
     assert messages == [
-        "[Hermes 1/8] set model.provider",
-        "✓ Set model.provider = custom",
-        "[Hermes] Provisioning batch complete.",
+        "container bootstrap",
+        "provision step 1",
+        "configuration updated",
+        "provisioning complete",
+        "container shutdown",
     ]
 
+
+
+def test_provision_uses_caller_failure_transform(
+    tmp_path: Path,
+) -> None:
+    attributes = test_deployment_attributes()
+    runner = timeout_runner()
+    client = docker_client(
+        repo_root=tmp_path / "repo",
+        runtime_root=tmp_path,
+        attributes=attributes,
+        runner=runner,
+    )
+
+    def transform(result: command_result) -> command_result:
+        return command_result(
+            args=result.args,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr="transformed failure",
+            timed_out=result.timed_out,
+        )
+
+    result = client.provision(
+        "sleep forever",
+        timeout_seconds=5.0,
+        failure_transform=transform,
+    )
+
+    assert not result.succeeded
+    assert result.stderr == "transformed failure"

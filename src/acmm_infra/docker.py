@@ -156,7 +156,8 @@ class docker_client:
         timeout_seconds: float,
         *,
         output_mode: Literal["quiet", "normal", "verbose"] = "normal",
-        output: Callable[[str], None] | None = None,
+        line_handler: Callable[[str], None] | None = None,
+        failure_transform: Callable[[command_result], command_result] | None = None,
     ) -> command_result:
         container_name = (
             f"{self._attributes.container_name}-provision-"
@@ -168,16 +169,13 @@ class docker_client:
                 f"Unknown provisioning output mode: '{output_mode}'."
             )
 
-        line_handler = None
+        active_line_handler = None
         live_output = False
 
         if output_mode == "verbose":
             live_output = True
-        elif output_mode == "normal" and output is not None:
-            line_handler = lambda line: _emit_provision_progress(
-                line,
-                output,
-            )
+        elif output_mode == "normal":
+            active_line_handler = line_handler
 
         try:
             result = self._compose(
@@ -194,7 +192,7 @@ class docker_client:
                 ],
                 timeout_seconds=timeout_seconds,
                 live_output=live_output,
-                line_handler=line_handler,
+                line_handler=active_line_handler,
             )
         except KeyboardInterrupt:
             self._force_remove(container_name)
@@ -203,8 +201,8 @@ class docker_client:
         if not result.succeeded:
             self._force_remove(container_name)
 
-            if output_mode != "verbose":
-                result = _with_concise_provision_error(result)
+            if output_mode != "verbose" and failure_transform is not None:
+                result = failure_transform(result)
 
         return result
 
@@ -246,80 +244,6 @@ class docker_client:
             live_output=live_output,
             line_handler=line_handler,
         )
-
-
-
-def _emit_provision_progress(
-    line: str,
-    output: Callable[[str], None],
-) -> None:
-    stripped = line.strip()
-
-    lower = stripped.lower()
-
-    if (
-        stripped.startswith("[Hermes")
-        or stripped.startswith("✓")
-        or "traceback" in lower
-        or "importerror" in lower
-        or "modulenotfounderror" in lower
-        or "exception:" in lower
-        or "cannot import" in lower
-        or "not found" in lower
-        or "permission denied" in lower
-        or "no such file" in lower
-    ):
-        output(stripped)
-
-
-def _with_concise_provision_error(
-    result: command_result,
-) -> command_result:
-    interesting: list[str] = []
-
-    for line in result.stdout.splitlines():
-        stripped = line.strip()
-
-        if not stripped:
-            continue
-
-        lower = stripped.lower()
-
-        if (
-            stripped.startswith("[Hermes")
-            or "error" in lower
-            or "failed" in lower
-            or "timed out" in lower
-            or "not found" in lower
-            or "invalid" in lower
-            or "permission denied" in lower
-            or "refus" in lower
-            or "traceback" in lower
-            or "usage:" in lower
-        ):
-            interesting.append(stripped)
-
-    if not interesting:
-        interesting = [
-            line.strip()
-            for line in result.stdout.splitlines()[-12:]
-            if line.strip()
-        ]
-
-    detail_lines = interesting[-20:]
-
-    if result.stderr.strip():
-        detail_lines.append(result.stderr.strip())
-
-    detail = "\n".join(detail_lines)
-
-    return command_result(
-        args=result.args,
-        returncode=result.returncode,
-        stdout=result.stdout,
-        stderr=detail,
-        timed_out=result.timed_out,
-    )
 
 
 def require_success(

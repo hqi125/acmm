@@ -330,25 +330,32 @@ class fake_docker:
         timeout_seconds: float,
         *,
         output_mode: str = "normal",
-        output=None,
+        line_handler=None,
+        failure_transform=None,
     ) -> command_result:
         self.provision_calls.append((script, timeout_seconds))
         self.provision_output_modes.append(output_mode)
 
         full_apply = "model.provider" in script
 
-        if output_mode == "normal" and output is not None:
+        if output_mode == "normal" and line_handler is not None:
             if full_apply:
-                output("[Hermes 1/14] set model.provider")
-                output("✓ Set model.provider = custom")
+                line_handler("[Hermes 1/14] set model.provider")
+                line_handler("✓ Set model.provider = custom")
             else:
-                output(
+                line_handler(
                     "[Hermes 1/2] set tools.tool_search.enabled"
                 )
-                output("✓ Set tools.tool_search.enabled = off")
-            output("[Hermes] Provisioning batch complete.")
+                line_handler("✓ Set tools.tool_search.enabled = off")
+            line_handler("[Hermes] Provisioning batch complete.")
 
         if self.provision_result is not None:
+            if (
+                not self.provision_result.succeeded
+                and output_mode != "verbose"
+                and failure_transform is not None
+            ):
+                return failure_transform(self.provision_result)
             return self.provision_result
 
         if full_apply:
