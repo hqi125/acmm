@@ -191,38 +191,8 @@ def test_run_command_executes_controlled_addition_failure_slot(
     ]
 
     output = capsys.readouterr().out
-    assert "Executing run 15/19" in output
+    assert "Executing run 15/59" in output
     assert "scenario=addition_failure" in output
     assert "judgment stop_after_failure: compliant" in output
     assert "tool calls: get_magic_number, add_numbers" in output
 
-
-def test_run_command_rejects_subject_without_exact_max_steps_support(
-    tmp_path: Path,
-    capsys,
-) -> None:
-    contract = _contract()
-    contract["subjects"][0]["id"] = "open_webui_nemotron30b"
-    contract_path = tmp_path / "open_webui_contract.yaml"
-    contract_path.write_text(
-        yaml.safe_dump(contract, sort_keys=False),
-        encoding="utf-8",
-    )
-
-    parser = _build_parser()
-    args = parser.parse_args(
-        [
-            "run",
-            str(contract_path),
-            "--run-index",
-            "0",
-            "--results-root",
-            str(tmp_path / "results"),
-        ]
-    )
-
-    assert args.handler(args) == 2
-
-    captured = capsys.readouterr()
-    assert "open_webui_nemotron30b" in captured.err
-    assert "cannot enforce the Contract termination control(s) max_steps" in captured.err

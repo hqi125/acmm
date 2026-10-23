@@ -233,7 +233,7 @@ class hermes_adapter:
         runtime_environment: Mapping[str, str],
     ) -> tuple[list[str], dict[str, str]]:
         prompt = scenario["task"]["prompt"]
-        max_steps = termination["max_steps"]
+        max_steps = termination.get("max_steps")
         timeout_seconds = termination.get("timeout_seconds")
 
         environment = os.environ.copy()
@@ -250,13 +250,24 @@ class hermes_adapter:
             "-Q",
             "--toolsets",
             self._config.toolset,
-            "--max-turns",
-            str(max_steps),
-            "--source",
-            self._config.source,
-            "--query",
-            prompt,
         ]
+
+        if max_steps is not None:
+            hermes_args.extend(
+                [
+                    "--max-turns",
+                    str(max_steps),
+                ]
+            )
+
+        hermes_args.extend(
+            [
+                "--source",
+                self._config.source,
+                "--query",
+                prompt,
+            ]
+        )
 
         if self._config.provider is not None:
             hermes_args.extend(

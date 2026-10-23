@@ -142,6 +142,29 @@ def _successful_runner(
     return runner
 
 
+
+def test_hermes_adapter_allows_timeout_only_termination() -> None:
+    calls: list[tuple[list[str], dict]] = []
+    adapter = hermes_adapter(
+        hermes_adapter_config(),
+        runner=_successful_runner(calls),
+    )
+
+    result = adapter.execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        {"timeout_seconds": 120},
+    )
+
+    assert result.failure is None
+    assert result.termination == "agent_completed"
+
+    chat_command, chat_kwargs = calls[0]
+    assert "--max-turns" not in chat_command
+    assert chat_command[chat_command.index("--run-budget") + 1] == "120"
+    assert chat_kwargs["timeout"] == 135.0
+
 def test_hermes_adapter_builds_structured_evidence_from_session_export() -> None:
     calls: list[tuple[list[str], dict]] = []
 

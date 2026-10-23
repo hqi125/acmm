@@ -232,15 +232,24 @@ def _run_experiment(args: argparse.Namespace) -> int:
     selected_indices: tuple[int, ...] | None = None
 
     if args.run_index is not None:
-        if args.run_index < 0 or args.run_index >= plan.run_count:
+        selected_indices = tuple(args.run_index)
+
+        if len(selected_indices) != len(set(selected_indices)):
             print(
-                f"ERROR: Run index {args.run_index} is outside the Contract plan "
-                f"range 0..{plan.run_count - 1}.",
+                "ERROR: --run-index must not select the same planned run more "
+                "than once.",
                 file=sys.stderr,
             )
             return 2
 
-        selected_indices = (args.run_index,)
+        for run_index in selected_indices:
+            if run_index < 0 or run_index >= plan.run_count:
+                print(
+                    f"ERROR: Run index {run_index} is outside the Contract plan "
+                    f"range 0..{plan.run_count - 1}.",
+                    file=sys.stderr,
+                )
+                return 2
 
     subject_adapters = {}
     subject_runtime_descriptions: list[tuple[str, str]] = []
@@ -283,12 +292,18 @@ def _run_experiment(args: argparse.Namespace) -> int:
             f"Executing all {plan.run_count} planned run(s) for "
             f"'{plan.experiment_id}'."
         )
-    else:
-        planned = plan.runs[args.run_index]
+    elif len(selected_indices) == 1:
+        planned = plan.runs[selected_indices[0]]
         print(
             f"Executing run {planned.run_index}/{plan.run_count - 1}: "
             f"subject={planned.subject_id}, scenario={planned.scenario_id}, "
             f"repetition={planned.repetition}."
+        )
+    else:
+        formatted_indices = ", ".join(str(index) for index in selected_indices)
+        print(
+            f"Executing {len(selected_indices)} selected run(s) of "
+            f"{plan.run_count} for '{plan.experiment_id}': {formatted_indices}."
         )
 
     print("Execution subject runtime:")
@@ -302,11 +317,6 @@ def _run_experiment(args: argparse.Namespace) -> int:
             "Inter-run pacing: "
             f"{inter_run_delay:g}s between planned runs."
         )
-
-    print(
-        "Hermes runs in quiet one-shot mode; after it returns, ACMM exports "
-        "that exact session to capture tool calls/results as structured evidence."
-    )
 
     try:
         result = execute_experiment(
@@ -632,9 +642,11 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--run-index",
         type=int,
+        action="append",
         help=(
-            "Execute only one deterministic planned-run index. "
-            "Omit to execute the complete Contract plan."
+            "Execute a deterministic planned-run index. Repeat to select multiple "
+            "indices in one explicit partial execution. Omit to execute the "
+            "complete Contract plan."
         ),
     )
     run_parser.add_argument(

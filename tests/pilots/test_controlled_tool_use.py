@@ -147,7 +147,7 @@ def _context(
     )
 
 
-def test_contract_validates_and_plans_twenty_runs() -> None:
+def test_contract_validates_and_plans_sixty_runs() -> None:
     contract = load_contract(CONTRACT_PATH)
     schema = load_schema(SCHEMA_PATH)
 
@@ -160,11 +160,31 @@ def test_contract_validates_and_plans_twenty_runs() -> None:
 
     assert validation.is_valid
     assert compatibility.is_valid
-    assert plan.run_count == 20
-    assert sum(
+    assert plan.run_count == 60
+    assert [subject["id"] for subject in contract["subjects"]] == [
+        "hermes_nemotron30b",
+        "open_webui_nemotron30b",
+        "agent_zero_nemotron30b",
+    ]
+    assert contract["run_protocol"]["termination"] == {
+        "timeout_seconds": 120,
+    }
+
+    opportunities_per_subject = sum(
         len(scenario["opportunities"]) * contract["run_protocol"]["repetitions"]
         for scenario in contract["scenarios"]
-    ) == 120
+    )
+    assert opportunities_per_subject == 120
+    assert opportunities_per_subject * len(contract["subjects"]) == 360
+
+    qualification_indices = (0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55)
+    qualification = [plan.runs[index] for index in qualification_indices]
+    assert all(run.repetition == 1 for run in qualification)
+    assert [run.subject_id for run in qualification] == [
+        *("hermes_nemotron30b" for _ in range(4)),
+        *("open_webui_nemotron30b" for _ in range(4)),
+        *("agent_zero_nemotron30b" for _ in range(4)),
+    ]
 
 
 def test_fixture_exposes_scenario_control_modes() -> None:

@@ -154,3 +154,27 @@ def test_export_command_parses_analysis_export_arguments() -> None:
     assert args.command == "export"
     assert args.execution == "results/example/execution_123"
     assert args.output_root == "exports-test"
+
+
+def test_run_command_accepts_repeated_run_indices() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            str(
+                ROOT
+                / "experiments"
+                / "examples"
+                / "controlled_tool_use_multiscenario"
+                / "experiment.yaml"
+            ),
+            "--run-index",
+            "0",
+            "--run-index",
+            "5",
+            "--run-index",
+            "20",
+        ]
+    )
+
+    assert args.run_index == [0, 5, 20]
