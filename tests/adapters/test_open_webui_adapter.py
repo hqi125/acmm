@@ -170,7 +170,7 @@ def test_open_webui_adapter_runs_native_tool_loop_and_captures_evidence() -> Non
         "retrieval_mode": "success",
         "addition_mode": "success",
     }
-    assert client.completion_timeout == 135.0
+    assert client.completion_timeout == 120.0
     assert client.deleted == ["chat-123"]
 
     completion = client.completion_payload
@@ -229,6 +229,87 @@ def test_open_webui_adapter_runs_native_tool_loop_and_captures_evidence() -> Non
         "backend_api_native_tool_loop"
     )
 
+
+
+def test_open_webui_timeout_captures_partial_evidence_before_cleanup() -> None:
+    client = fake_open_webui_client()
+
+    def timeout_completion(token, payload, *, timeout_seconds):
+        assert token == "session-token"
+        client.completion_payload = payload
+        client.completion_timeout = timeout_seconds
+        raise TimeoutError("controlled timeout")
+
+    def partial_chat(token, chat_id):
+        assert token == "session-token"
+        assert chat_id == "chat-123"
+        assistant_id = client.create_payload["chat"]["history"]["currentId"]
+        return {
+            "id": "chat-123",
+            "chat": {
+                "history": {
+                    "currentId": assistant_id,
+                    "messages": {
+                        assistant_id: {
+                            "id": assistant_id,
+                            "role": "assistant",
+                            "model": "nemotron-3-nano:30b-cloud",
+                            "content": "",
+                            "timestamp": 2,
+                            "done": False,
+                            "output": [
+                                {
+                                    "type": "function_call",
+                                    "call_id": "call-1",
+                                    "name": "get_magic_number",
+                                    "arguments": "{}",
+                                    "status": "completed",
+                                },
+                                {
+                                    "type": "function_call_output",
+                                    "call_id": "call-1",
+                                    "output": [
+                                        {
+                                            "type": "input_text",
+                                            "text": json.dumps(
+                                                {"magic_number": 87}
+                                            ),
+                                        }
+                                    ],
+                                    "status": "completed",
+                                },
+                            ],
+                        }
+                    },
+                }
+            },
+        }
+
+    client.complete_chat = timeout_completion
+    client.get_chat = partial_chat
+
+    result = open_webui_adapter(client).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        {"timeout_seconds": 120},
+    )
+
+    assert result.failure is None
+    assert result.termination == "timeout"
+    assert client.completion_timeout == 120.0
+    assert [item.id for item in result.evidence] == [
+        "conversation",
+        "tool_calls",
+        "tool_results",
+        "final_response",
+    ]
+    tool_calls = json.loads(result.evidence[1].content)
+    assert [(item["name"], item["input"]) for item in tool_calls] == [
+        ("get_magic_number", {}),
+    ]
+    assert result.evidence[3].content == b""
+    assert client.deleted == ["chat-123"]
 
 def test_open_webui_adapter_marks_failed_tool_output() -> None:
     client = fake_open_webui_client()

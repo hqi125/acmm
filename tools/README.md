@@ -15,11 +15,13 @@ CSV export with the R analysis stages.
 `get_magic_number` must yield 87, `add_numbers` must then add 13, and the final response must
 report 100. Both programs share the checker in `controlled_tool_smoke.py`.
 
-The smoke checker treats end-to-end correctness as the qualification criterion. It requires an
-`agent_completed` termination, parseable normalized evidence, the required retrieval-then-addition
-dependency path, and a final response reporting 100. Additional successful controlled Tool calls
-are reported as redundant-call observations rather than infrastructure failures. Upstream model
-request count is also an external observation and is intentionally not a smoke pass criterion.
+The smoke checker treats end-to-end correctness as the qualification criterion. Both live smoke
+programs use the same timeout-only termination policy (`timeout_seconds: 120`). The checker
+requires an `agent_completed` termination, parseable normalized evidence, the required
+retrieval-then-addition dependency path, and a final response reporting 100. Additional successful
+controlled Tool calls are reported as redundant-call observations rather than infrastructure
+failures. Upstream model request count is also an external observation and is intentionally not a
+smoke pass criterion.
 
 These programs invoke the live cloud-backed model and are intentionally outside `pytest`.
 

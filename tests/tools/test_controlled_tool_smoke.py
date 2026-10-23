@@ -98,7 +98,7 @@ def test_shared_fixture_matches_controlled_success_case() -> None:
         "ACMM_RETRIEVAL_MODE": "success",
         "ACMM_ADDITION_MODE": "success",
     }
-    assert termination == {"max_steps": 32, "timeout_seconds": 120}
+    assert termination == {"timeout_seconds": 120}
     assert "get_magic_number" in scenario["task"]["prompt"]
     assert "add_numbers" in scenario["task"]["prompt"]
 

@@ -55,7 +55,6 @@ class open_webui_adapter_client(Protocol):
 @dataclass(frozen=True)
 class open_webui_adapter_config:
     tool_id: str = "acmm_tools"
-    request_grace_seconds: float = 15.0
     delete_chat_after_run: bool = True
 
 
@@ -77,6 +76,9 @@ class open_webui_adapter:
     ) -> adapter_execution_result:
         chat_id: str | None = None
         token: str | None = None
+        prompt: str | None = None
+        model: str | None = None
+        assistant_message_id: str | None = None
 
         try:
             valves = _runtime_valves(environment)
@@ -113,10 +115,7 @@ class open_webui_adapter:
             )
             chat_id = _required_string(created.get("id"), "created chat id")
 
-            timeout_seconds = _adapter_timeout(
-                termination,
-                self._config.request_grace_seconds,
-            )
+            timeout_seconds = _adapter_timeout(termination)
             self._client.complete_chat(
                 token,
                 _completion_payload(
@@ -156,9 +155,47 @@ class open_webui_adapter:
             )
 
         except TimeoutError as exc:
-            return _failure_result(
-                "adapter_process_timeout",
-                str(exc) or "Open WebUI completion exceeded the run timeout.",
+            if (
+                token is None
+                or chat_id is None
+                or prompt is None
+                or model is None
+                or assistant_message_id is None
+            ):
+                return _failure_result(
+                    "adapter_process_timeout",
+                    str(exc) or "Open WebUI completion exceeded the run timeout.",
+                )
+
+            try:
+                chat = self._client.get_chat(token, chat_id)
+                parsed = _parse_completed_chat(
+                    chat=chat,
+                    chat_id=chat_id,
+                    assistant_message_id=assistant_message_id,
+                    prompt=prompt,
+                    expected_model=model,
+                    subject=subject,
+                    require_final_response=False,
+                )
+            except Exception as capture_exc:
+                return _failure_result(
+                    "timeout_evidence_capture_failed",
+                    str(capture_exc) or capture_exc.__class__.__name__,
+                )
+
+            if parsed.failure is not None:
+                return adapter_execution_result(
+                    termination="harness_error",
+                    evidence=parsed.evidence,
+                    subject_provenance=parsed.subject_provenance,
+                    failure=parsed.failure,
+                )
+
+            return adapter_execution_result(
+                termination="timeout",
+                evidence=parsed.evidence,
+                subject_provenance=parsed.subject_provenance,
             )
         except Exception as exc:
             return _failure_result(
@@ -283,6 +320,7 @@ def _parse_completed_chat(
     prompt: str,
     expected_model: str,
     subject: dict[str, Any],
+    require_final_response: bool = True,
 ) -> _parsed_chat:
     chat_data = chat.get("chat")
     history = chat_data.get("history") if isinstance(chat_data, dict) else None
@@ -367,7 +405,7 @@ def _parse_completed_chat(
         ),
     )
 
-    if not final_response:
+    if require_final_response and not final_response:
         return _parsed_chat(
             evidence=evidence,
             subject_provenance=provenance,
@@ -554,21 +592,15 @@ def _runtime_valves(environment: Any) -> dict[str, Any]:
     }
 
 
-def _adapter_timeout(
-    termination: dict[str, Any],
-    grace_seconds: float,
-) -> float:
+def _adapter_timeout(termination: dict[str, Any]) -> float:
     timeout = termination.get("timeout_seconds")
-
-    if timeout is None:
-        return 600.0
 
     if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
         raise open_webui_adapter_error(
             "termination.timeout_seconds must be a positive number."
         )
 
-    return float(timeout) + grace_seconds
+    return float(timeout)
 
 
 def _subject_provenance(

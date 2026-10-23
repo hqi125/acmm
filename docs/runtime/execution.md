@@ -49,6 +49,10 @@ A subject adapter executes one Contract subject against one scenario and returns
 
 The adapter receives the Contract termination policy but does not construct Run Records.
 
+For `timeout_seconds`, the Contract value is the subject execution budget. Harness work required
+after the bound fires--for example partial-evidence capture, session export, or cleanup--may finish
+after that budget without extending the subject's permitted execution time.
+
 ### Environment fixture
 
 An environment fixture prepares the scenario environment according to the Contract reset

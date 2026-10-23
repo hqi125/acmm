@@ -44,8 +44,11 @@ The chat id is provenance only; the corresponding chat is normally deleted after
 
 ## Termination
 
-`timeout_seconds` is enforced at the HTTP execution boundary with a small adapter transport
-allowance. Open WebUI 0.11.4's native Tool-loop iteration limit is configured at process
+`timeout_seconds` is enforced exactly as the timeout of the blocking HTTP completion request.
+Adapter-side evidence capture and chat cleanup may continue after that subject execution budget has
+elapsed, but they do not extend the agent's allowed completion time. On timeout, the adapter reads
+the persisted chat before cleanup and preserves any controlled-Tool evidence already available.
+Open WebUI 0.11.4's native Tool-loop iteration limit is configured at process
 startup through `CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS`, rather than through the individual
 chat request. Consequently, the Contract's per-run `max_steps` budget has no exact supported
 mapping in this adapter. The qualified subject binding therefore advertises timeout-only

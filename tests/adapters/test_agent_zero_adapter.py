@@ -172,7 +172,7 @@ def test_agent_zero_adapter_runs_isolated_context_and_captures_evidence() -> Non
     call = client.message_calls[0]
     assert call["agent_profile"] == "acmm"
     assert call["lifetime_hours"] == 1.0
-    assert call["timeout_seconds"] == 135.0
+    assert call["timeout_seconds"] == 120.0
 
     assert [item.id for item in result.evidence] == [
         "conversation",
@@ -252,6 +252,94 @@ def test_agent_zero_adapter_marks_controlled_tool_failure() -> None:
     assert client.plugin_configs[0]["retrieval_mode"] == "failure"
     assert client.plugin_configs[-1]["retrieval_mode"] == "success"
 
+
+
+def test_agent_zero_timeout_captures_partial_evidence_before_cleanup() -> None:
+    client = fake_agent_zero_client()
+
+    def timeout_message(*args, **kwargs):
+        del args, kwargs
+        raise TimeoutError("controlled timeout")
+
+    def partial_logs(api_key, context_id, *, length=1000):
+        assert api_key == "external-key"
+        assert length == 1000
+        return {
+            "context_id": context_id,
+            "log": {
+                "items": [
+                    {
+                        "no": 1,
+                        "id": "call-1",
+                        "type": "tool",
+                        "content": json.dumps(
+                            {"ok": True, "magic_number": 87}
+                        ),
+                        "kvps": {
+                            "_tool_name": "plugin:acmm_tools:get_magic_number",
+                        },
+                        "timestamp": 2.0,
+                    }
+                ]
+            },
+        }
+
+    client.send_message = timeout_message
+    client.get_logs = partial_logs
+
+    result = agent_zero_adapter(client).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        {"timeout_seconds": 120},
+    )
+
+    assert result.failure is None
+    assert result.termination == "timeout"
+    assert [item.id for item in result.evidence] == [
+        "conversation",
+        "tool_calls",
+        "tool_results",
+        "final_response",
+    ]
+    tool_calls = json.loads(result.evidence[1].content)
+    assert [(item["name"], item["input"]) for item in tool_calls] == [
+        ("get_magic_number", {}),
+    ]
+    assert result.evidence[3].content == b""
+    assert client.terminated == client.created_contexts
+    assert client.plugin_configs[-1] == {
+        "magic_number": 87,
+        "retrieval_mode": "success",
+        "addition_mode": "success",
+    }
+
+
+def test_agent_zero_timeout_with_unreadable_log_is_harness_error() -> None:
+    client = fake_agent_zero_client()
+
+    def timeout_message(*args, **kwargs):
+        del args, kwargs
+        raise TimeoutError("controlled timeout")
+
+    def bad_logs(api_key, context_id, *, length=1000):
+        del api_key, length
+        return {"context_id": context_id}
+
+    client.send_message = timeout_message
+    client.get_logs = bad_logs
+
+    result = agent_zero_adapter(client).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        {"timeout_seconds": 120},
+    )
+
+    assert result.termination == "harness_error"
+    assert result.failure is not None
+    assert result.failure.kind == "missing_agent_log"
+    assert client.terminated == client.created_contexts
 
 def test_agent_zero_adapter_terminates_context_after_log_parse_failure() -> None:
     client = fake_agent_zero_client()

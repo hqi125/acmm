@@ -86,9 +86,13 @@ Zero actually produces.
 
 ## Termination qualification
 
-`timeout_seconds` is enforced at the blocking external message request with a small adapter
-transport allowance. On timeout, cleanup still knows the pre-created context id and attempts to
-terminate the context.
+`timeout_seconds` is enforced exactly as the timeout of the blocking external message request.
+Adapter-side log capture, context termination, and Tool-baseline restoration may continue after that
+subject execution budget has elapsed, but they do not extend the agent's allowed message time. On
+timeout, the adapter uses the pre-created context id to retrieve the
+current Agent Zero log before cleanup, normalizes any partial controlled-Tool evidence that is
+already persisted, returns a valid `timeout` termination when that evidence can be captured, then
+terminates the context and restores the managed Tool baseline.
 
 Agent Zero v2.14 does not expose an exact supported per-run mapping for the Contract's
 `termination.max_steps` budget. Its internal message loop continues until the agent produces a
@@ -116,9 +120,10 @@ acmm-infra agent-zero doctor
 
 The smoke program is intentionally outside `pytest` because it invokes the live cloud-backed
 model. It shares the controlled success fixture and checker with the Open WebUI smoke. The
-checker requires the successful retrieval-then-addition dependency path and final result, while
-reporting additional successful controlled Tool calls as observations rather than infrastructure
-failures.
+shared smoke termination policy is timeout-only (`timeout_seconds: 120`) so both HTTP-based
+agents exercise the same enforceable termination vocabulary. The checker requires the successful
+retrieval-then-addition dependency path and final result, while reporting additional successful
+controlled Tool calls as observations rather than infrastructure failures.
 
 The Agent Zero freeze-candidate end-to-end smoke completed successfully with a correct final
 result. The last qualification run also produced one redundant `get_magic_number` call and four

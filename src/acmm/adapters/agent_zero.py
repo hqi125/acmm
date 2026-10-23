@@ -59,7 +59,6 @@ class agent_zero_adapter_client(Protocol):
 class agent_zero_adapter_config:
     plugin_name: str = "acmm_tools"
     agent_profile: str = "acmm"
-    request_grace_seconds: float = 15.0
     context_lifetime_hours: float = 1.0
     log_length: int = 1000
     terminate_context_after_run: bool = True
@@ -84,6 +83,7 @@ class agent_zero_adapter:
     ) -> adapter_execution_result:
         api_key: str | None = None
         context_id: str | None = None
+        prompt: str | None = None
         tool_config_applied = False
 
         try:
@@ -116,10 +116,7 @@ class agent_zero_adapter:
                 message=prompt,
                 agent_profile=self._config.agent_profile,
                 lifetime_hours=self._config.context_lifetime_hours,
-                timeout_seconds=_adapter_timeout(
-                    termination,
-                    self._config.request_grace_seconds,
-                ),
+                timeout_seconds=_adapter_timeout(termination),
             )
             returned_id = _required_string(
                 response.get("context_id"),
@@ -166,9 +163,46 @@ class agent_zero_adapter:
             )
 
         except TimeoutError as exc:
-            return _failure_result(
-                "adapter_process_timeout",
-                str(exc) or "Agent Zero execution exceeded the run timeout.",
+            if api_key is None or context_id is None or prompt is None:
+                return _failure_result(
+                    "adapter_process_timeout",
+                    str(exc) or "Agent Zero execution exceeded the run timeout.",
+                )
+
+            try:
+                logs = self._client.get_logs(
+                    api_key,
+                    context_id,
+                    length=self._config.log_length,
+                )
+                parsed = _parse_run(
+                    logs=logs,
+                    context_id=context_id,
+                    prompt=prompt,
+                    final_response="",
+                    subject=subject,
+                    plugin_name=self._config.plugin_name,
+                    agent_profile=self._config.agent_profile,
+                    require_final_response=False,
+                )
+            except Exception as log_exc:
+                return _failure_result(
+                    "timeout_evidence_capture_failed",
+                    str(log_exc) or log_exc.__class__.__name__,
+                )
+
+            if parsed.failure is not None:
+                return adapter_execution_result(
+                    termination="harness_error",
+                    evidence=parsed.evidence,
+                    subject_provenance=parsed.subject_provenance,
+                    failure=parsed.failure,
+                )
+
+            return adapter_execution_result(
+                termination="timeout",
+                evidence=parsed.evidence,
+                subject_provenance=parsed.subject_provenance,
             )
         except Exception as exc:
             return _failure_result(
@@ -212,6 +246,7 @@ def _parse_run(
     subject: dict[str, Any],
     plugin_name: str,
     agent_profile: str,
+    require_final_response: bool = True,
 ) -> _parsed_run:
     returned_context_id = logs.get("context_id")
     if returned_context_id != context_id:
@@ -277,7 +312,7 @@ def _parse_run(
         ),
     )
 
-    if not final_response:
+    if require_final_response and not final_response:
         return _parsed_run(
             evidence=evidence,
             subject_provenance=provenance,
@@ -450,18 +485,13 @@ def _baseline_tool_config() -> dict[str, Any]:
     }
 
 
-def _adapter_timeout(
-    termination: dict[str, Any],
-    grace_seconds: float,
-) -> float:
+def _adapter_timeout(termination: dict[str, Any]) -> float:
     timeout = termination.get("timeout_seconds")
-    if timeout is None:
-        return 600.0
     if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
         raise agent_zero_adapter_error(
             "termination.timeout_seconds must be a positive number."
         )
-    return float(timeout) + grace_seconds
+    return float(timeout)
 
 
 def _tool_output_has_error(output: str) -> bool:

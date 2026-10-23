@@ -48,6 +48,11 @@ Per-run controls supplied by the Contract/runtime are:
 The Hermes subject binding therefore advertises both `max_steps` and `timeout_seconds` as
 supported per-run termination controls.
 
+Hermes receives `timeout_seconds` directly as its internal `--run-budget`, so the subject execution
+budget is the Contract value. The adapter allows a small outer subprocess grace only so Hermes can
+exit and its persisted session can be exported; that harness grace does not extend the agent's
+internal run budget.
+
 For Docker-hosted Hermes, the adapter invokes `/opt/hermes/bin/hermes` with `docker exec`.
 The prepared runtime environment supplied by the concrete pilot is treated only as a
 string-to-string environment-variable mapping. The Hermes adapter has no knowledge of

@@ -64,7 +64,6 @@ def build_environment() -> dict[str, str]:
 
 def build_termination() -> dict[str, int]:
     return {
-        "max_steps": 32,
         "timeout_seconds": 120,
     }
 
