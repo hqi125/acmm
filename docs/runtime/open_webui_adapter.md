@@ -50,3 +50,18 @@ startup through `CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS`, rather than through th
 chat request. Consequently, the Contract's per-run `max_steps` budget does not yet have an
 exact supported mapping in this adapter. This must be resolved or methodologically qualified
 before relying on step-budget termination in Open WebUI acquisition.
+## Live smoke qualification
+
+The repository provides `tools/smoke_open_webui.py` for a live end-to-end qualification run
+against an already-running Open WebUI service. The smoke uses the same controlled success path
+as the Agent Zero smoke: `get_magic_number` must return 87, `add_numbers` must add 13, and the
+agent must report the resulting value.
+
+Prepare the qualified service with `acmm-infra open-webui up` and
+`acmm-infra open-webui doctor`, then run `python tools/smoke_open_webui.py`. The program is
+intentionally outside `pytest` because it invokes the live cloud-backed model.
+
+The first live run should be treated as qualification evidence rather than as a reason to tune
+the adapter preemptively. In particular, request count, redundant Tool calls, persisted output
+shape, and final-response behavior should be observed before changing the runtime contract.
+

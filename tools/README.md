@@ -31,3 +31,26 @@ python tools/smoke_agent_zero.py
 This program invokes the live cloud-backed model and is intentionally not part of `pytest`.
 The runtime adapter design and current qualification notes live in
 `docs/runtime/agent_zero_adapter.md`.
+## `smoke_open_webui.py`
+
+Runs one live Open WebUI/Nemotron controlled-tool smoke interaction against an already-running
+and qualified Open WebUI service. It uses the backend API execution path and prints normalized
+termination, final-response, Tool-call, and Tool-result evidence.
+
+Prepare the service first:
+
+```text
+acmm-infra open-webui up
+acmm-infra open-webui doctor
+```
+
+Then run:
+
+```text
+python tools/smoke_open_webui.py
+```
+
+This program invokes the live cloud-backed model and is intentionally not part of `pytest`.
+The runtime adapter design and qualification notes live in
+`docs/runtime/open_webui_adapter.md`.
+
