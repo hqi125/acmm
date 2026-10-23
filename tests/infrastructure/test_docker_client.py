@@ -1,11 +1,15 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 from acmm_infra.docker import docker_client
 from acmm_infra.process import command_result
-from acmm_infra.profiles.hermes import load_hermes_profile
 
 
-ROOT = Path(__file__).resolve().parents[2]
+@dataclass(frozen=True)
+class test_deployment_attributes:
+    service_name: str = "agent-service"
+    container_name: str = "acmm-agent"
+    deployment_directory: Path = Path("agent-runtime")
 
 
 class recording_runner:
@@ -40,22 +44,22 @@ class recording_runner:
         )
 
 
-def test_compose_uses_initialized_hermes_deployment(
+def test_compose_uses_structural_deployment_attributes(
     tmp_path: Path,
 ) -> None:
-    profile = load_hermes_profile(ROOT)
+    attributes = test_deployment_attributes()
     runner = recording_runner()
     client = docker_client(
-        repo_root=ROOT,
+        repo_root=tmp_path / "repo",
         runtime_root=tmp_path,
-        profile=profile,
+        attributes=attributes,
         runner=runner,
     )
 
     client.compose_config()
 
     call = runner.calls[-1]
-    deployment_root = tmp_path / "hermes"
+    deployment_root = tmp_path / "agent-runtime"
 
     assert call["cwd"] == deployment_root
     assert call["args"] == (
@@ -72,12 +76,12 @@ def test_compose_uses_initialized_hermes_deployment(
 def test_provision_uses_one_named_compose_container(
     tmp_path: Path,
 ) -> None:
-    profile = load_hermes_profile(ROOT)
+    attributes = test_deployment_attributes()
     runner = recording_runner()
     client = docker_client(
-        repo_root=ROOT,
+        repo_root=tmp_path / "repo",
         runtime_root=tmp_path,
-        profile=profile,
+        attributes=attributes,
         runner=runner,
     )
 
@@ -96,9 +100,9 @@ def test_provision_uses_one_named_compose_container(
         "docker",
         "compose",
         "--env-file",
-        str(tmp_path / "hermes" / ".env"),
+        str(tmp_path / "agent-runtime" / ".env"),
         "-f",
-        str(tmp_path / "hermes" / "compose.yaml"),
+        str(tmp_path / "agent-runtime" / "compose.yaml"),
     )
     assert "run" in args
     assert "--rm" in args
@@ -151,12 +155,12 @@ class timeout_runner(recording_runner):
 def test_provision_force_removes_timed_out_container(
     tmp_path: Path,
 ) -> None:
-    profile = load_hermes_profile(ROOT)
+    attributes = test_deployment_attributes()
     runner = timeout_runner()
     client = docker_client(
-        repo_root=ROOT,
+        repo_root=tmp_path / "repo",
         runtime_root=tmp_path,
-        profile=profile,
+        attributes=attributes,
         runner=runner,
     )
 
@@ -183,12 +187,12 @@ def test_provision_force_removes_timed_out_container(
 def test_provision_verbose_streams_raw_output(
     tmp_path: Path,
 ) -> None:
-    profile = load_hermes_profile(ROOT)
+    attributes = test_deployment_attributes()
     runner = recording_runner()
     client = docker_client(
-        repo_root=ROOT,
+        repo_root=tmp_path / "repo",
         runtime_root=tmp_path,
-        profile=profile,
+        attributes=attributes,
         runner=runner,
     )
 
@@ -207,12 +211,12 @@ def test_provision_verbose_streams_raw_output(
 def test_provision_quiet_captures_without_streaming(
     tmp_path: Path,
 ) -> None:
-    profile = load_hermes_profile(ROOT)
+    attributes = test_deployment_attributes()
     runner = recording_runner()
     client = docker_client(
-        repo_root=ROOT,
+        repo_root=tmp_path / "repo",
         runtime_root=tmp_path,
-        profile=profile,
+        attributes=attributes,
         runner=runner,
     )
 
@@ -263,12 +267,12 @@ class filtering_runner(recording_runner):
 def test_provision_normal_mode_filters_container_noise(
     tmp_path: Path,
 ) -> None:
-    profile = load_hermes_profile(ROOT)
+    attributes = test_deployment_attributes()
     runner = filtering_runner()
     client = docker_client(
-        repo_root=ROOT,
+        repo_root=tmp_path / "repo",
         runtime_root=tmp_path,
-        profile=profile,
+        attributes=attributes,
         runner=runner,
     )
     messages: list[str] = []

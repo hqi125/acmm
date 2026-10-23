@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Literal, Mapping, Sequence
+from typing import Callable, Literal, Mapping, Protocol, Sequence
 import base64
 import json
 import uuid
 
 from acmm_infra.process import command_result, command_runner
-from acmm_infra.profiles import (
-    agent_zero_profile,
-    hermes_profile,
-    open_webui_profile,
-)
+
+
+class docker_deployment_attributes(Protocol):
+    service_name: str
+    container_name: str
+    deployment_directory: Path
 
 
 class docker_error(RuntimeError):
@@ -23,15 +24,15 @@ class docker_client:
         self,
         repo_root: str | Path,
         runtime_root: str | Path,
-        profile: hermes_profile | open_webui_profile | agent_zero_profile,
+        attributes: docker_deployment_attributes,
         runner: command_runner | None = None,
     ) -> None:
         self._repo_root = Path(repo_root).resolve()
         self._runtime_root = Path(runtime_root).expanduser().resolve()
-        self._profile = profile
+        self._attributes = attributes
         self._runner = runner or command_runner()
         self._deployment_root = (
-            self._runtime_root / profile.deployment_directory
+            self._runtime_root / attributes.deployment_directory
         ).resolve()
         self._compose_file = self._deployment_root / "compose.yaml"
         self._env_file = self._deployment_root / ".env"
@@ -46,7 +47,7 @@ class docker_client:
         return self._compose(["config", "--quiet"])
 
     def up(self) -> command_result:
-        return self._compose(["up", "-d", self._profile.service_name])
+        return self._compose(["up", "-d", self._attributes.service_name])
 
     def down(self) -> command_result:
         return self._compose(["down"])
@@ -58,7 +59,7 @@ class docker_client:
                 "inspect",
                 "--format",
                 "{{.State.Running}}\t{{.Config.Image}}",
-                self._profile.container_name,
+                self._attributes.container_name,
             ],
             timeout_seconds=15,
         )
@@ -89,7 +90,7 @@ class docker_client:
                 "docker",
                 "exec",
                 "-i",
-                self._profile.container_name,
+                self._attributes.container_name,
                 *args,
             ],
             timeout_seconds=30,
@@ -106,7 +107,7 @@ class docker_client:
                 "docker",
                 "exec",
                 "-i",
-                self._profile.container_name,
+                self._attributes.container_name,
                 "sh",
                 "-lc",
                 script,
@@ -139,7 +140,7 @@ class docker_client:
                 "docker",
                 "exec",
                 "-i",
-                self._profile.container_name,
+                self._attributes.container_name,
                 "python3",
                 "-c",
                 script,
@@ -158,7 +159,7 @@ class docker_client:
         output: Callable[[str], None] | None = None,
     ) -> command_result:
         container_name = (
-            f"{self._profile.container_name}-provision-"
+            f"{self._attributes.container_name}-provision-"
             f"{uuid.uuid4().hex[:8]}"
         )
 
@@ -186,7 +187,7 @@ class docker_client:
                     "--no-deps",
                     "--name",
                     container_name,
-                    self._profile.service_name,
+                    self._attributes.service_name,
                     "sh",
                     "-lc",
                     script,
