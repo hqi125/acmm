@@ -289,6 +289,7 @@ def test_apply_writes_restricted_acmm_profile_files(tmp_path: Path) -> None:
     for name in (
         "agent.system.main.communication.md",
         "agent.system.main.solving.md",
+        "fw.initial_user_message.md",
         "fw.initial_message.md",
     ):
         assert (prompt_root / name).read_bytes() == (source_root / name).read_bytes()
@@ -365,6 +366,28 @@ def test_doctor_detects_prompt_drift(tmp_path: Path) -> None:
         / "acmm"
         / "prompts"
         / "agent.system.main.communication.md"
+    )
+    prompt.write_text("drifted\n", encoding="utf-8")
+
+    report = manager.doctor()
+
+    assert not report.is_ready
+    check = next(
+        item for item in report.checks if item.name == "application_baseline_files"
+    )
+    assert not check.ok
+
+
+def test_doctor_detects_initial_user_message_prompt_drift(tmp_path: Path) -> None:
+    manager, docker, _ = _manager(tmp_path)
+    manager.apply(timeout_seconds=1.0)
+    docker.running = True
+    prompt = (
+        manager.data_root
+        / "agents"
+        / "acmm"
+        / "prompts"
+        / "fw.initial_user_message.md"
     )
     prompt.write_text("drifted\n", encoding="utf-8")
 

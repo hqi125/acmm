@@ -636,6 +636,9 @@ class agent_zero_manager:
             profile_root / "prompts/agent.system.main.solving.md": (
                 prompt_root / "agent.system.main.solving.md"
             ).read_bytes(),
+            profile_root / "prompts/fw.initial_user_message.md": (
+                prompt_root / "fw.initial_user_message.md"
+            ).read_bytes(),
             profile_root / "prompts/fw.initial_message.md": (
                 prompt_root / "fw.initial_message.md"
             ).read_bytes(),

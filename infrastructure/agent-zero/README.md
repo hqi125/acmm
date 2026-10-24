@@ -128,14 +128,16 @@ The repository owns a sparse user Agent Profile under:
 ```
 
 The profile keeps Agent Zero's ordinary reasoning/retry behavior while removing optional
-capability and background-work confounders. It also owns three narrow prompt overrides under
+capability and background-work confounders. It also owns four narrow prompt overrides under
 `/a0/usr/agents/acmm/prompts/` for local-model compatibility. The communication override
 requires one JSON Tool request with only `tool_name` and `tool_args`; the solving override
 prevents completed Tool work from being restarted merely because older requests remain visible in
-conversation history; and `fw.initial_message.md` keeps Agent Zero's synthetic initial assistant
-message on the same two-field Tool-call schema so conversation history does not demonstrate the
-legacy `thoughts`/`headline` envelope. These overrides follow Agent Zero v2.14's Tiny Local prompt
-discipline without adopting the rest of the Tiny Local profile.
+conversation history; `fw.initial_user_message.md` preserves Agent Zero's required synthetic
+user-first bootstrap turn while marking it explicitly as a non-task initialization placeholder; and
+`fw.initial_message.md` keeps the paired synthetic initial assistant message on the same two-field
+Tool-call schema so conversation history does not demonstrate the legacy `thoughts`/`headline`
+envelope. These overrides follow Agent Zero v2.14's Tiny Local prompt discipline without adopting
+the rest of the Tiny Local profile.
 
 In particular:
 

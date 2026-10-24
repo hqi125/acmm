@@ -77,12 +77,12 @@ The adapter records the Agent Zero context id, Agent Profile, and execution-inte
 subject provenance. The context id is provenance only; the corresponding context is normally
 terminated and its persisted chat removed after evidence capture.
 
-The qualified `acmm` profile also owns narrow communication, solving, and initial-message
-prompt overrides for
-Nemotron/Agent Zero compatibility. They simplify visible assistant turns to one JSON Tool
-request and tell the model not to repeat completed Tool work. This is profile behavior, not an
-adapter rewrite: the adapter continues to preserve whatever Tool calls and final response Agent
-Zero actually produces.
+The qualified `acmm` profile also owns narrow communication, solving, and bootstrap-message
+prompt overrides for Nemotron/Agent Zero compatibility. They simplify visible assistant turns to
+one JSON Tool request, tell the model not to repeat completed Tool work, and preserve Agent Zero's
+required user-first bootstrap turn while making that synthetic user message explicitly non-task.
+This is profile behavior, not an adapter rewrite: the adapter continues to preserve whatever Tool
+calls and final response Agent Zero actually produces.
 
 ## Termination qualification
 
