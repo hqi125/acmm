@@ -4,7 +4,7 @@
 
 Experiment-level execution turns selected slots from the deterministic Contract plan into one
 or more persisted realized attempts. The default selection is the complete plan; explicit
-run-index selection is reserved for engineering/pilot executions.
+run-index/range and subject selection is available for engineering/pilot executions.
 
 This layer performs data acquisition only. It does not compute ACMM compliance proportions,
 dimension scores, confidence intervals, statistical models, or plots.
@@ -78,13 +78,19 @@ Therefore:
 execution_<id>/ with experiment_execution.yaml
     = completed orchestration session
 
-execution_<id>/ without experiment_execution.yaml
-    = incomplete/interrupted session
+execution_<id>/ with experiment_interruption.yaml
+    = explicitly interrupted session
+
+execution_<id>/ without either manifest
+    = incomplete session caused by an unhandled orchestration/persistence failure
 ```
 
-Already persisted per-run directories inside an incomplete session remain individually
-useful Run Records. The absence of the completion manifest prevents the partial session from
-silently appearing complete.
+Already persisted per-run directories inside an interrupted or incomplete session remain
+individually useful Run Records. The absence of the completion manifest prevents the partial
+session from silently appearing complete. Ctrl+C writes `experiment_interruption.yaml` with
+the selected, resolved, unfinished, and not-started run indices plus the interrupted run/attempt
+when one was active. Resume/continuation is intentionally unsupported so a later acquisition is
+always a new execution session.
 
 The completion manifest itself is written through a temporary sibling file followed by an
 atomic replacement.
@@ -210,8 +216,8 @@ published, a later infrastructure failure does not delete it.
 
 ## Researcher-facing command
 
-The first registered live runtime is the Hermes magic-number pilot. With the managed Hermes
-deployment already `READY`, execute one deterministic slot with:
+For a single-slot Hermes smoke test, with the managed deployment already `READY`, execute one
+deterministic slot with:
 
 ```text
 acmm run experiments/examples/magic_number/experiment.yaml --run-index 0
@@ -229,17 +235,31 @@ and resolved counts, realized attempt count, selected-run termination counts, UT
 timestamps, and total wall-clock duration. Detailed per-run judgments, tool-call names, failures,
 record paths, and final responses are written to `execution_summary.txt`.
 
-Omitting `--run-index` executes the entire Contract plan.
+Run selection supports single indices, inclusive ranges, and Contract subject IDs:
 
-## Current exclusions
+```text
+acmm run experiments/examples/controlled_tool_use_multiscenario/experiment.yaml \
+    --run-index 20-39 --subject open_webui_nemotron30b
+```
 
-Experiment-level execution does not yet:
+Each `--run-index` occurrence accepts `INDEX` or `START-END`; repeated selectors are unioned and
+overlap is deduplicated. Repeated `--subject` selectors are unioned. When both selector types are
+present, their results are intersected. The final execution order always follows deterministic
+Contract plan order, not command-line selector order.
 
-- provide Open WebUI or Agent Zero execution bindings;
-- provide a general runtime-binding registry beyond the current Hermes magic-number pilot;
-- validate a complete result collection across multiple sessions;
-- export CSV analysis tables;
-- compute ACMM estimators or scores;
-- invoke R or RStudio.
+`--preview` resolves the same filters and prints a compact subject/scenario/repetition breakdown
+without constructing runtime adapters or creating result artifacts. Omit both selector types to
+execute the entire Contract plan.
 
-Those are separate subsequent layers.
+Ctrl+C exits with status 130 after persisting an interruption manifest and a human-readable
+summary when an execution session has already started. No completion manifest is written.
+
+## Current boundaries
+
+Experiment-level execution intentionally keeps these boundaries:
+
+- interrupted sessions are inspectable but cannot be resumed or exported as complete executions;
+- CLI selection currently filters by planned-run index/range and subject ID, not by scenario or
+  repetition directly;
+- runtime implementations remain qualified through the built-in experiment and subject catalogs
+  rather than arbitrary command-line plugin loading.

@@ -844,6 +844,20 @@ the live smoke test:
 acmm run experiments/examples/magic_number/experiment.yaml --run-index 0
 ```
 
+`acmm run` also supports deterministic selection without shell loops. Each `--run-index`
+accepts either one index or an inclusive range, and repeatable `--subject` filters select
+Contract subject/agent IDs. Different selector types are intersected and overlapping index
+selectors are deduplicated. For example:
+
+```text
+acmm run experiments/examples/controlled_tool_use_multiscenario/experiment.yaml \
+    --subject open_webui_nemotron30b --run-index 20-39
+```
+
+Use `--preview` with the same selectors to validate and print the resolved run-index, subject,
+scenario, and repetition breakdown without creating an execution directory or contacting the
+subject runtimes.
+
 The command validates the Contract and harness compatibility, resolves each Contract subject
 through the qualified subject execution catalog, invokes the running `acmm-hermes` container
 with the explicit `acmm` toolset overlay, persists the exact Contract snapshot, Run Record, and
@@ -865,6 +879,13 @@ The former verbose per-run replay is persisted as `execution_summary.txt` inside
 directory so long acquisitions do not flood the console while the full human-readable detail is
 still retained.
 
-Omit `--run-index` only after the single-slot artifacts have been inspected and the full
-five-repetition acquisition is desired. Deterministic CSV export remains the next layer.
+Ctrl+C during acquisition is handled as an interrupted execution rather than a completed one.
+Already persisted Run Records remain intact, `experiment_interruption.yaml` records the resolved,
+unfinished, and not-started selections, and `execution_summary.txt` reports the evidence that was
+actually persisted. `experiment_execution.yaml` is deliberately not written, so an interrupted
+session cannot be exported as a complete experiment. Continuation/resume is intentionally not
+supported; start a new execution instead.
+
+Omit both `--run-index` and `--subject` only when the complete Contract plan is desired.
+Deterministic CSV export remains the next layer.
 

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 
 import yaml
 
 from acmm.cli import _build_parser
+from acmm.runtime.experiment_execution import (
+    experiment_execution_interrupted,
+    experiment_interruption_result,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -255,3 +260,70 @@ def test_run_command_rejects_out_of_range_index(
 
     captured = capsys.readouterr()
     assert "outside the Contract plan range 0..4" in captured.err
+
+
+
+def test_run_command_reports_graceful_ctrl_c_interruption(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    session_dir = (
+        tmp_path
+        / "magic_number_tool_use_v1"
+        / "execution_interrupted-test"
+    )
+    session_dir.mkdir(parents=True)
+    interruption_path = session_dir / "experiment_interruption.yaml"
+    interruption_path.write_text("schema_version: '0.1'\n", encoding="utf-8")
+    instant = datetime(2026, 10, 24, 12, 0, 0, tzinfo=timezone.utc)
+
+    def interrupt_execution(**kwargs):
+        del kwargs
+        result = experiment_interruption_result(
+            execution_id="interrupted-test",
+            experiment_id="magic_number_tool_use_v1",
+            contract_sha256="0" * 64,
+            session_dir=session_dir,
+            interruption_path=interruption_path,
+            contract_run_count=5,
+            selected_run_indices=(0,),
+            started_at=instant,
+            ended_at=instant,
+            slots=(),
+            interrupted_run_index=0,
+            interrupted_attempt=1,
+        )
+        raise experiment_execution_interrupted(result)
+
+    monkeypatch.setattr("acmm.cli.execute_experiment", interrupt_execution)
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            str(CONTRACT_PATH),
+            "--run-index",
+            "0",
+            "--results-root",
+            str(tmp_path),
+        ]
+    )
+
+    assert args.handler(args) == 130
+    assert not (session_dir / "experiment_execution.yaml").exists()
+
+    summary_path = session_dir / "execution_summary.txt"
+    assert summary_path.is_file()
+    summary = summary_path.read_text(encoding="utf-8")
+    assert "Experiment execution interrupted by Ctrl+C." in summary
+    assert "unfinished:    0" in summary
+    assert "completion manifest: not written" in summary
+
+    output = capsys.readouterr().out
+    assert "Experiment execution interrupted by Ctrl+C." in output
+    assert f"interruption:  {interruption_path}" in output
+    assert "selected:      1 of 5" in output
+    assert "resolved:      0 of 1 selected" in output
+    assert "unfinished:    0" in output
+    assert "continuation: unsupported" in output

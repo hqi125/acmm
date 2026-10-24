@@ -9,7 +9,10 @@ import yaml
 
 import acmm.runtime.experiment_execution as experiment_execution_module
 from acmm.contract.loader import load_contract
-from acmm.runtime.experiment_execution import execute_experiment
+from acmm.runtime.experiment_execution import (
+    execute_experiment,
+    experiment_execution_interrupted,
+)
 from acmm.runtime.interfaces import (
     adapter_execution_result,
     captured_evidence,
@@ -572,3 +575,104 @@ def test_max_attempts_must_be_positive(
         )
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_keyboard_interrupt_persists_partial_session_without_completion_manifest(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    real_execute = adapter.execute
+
+    def interrupt_on_second_run(*args, **kwargs):
+        if adapter.call_count == 1:
+            raise KeyboardInterrupt
+
+        return real_execute(*args, **kwargs)
+
+    adapter.execute = interrupt_on_second_run  # type: ignore[method-assign]
+
+    with pytest.raises(experiment_execution_interrupted) as captured:
+        execute_experiment(
+            contract=contract,
+            contract_path=CONTRACT_PATH,
+            registry=_registry(adapter),
+            results_root=tmp_path,
+            harness_version="0.1.0",
+            sleep=lambda _: None,
+            now=_clock(),
+            execution_id_factory=lambda: EXECUTION_ID,
+            run_id_factory=_run_id_factory(),
+        )
+
+    result = captured.value.result
+    session_dir = result.session_dir
+
+    assert result.resolved_run_indices == (0,)
+    assert result.interrupted_run_index == 1
+    assert result.interrupted_attempt == 1
+    assert result.not_started_run_indices == (2, 3, 4)
+    assert result.unresolved_run_indices == (1, 2, 3, 4)
+    assert (session_dir / "contract.yaml").is_file()
+    assert (session_dir / "experiment_interruption.yaml").is_file()
+    assert not (session_dir / "experiment_execution.yaml").exists()
+
+    manifest = yaml.safe_load(
+        (session_dir / "experiment_interruption.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    execution = manifest["execution"]
+    assert execution["status"] == "interrupted"
+    assert execution["interrupt_kind"] == "keyboard_interrupt"
+    assert execution["selected_run_indices"] == [0, 1, 2, 3, 4]
+    assert execution["resolved_run_indices"] == [0]
+    assert execution["unresolved_run_indices"] == [1, 2, 3, 4]
+    assert execution["not_started_run_indices"] == [2, 3, 4]
+    assert execution["interrupted_run_index"] == 1
+    assert execution["interrupted_attempt"] == 1
+    assert len(manifest["slots"]) == 2
+    assert len(manifest["slots"][0]["attempts"]) == 1
+    assert manifest["slots"][1]["attempts"] == []
+
+
+
+def test_keyboard_interrupt_during_completion_manifest_becomes_interruption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    real_write = experiment_execution_module._write_yaml_atomically
+
+    def interrupt_completion(path, data):
+        if path.name == "experiment_execution.yaml":
+            raise KeyboardInterrupt
+
+        return real_write(path, data)
+
+    monkeypatch.setattr(
+        experiment_execution_module,
+        "_write_yaml_atomically",
+        interrupt_completion,
+    )
+
+    with pytest.raises(experiment_execution_interrupted) as captured:
+        execute_experiment(
+            contract=contract,
+            contract_path=CONTRACT_PATH,
+            registry=_registry(sequence_adapter()),
+            results_root=tmp_path,
+            harness_version="0.1.0",
+            sleep=lambda _: None,
+            now=_clock(),
+            execution_id_factory=lambda: EXECUTION_ID,
+            run_id_factory=_run_id_factory(),
+        )
+
+    result = captured.value.result
+    assert result.resolved_run_indices == (0, 1, 2, 3, 4)
+    assert result.unresolved_run_indices == ()
+    assert result.interrupted_run_index is None
+    assert result.interrupted_attempt is None
+    assert result.interruption_path.is_file()
+    assert not (result.session_dir / "experiment_execution.yaml").exists()

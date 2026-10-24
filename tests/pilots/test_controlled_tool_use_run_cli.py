@@ -208,3 +208,38 @@ def test_run_command_executes_controlled_addition_failure_slot(
     assert "judgment stop_after_failure: compliant" not in output
     assert "tool calls: get_magic_number, add_numbers" not in output
 
+
+
+
+def test_run_command_previews_subject_range_without_execution(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            str(CONTRACT_PATH),
+            "--run-index",
+            "15-44",
+            "--subject",
+            "open_webui_nemotron30b",
+            "--preview",
+            "--results-root",
+            str(tmp_path),
+        ]
+    )
+
+    assert args.handler(args) == 0
+    assert list(tmp_path.iterdir()) == []
+
+    output = capsys.readouterr().out
+    assert "Run selection preview" in output
+    assert "selected:      20" in output
+    assert "subjects:      open_webui_nemotron30b" in output
+    assert "run indices:   20-39" in output
+    assert "single_addition_success: runs=20-24" in output
+    assert "double_addition_success: runs=25-29" in output
+    assert "retrieval_failure: runs=30-34" in output
+    assert "addition_failure: runs=35-39" in output
+    assert "No execution started (--preview)." in output

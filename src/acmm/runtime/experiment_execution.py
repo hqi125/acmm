@@ -59,6 +59,60 @@ class experiment_execution_result:
         )
 
 
+@dataclass(frozen=True)
+class experiment_interruption_result:
+    execution_id: str
+    experiment_id: str
+    contract_sha256: str
+    session_dir: Path
+    interruption_path: Path
+    contract_run_count: int
+    selected_run_indices: tuple[int, ...]
+    started_at: datetime
+    ended_at: datetime
+    slots: tuple[slot_execution, ...]
+    interrupted_run_index: int | None
+    interrupted_attempt: int | None
+
+    @property
+    def resolved_run_indices(self) -> tuple[int, ...]:
+        return tuple(
+            slot.planned.run_index
+            for slot in self.slots
+            if slot.is_resolved
+        )
+
+    @property
+    def unresolved_run_indices(self) -> tuple[int, ...]:
+        resolved = set(self.resolved_run_indices)
+        return tuple(
+            run_index
+            for run_index in self.selected_run_indices
+            if run_index not in resolved
+        )
+
+    @property
+    def started_run_indices(self) -> tuple[int, ...]:
+        return tuple(slot.planned.run_index for slot in self.slots)
+
+    @property
+    def not_started_run_indices(self) -> tuple[int, ...]:
+        started = set(self.started_run_indices)
+        return tuple(
+            run_index
+            for run_index in self.selected_run_indices
+            if run_index not in started
+        )
+
+
+class experiment_execution_interrupted(Exception):
+    """Raised after a Ctrl+C interruption has been persisted safely."""
+
+    def __init__(self, result: experiment_interruption_result) -> None:
+        super().__init__("Experiment execution interrupted by Ctrl+C.")
+        self.result = result
+
+
 def execute_experiment(
     contract: dict,
     contract_path: str | Path,
@@ -74,7 +128,7 @@ def execute_experiment(
     sleep: Callable[[float], None] | None = None,
 ) -> experiment_execution_result:
     """
-    Execute every planned slot in one experiment execution session.
+    Execute every selected planned slot in one experiment execution session.
 
     Invalid executions are preserved as attempts and retried up to
     ``max_attempts_per_run``. The first scientifically valid execution resolves
@@ -87,8 +141,9 @@ def execute_experiment(
     execution.
 
     A completion manifest is published only after the selected plan has been
-    traversed. If orchestration or persistence aborts earlier, the session
-    directory remains intentionally incomplete and has no completion manifest.
+    traversed. Ctrl+C writes a separate interruption manifest containing only
+    already persisted evidence and then raises ``experiment_execution_interrupted``.
+    No completion manifest is created for an interrupted session.
     """
 
     if (
@@ -99,7 +154,6 @@ def execute_experiment(
         raise ValueError("max_attempts_per_run must be an integer >= 1.")
 
     report = progress if progress is not None else lambda message: None
-
     clock = now if now is not None else _utc_now
     make_execution_id = (
         execution_id_factory
@@ -118,6 +172,7 @@ def execute_experiment(
     execution_id = make_execution_id()
     plan = build_experiment_plan(contract)
     selected_runs = _select_runs(plan.runs, run_indices)
+    selected_run_indices = tuple(run.run_index for run in selected_runs)
 
     _validate_directory_component("experiment ID", experiment_id)
     _validate_directory_component("execution ID", execution_id)
@@ -154,105 +209,176 @@ def execute_experiment(
     )
 
     slots: list[slot_execution] = []
+    active_planned: planned_run | None = None
+    active_attempts: list[run_attempt] = []
+    active_selected_run_id: str | None = None
+    active_attempt_number: int | None = None
 
-    for selected_position, planned in enumerate(selected_runs):
-        attempts: list[run_attempt] = []
-        selected_run_id: str | None = None
+    try:
+        for selected_position, planned in enumerate(selected_runs):
+            active_planned = planned
+            active_attempts = []
+            active_selected_run_id = None
+            active_attempt_number = None
 
-        for attempt_number in range(1, max_attempts_per_run + 1):
-            report(
-                f"Run {planned.run_index}: subject={planned.subject_id}, "
-                f"scenario={planned.scenario_id}, repetition={planned.repetition}, "
-                f"attempt={attempt_number}/{max_attempts_per_run}."
-            )
+            for attempt_number in range(1, max_attempts_per_run + 1):
+                active_attempt_number = attempt_number
+                report(
+                    f"Run {planned.run_index}: subject={planned.subject_id}, "
+                    f"scenario={planned.scenario_id}, repetition={planned.repetition}, "
+                    f"attempt={attempt_number}/{max_attempts_per_run}."
+                )
 
-            executed = execute_planned_run(
-                contract=contract,
-                planned=planned,
-                contract_sha256=contract_sha256,
-                registry=registry,
-                harness_version=harness_version,
-                now=clock,
-                run_id_factory=make_run_id,
-            )
+                executed = execute_planned_run(
+                    contract=contract,
+                    planned=planned,
+                    contract_sha256=contract_sha256,
+                    registry=registry,
+                    harness_version=harness_version,
+                    now=clock,
+                    run_id_factory=make_run_id,
+                )
 
-            result_path = persist_executed_run_to(
-                executed,
-                runs_dir,
-            )
+                result_path = persist_executed_run_to(
+                    executed,
+                    runs_dir,
+                )
 
-            execution = executed.record["execution"]
-            run_id = executed.record["run"]["id"]
+                execution = executed.record["execution"]
+                run_id = executed.record["run"]["id"]
 
-            report(
-                f"Run {planned.run_index} attempt {attempt_number}: "
-                f"validity={execution['validity']}, "
-                f"termination={execution['termination']}, "
-                f"stored={result_path.name}."
-            )
-
-            attempts.append(
-                run_attempt(
+                attempt = run_attempt(
                     attempt=attempt_number,
                     run_id=run_id,
                     validity=execution["validity"],
                     termination=execution["termination"],
                     result_path=result_path,
                 )
-            )
+                active_attempts.append(attempt)
+                active_attempt_number = None
 
-            if execution["validity"] == "valid":
-                selected_run_id = run_id
-                break
+                if execution["validity"] == "valid":
+                    active_selected_run_id = run_id
 
-        slots.append(
-            slot_execution(
-                planned=planned,
-                attempts=tuple(attempts),
-                selected_run_id=selected_run_id,
+                report(
+                    f"Run {planned.run_index} attempt {attempt_number}: "
+                    f"validity={execution['validity']}, "
+                    f"termination={execution['termination']}, "
+                    f"stored={result_path.name}."
+                )
+
+                if active_selected_run_id is not None:
+                    break
+
+            slots.append(
+                slot_execution(
+                    planned=planned,
+                    attempts=tuple(active_attempts),
+                    selected_run_id=active_selected_run_id,
+                )
             )
+            active_planned = None
+            active_attempts = []
+            active_selected_run_id = None
+            active_attempt_number = None
+
+            has_next_selected_run = selected_position + 1 < len(selected_runs)
+
+            if has_next_selected_run and inter_run_delay_seconds > 0:
+                report(
+                    "Pacing: waiting "
+                    f"{inter_run_delay_seconds:g}s before the next planned run."
+                )
+                wait(inter_run_delay_seconds)
+
+        ended_at = clock()
+        manifest = _build_manifest(
+            execution_id=execution_id,
+            experiment_id=experiment_id,
+            contract_sha256=contract_sha256,
+            harness_version=harness_version,
+            started_at=started_at,
+            ended_at=ended_at,
+            max_attempts_per_run=max_attempts_per_run,
+            inter_run_delay_seconds=inter_run_delay_seconds,
+            contract_run_count=plan.run_count,
+            selected_run_indices=selected_run_indices,
+            slots=tuple(slots),
+            session_dir=session_dir,
         )
 
-        has_next_selected_run = selected_position + 1 < len(selected_runs)
+        manifest_path = session_dir / "experiment_execution.yaml"
+        _write_yaml_atomically(
+            manifest_path,
+            manifest,
+        )
 
-        if has_next_selected_run and inter_run_delay_seconds > 0:
-            report(
-                "Pacing: waiting "
-                f"{inter_run_delay_seconds:g}s before the next planned run."
+        report(
+            f"Execution {execution_id} complete: "
+            f"{len(slots) - len([slot for slot in slots if not slot.is_resolved])}/"
+            f"{len(slots)} selected run(s) resolved."
+        )
+    except KeyboardInterrupt:
+        ended_at = clock()
+        interruption_slots = list(slots)
+
+        if active_planned is not None:
+            interruption_slots.append(
+                slot_execution(
+                    planned=active_planned,
+                    attempts=tuple(active_attempts),
+                    selected_run_id=active_selected_run_id,
+                )
             )
-            wait(inter_run_delay_seconds)
 
-    ended_at = clock()
+        interruption_path = session_dir / "experiment_interruption.yaml"
+        interruption = _build_interruption_manifest(
+            execution_id=execution_id,
+            experiment_id=experiment_id,
+            contract_sha256=contract_sha256,
+            harness_version=harness_version,
+            started_at=started_at,
+            ended_at=ended_at,
+            max_attempts_per_run=max_attempts_per_run,
+            inter_run_delay_seconds=inter_run_delay_seconds,
+            contract_run_count=plan.run_count,
+            selected_run_indices=selected_run_indices,
+            slots=tuple(interruption_slots),
+            interrupted_run_index=(
+                active_planned.run_index
+                if active_planned is not None
+                else None
+            ),
+            interrupted_attempt=active_attempt_number,
+            session_dir=session_dir,
+        )
+        _write_yaml_atomically(interruption_path, interruption)
 
-    manifest = _build_manifest(
-        execution_id=execution_id,
-        experiment_id=experiment_id,
-        contract_sha256=contract_sha256,
-        harness_version=harness_version,
-        started_at=started_at,
-        ended_at=ended_at,
-        max_attempts_per_run=max_attempts_per_run,
-        inter_run_delay_seconds=inter_run_delay_seconds,
-        contract_run_count=plan.run_count,
-        selected_run_indices=tuple(
-            planned.run_index
-            for planned in selected_runs
-        ),
-        slots=tuple(slots),
-        session_dir=session_dir,
-    )
+        result = experiment_interruption_result(
+            execution_id=execution_id,
+            experiment_id=experiment_id,
+            contract_sha256=contract_sha256,
+            session_dir=session_dir,
+            interruption_path=interruption_path,
+            contract_run_count=plan.run_count,
+            selected_run_indices=selected_run_indices,
+            started_at=started_at,
+            ended_at=ended_at,
+            slots=tuple(interruption_slots),
+            interrupted_run_index=(
+                active_planned.run_index
+                if active_planned is not None
+                else None
+            ),
+            interrupted_attempt=active_attempt_number,
+        )
 
-    manifest_path = session_dir / "experiment_execution.yaml"
-    _write_yaml_atomically(
-        manifest_path,
-        manifest,
-    )
-
-    report(
-        f"Execution {execution_id} complete: "
-        f"{len(slots) - len([slot for slot in slots if not slot.is_resolved])}/"
-        f"{len(slots)} selected run(s) resolved."
-    )
+        report(
+            f"Execution {execution_id} interrupted: "
+            f"{len(result.resolved_run_indices)}/{len(selected_runs)} "
+            "selected run(s) resolved before Ctrl+C."
+        )
+        raise experiment_execution_interrupted(result) from None
 
     return experiment_execution_result(
         execution_id=execution_id,
@@ -318,6 +444,74 @@ def _select_runs(
     return tuple(selected)
 
 
+def _build_interruption_manifest(
+    execution_id: str,
+    experiment_id: str,
+    contract_sha256: str,
+    harness_version: str,
+    started_at: datetime,
+    ended_at: datetime,
+    max_attempts_per_run: int,
+    inter_run_delay_seconds: float,
+    contract_run_count: int,
+    selected_run_indices: tuple[int, ...],
+    slots: tuple[slot_execution, ...],
+    interrupted_run_index: int | None,
+    interrupted_attempt: int | None,
+    session_dir: Path,
+) -> dict:
+    resolved = tuple(
+        slot.planned.run_index
+        for slot in slots
+        if slot.is_resolved
+    )
+    started = tuple(slot.planned.run_index for slot in slots)
+    resolved_set = set(resolved)
+    started_set = set(started)
+    unresolved = tuple(
+        run_index
+        for run_index in selected_run_indices
+        if run_index not in resolved_set
+    )
+    not_started = tuple(
+        run_index
+        for run_index in selected_run_indices
+        if run_index not in started_set
+    )
+
+    return {
+        "schema_version": "0.1",
+        "execution": {
+            "id": execution_id,
+            "experiment_id": experiment_id,
+            "contract_sha256": contract_sha256,
+            "harness_version": harness_version,
+            "status": "interrupted",
+            "interrupt_kind": "keyboard_interrupt",
+            "started_at": _format_timestamp(started_at),
+            "interrupted_at": _format_timestamp(ended_at),
+            "max_attempts_per_run": max_attempts_per_run,
+            "pacing": {
+                "inter_run_delay_seconds": inter_run_delay_seconds,
+            },
+            "contract_run_count": contract_run_count,
+            "selected_run_indices": list(selected_run_indices),
+            "selected_run_count": len(selected_run_indices),
+            "started_run_indices": list(started),
+            "resolved_run_indices": list(resolved),
+            "unresolved_run_indices": list(unresolved),
+            "not_started_run_indices": list(not_started),
+            "interrupted_run_index": interrupted_run_index,
+            "interrupted_attempt": interrupted_attempt,
+            "persisted_attempt_count": sum(
+                len(slot.attempts)
+                for slot in slots
+            ),
+        },
+        "slots": _build_slot_records(slots, session_dir),
+    }
+
+
 def _build_manifest(
     execution_id: str,
     experiment_id: str,
@@ -338,6 +532,35 @@ def _build_manifest(
         if not slot.is_resolved
     ]
 
+    slot_records = _build_slot_records(slots, session_dir)
+
+    return {
+        "schema_version": "0.1",
+        "execution": {
+            "id": execution_id,
+            "experiment_id": experiment_id,
+            "contract_sha256": contract_sha256,
+            "harness_version": harness_version,
+            "started_at": _format_timestamp(started_at),
+            "ended_at": _format_timestamp(ended_at),
+            "max_attempts_per_run": max_attempts_per_run,
+            "pacing": {
+                "inter_run_delay_seconds": inter_run_delay_seconds,
+            },
+            "contract_run_count": contract_run_count,
+            "selected_run_indices": list(selected_run_indices),
+            "planned_run_count": len(slots),
+            "resolved_run_count": len(slots) - len(unresolved),
+            "unresolved_run_indices": unresolved,
+        },
+        "slots": slot_records,
+    }
+
+
+def _build_slot_records(
+    slots: tuple[slot_execution, ...],
+    session_dir: Path,
+) -> list[dict]:
     slot_records: list[dict] = []
 
     for slot in slots:
@@ -365,27 +588,7 @@ def _build_manifest(
             }
         )
 
-    return {
-        "schema_version": "0.1",
-        "execution": {
-            "id": execution_id,
-            "experiment_id": experiment_id,
-            "contract_sha256": contract_sha256,
-            "harness_version": harness_version,
-            "started_at": _format_timestamp(started_at),
-            "ended_at": _format_timestamp(ended_at),
-            "max_attempts_per_run": max_attempts_per_run,
-            "pacing": {
-                "inter_run_delay_seconds": inter_run_delay_seconds,
-            },
-            "contract_run_count": contract_run_count,
-            "selected_run_indices": list(selected_run_indices),
-            "planned_run_count": len(slots),
-            "resolved_run_count": len(slots) - len(unresolved),
-            "unresolved_run_indices": unresolved,
-        },
-        "slots": slot_records,
-    }
+    return slot_records
 
 
 def _write_yaml_atomically(

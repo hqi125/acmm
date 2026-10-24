@@ -26,9 +26,15 @@ from acmm.record.validator import (
 )
 from acmm.runtime.experiment_execution import (
     execute_experiment,
+    experiment_execution_interrupted,
     experiment_execution_result,
+    experiment_interruption_result,
 )
-from acmm.runtime.planner import build_experiment_plan, experiment_plan
+from acmm.runtime.planner import (
+    build_experiment_plan,
+    experiment_plan,
+    planned_run,
+)
 from acmm.runtime.result_store import result_write_error
 from acmm.validation import validation_result
 
@@ -188,6 +194,170 @@ def _run_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def _parse_run_index_selectors(
+    selectors: list[str] | None,
+    plan: experiment_plan,
+) -> set[int] | None:
+    if selectors is None:
+        return None
+
+    selected: set[int] = set()
+    maximum = plan.run_count - 1
+
+    for selector in selectors:
+        if selector.isdecimal():
+            start = int(selector)
+            end = start
+        else:
+            parts = selector.split("-")
+
+            if (
+                len(parts) != 2
+                or not parts[0].isdecimal()
+                or not parts[1].isdecimal()
+            ):
+                raise ValueError(
+                    "--run-index must be a non-negative index or inclusive "
+                    f"range START-END; got '{selector}'."
+                )
+
+            start = int(parts[0])
+            end = int(parts[1])
+
+            if start > end:
+                raise ValueError(
+                    "--run-index range start must not exceed its end; got "
+                    f"'{selector}'."
+                )
+
+        if start > maximum or end > maximum:
+            raise ValueError(
+                f"Run selector '{selector}' is outside the Contract plan "
+                f"range 0..{maximum}."
+            )
+
+        selected.update(range(start, end + 1))
+
+    return selected
+
+
+def _resolve_selected_runs(
+    plan: experiment_plan,
+    contract: dict[str, Any],
+    run_selectors: list[str] | None,
+    subject_selectors: list[str] | None,
+) -> tuple[planned_run, ...]:
+    selected_indices = _parse_run_index_selectors(run_selectors, plan)
+    selected_subjects = set(subject_selectors) if subject_selectors else None
+
+    if selected_subjects is not None:
+        contract_subjects = tuple(subject["id"] for subject in contract["subjects"])
+        unknown = sorted(selected_subjects - set(contract_subjects))
+
+        if unknown:
+            raise ValueError(
+                "Unknown --subject selection(s): "
+                + ", ".join(unknown)
+                + ". Contract subjects: "
+                + ", ".join(contract_subjects)
+                + "."
+            )
+
+    selected = tuple(
+        run
+        for run in plan.runs
+        if (
+            selected_indices is None
+            or run.run_index in selected_indices
+        )
+        and (
+            selected_subjects is None
+            or run.subject_id in selected_subjects
+        )
+    )
+
+    if not selected:
+        raise ValueError(
+            "Run selection is empty after applying --run-index and --subject "
+            "filters."
+        )
+
+    return selected
+
+
+def _selected_subject_ids(
+    selected_runs: tuple[planned_run, ...],
+) -> tuple[str, ...]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    for run in selected_runs:
+        if run.subject_id not in seen:
+            ordered.append(run.subject_id)
+            seen.add(run.subject_id)
+
+    return tuple(ordered)
+
+
+def _compact_integer_ranges(values: tuple[int, ...] | list[int]) -> str:
+    unique = sorted(set(values))
+
+    if not unique:
+        return "none"
+
+    groups: list[str] = []
+    start = unique[0]
+    end = start
+
+    for value in unique[1:]:
+        if value == end + 1:
+            end = value
+            continue
+
+        groups.append(str(start) if start == end else f"{start}-{end}")
+        start = value
+        end = value
+
+    groups.append(str(start) if start == end else f"{start}-{end}")
+    return ", ".join(groups)
+
+
+def _print_run_selection_preview(
+    plan: experiment_plan,
+    selected_runs: tuple[planned_run, ...],
+    runtime_descriptions: list[tuple[str, str]],
+) -> None:
+    subject_ids = _selected_subject_ids(selected_runs)
+    run_indices = tuple(run.run_index for run in selected_runs)
+    grouped: dict[tuple[str, str], list[planned_run]] = {}
+
+    for run in selected_runs:
+        grouped.setdefault((run.subject_id, run.scenario_id), []).append(run)
+
+    print(f"Run selection preview for '{plan.experiment_id}'.")
+    print(f"  contract runs: {plan.run_count}")
+    print(f"  selected:      {len(selected_runs)}")
+    print(f"  subjects:      {', '.join(subject_ids)}")
+    print(f"  run indices:   {_compact_integer_ranges(run_indices)}")
+    print("  breakdown:")
+
+    for (subject_id, scenario_id), runs in grouped.items():
+        indices = tuple(run.run_index for run in runs)
+        repetitions = tuple(run.repetition for run in runs)
+        print(
+            f"    {subject_id} / {scenario_id}: "
+            f"runs={_compact_integer_ranges(indices)}; "
+            f"repetitions={_compact_integer_ranges(repetitions)}; "
+            f"count={len(runs)}"
+        )
+
+    print("Execution subject runtime:")
+    for subject_id, description in runtime_descriptions:
+        print(f"  {subject_id}: {description}")
+
+    print("No execution started (--preview).")
+
 def _run_experiment(args: argparse.Namespace) -> int:
     contract_path = Path(args.contract)
     schema_path = (
@@ -231,33 +401,30 @@ def _run_experiment(args: argparse.Namespace) -> int:
         return 1
 
     plan = build_experiment_plan(contract)
-    selected_indices: tuple[int, ...] | None = None
 
-    if args.run_index is not None:
-        selected_indices = tuple(args.run_index)
+    try:
+        selected_runs = _resolve_selected_runs(
+            plan,
+            contract,
+            args.run_index,
+            args.subject,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
-        if len(selected_indices) != len(set(selected_indices)):
-            print(
-                "ERROR: --run-index must not select the same planned run more "
-                "than once.",
-                file=sys.stderr,
-            )
-            return 2
-
-        for run_index in selected_indices:
-            if run_index < 0 or run_index >= plan.run_count:
-                print(
-                    f"ERROR: Run index {run_index} is outside the Contract plan "
-                    f"range 0..{plan.run_count - 1}.",
-                    file=sys.stderr,
-                )
-                return 2
-
-    subject_adapters = {}
+    selected_indices = tuple(run.run_index for run in selected_runs)
+    selected_subject_ids = _selected_subject_ids(selected_runs)
+    selected_subject_set = set(selected_subject_ids)
+    subject_bindings = {}
     subject_runtime_descriptions: list[tuple[str, str]] = []
 
     for subject in contract["subjects"]:
         subject_id = subject["id"]
+
+        if subject_id not in selected_subject_set:
+            continue
+
         subject_binding = lookup_subject_execution_binding(subject_id)
 
         if subject_binding is None:
@@ -282,42 +449,55 @@ def _run_experiment(args: argparse.Namespace) -> int:
             )
             return 2
 
-        subject_adapters[subject_id] = subject_binding.adapter_builder()
+        subject_bindings[subject_id] = subject_binding
         subject_runtime_descriptions.append(
             (subject_id, subject_binding.runtime_description)
         )
 
+    if args.preview:
+        _print_run_selection_preview(
+            plan,
+            selected_runs,
+            subject_runtime_descriptions,
+        )
+        return 0
+
+    subject_adapters = {
+        subject_id: subject_bindings[subject_id].adapter_builder()
+        for subject_id in selected_subject_ids
+    }
     registry = binding.registry_builder(subject_adapters)
 
-    if selected_indices is None:
+    if len(selected_runs) == plan.run_count:
         print(
             f"Executing all {plan.run_count} planned run(s) for "
             f"'{plan.experiment_id}'."
         )
-    elif len(selected_indices) == 1:
-        planned = plan.runs[selected_indices[0]]
+    elif len(selected_runs) == 1:
+        planned = selected_runs[0]
         print(
             f"Executing run {planned.run_index}/{plan.run_count - 1}: "
             f"subject={planned.subject_id}, scenario={planned.scenario_id}, "
             f"repetition={planned.repetition}."
         )
     else:
-        formatted_indices = ", ".join(str(index) for index in selected_indices)
         print(
-            f"Executing {len(selected_indices)} selected run(s) of "
-            f"{plan.run_count} for '{plan.experiment_id}': {formatted_indices}."
+            f"Executing {len(selected_runs)} selected run(s) of "
+            f"{plan.run_count} for '{plan.experiment_id}': "
+            f"{_compact_integer_ranges(selected_indices)}."
         )
 
     print("Execution subject runtime:")
     for subject_id, description in subject_runtime_descriptions:
         print(f"  {subject_id}: {description}")
+
     pacing = contract["run_protocol"].get("pacing", {})
     inter_run_delay = pacing.get("inter_run_delay_seconds", 0)
 
-    if selected_indices is None and plan.run_count > 1:
+    if len(selected_runs) > 1:
         print(
             "Inter-run pacing: "
-            f"{inter_run_delay:g}s between planned runs."
+            f"{inter_run_delay:g}s between selected planned runs."
         )
 
     try:
@@ -331,6 +511,21 @@ def _run_experiment(args: argparse.Namespace) -> int:
             run_indices=selected_indices,
             progress=lambda message: print(message, flush=True),
         )
+    except experiment_execution_interrupted as exc:
+        result = exc.result
+        _validate_persisted_execution(result, contract)
+
+        try:
+            summary_path = _write_interruption_summary(result)
+        except OSError as summary_exc:
+            summary_path = None
+            print(
+                f"WARNING: Could not persist interruption summary: {summary_exc}",
+                file=sys.stderr,
+            )
+
+        _print_execution_interruption(result, summary_path)
+        return 130
     except (OSError, ValueError) as exc:
         print(f"ERROR: Experiment execution failed: {exc}", file=sys.stderr)
         return 2
@@ -367,7 +562,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
 
 
 def _validate_persisted_execution(
-    result: experiment_execution_result,
+    result: experiment_execution_result | experiment_interruption_result,
     contract: dict[str, Any],
 ) -> int:
     try:
@@ -408,6 +603,107 @@ def _validate_persisted_execution(
                 return 2
 
     return 0
+
+
+def _write_interruption_summary(
+    result: experiment_interruption_result,
+) -> Path:
+    summary_path = result.session_dir / "execution_summary.txt"
+
+    with summary_path.open(
+        "x",
+        encoding="utf-8",
+        newline="\n",
+    ) as output:
+        print("Experiment execution interrupted by Ctrl+C.", file=output)
+        print(f"  session:       {result.session_dir}", file=output)
+        print(f"  interruption:  {result.interruption_path}", file=output)
+        print(
+            f"  started:       {_format_execution_timestamp(result.started_at)}",
+            file=output,
+        )
+        print(
+            f"  interrupted:   {_format_execution_timestamp(result.ended_at)}",
+            file=output,
+        )
+        print(
+            f"  duration:      {_format_execution_duration(result)}",
+            file=output,
+        )
+        print(
+            f"  selected:      {len(result.selected_run_indices)} "
+            f"of {result.contract_run_count}",
+            file=output,
+        )
+        print(
+            f"  resolved:      {len(result.resolved_run_indices)} "
+            f"of {len(result.selected_run_indices)} selected",
+            file=output,
+        )
+        print(
+            "  unfinished:    "
+            + _compact_integer_ranges(result.unresolved_run_indices),
+            file=output,
+        )
+
+        if result.interrupted_run_index is not None:
+            detail = f"run {result.interrupted_run_index}"
+
+            if result.interrupted_attempt is not None:
+                detail += f", attempt {result.interrupted_attempt}"
+
+            print(f"  interrupted at: {detail}", file=output)
+
+        print(
+            "  completion manifest: not written; interrupted executions are "
+            "not exportable as complete experiments.",
+            file=output,
+        )
+        _write_slot_summaries(result.slots, output)
+
+    return summary_path
+
+
+def _print_execution_interruption(
+    result: experiment_interruption_result,
+    summary_path: Path | None,
+) -> None:
+    print("")
+    print("Experiment execution interrupted by Ctrl+C.")
+    print(f"  session:       {result.session_dir}")
+    print(f"  interruption:  {result.interruption_path}")
+
+    if summary_path is not None:
+        print(f"  summary:       {summary_path}")
+    else:
+        print("  summary:       unavailable")
+
+    print(
+        f"  selected:      {len(result.selected_run_indices)} "
+        f"of {result.contract_run_count}"
+    )
+    print(
+        f"  resolved:      {len(result.resolved_run_indices)} "
+        f"of {len(result.selected_run_indices)} selected"
+    )
+    print(
+        "  unfinished:    "
+        + _compact_integer_ranges(result.unresolved_run_indices)
+    )
+
+    if result.interrupted_run_index is not None:
+        detail = f"run {result.interrupted_run_index}"
+
+        if result.interrupted_attempt is not None:
+            detail += f", attempt {result.interrupted_attempt}"
+
+        print(f"  interrupted at: {detail}")
+
+    print(f"  started:       {_format_execution_timestamp(result.started_at)}")
+    print(f"  interrupted:   {_format_execution_timestamp(result.ended_at)}")
+    print(f"  duration:      {_format_execution_duration(result)}")
+    print("  completion manifest: not written")
+    print("  continuation: unsupported; start a new execution instead")
 
 
 def _write_execution_summary(
@@ -455,7 +751,14 @@ def _write_execution_summary_content(
         file=output,
     )
 
-    for slot in result.slots:
+    _write_slot_summaries(result.slots, output)
+
+
+def _write_slot_summaries(
+    slots: tuple[Any, ...],
+    output: TextIO,
+) -> None:
+    for slot in slots:
         print(
             f"  run {slot.planned.run_index}: "
             f"subject={slot.planned.subject_id}, "
@@ -463,6 +766,10 @@ def _write_execution_summary_content(
             f"repetition={slot.planned.repetition}",
             file=output,
         )
+
+        if not slot.attempts:
+            print("    no persisted attempt", file=output)
+            continue
 
         for attempt in slot.attempts:
             record_path = attempt.result_path / "run_record.yaml"
@@ -586,7 +893,7 @@ def _format_execution_timestamp(value: datetime) -> str:
 
 
 def _format_execution_duration(
-    result: experiment_execution_result,
+    result: experiment_execution_result | experiment_interruption_result,
 ) -> str:
     elapsed = result.ended_at - result.started_at
     total_milliseconds = (
@@ -764,12 +1071,29 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_contract_schema_argument(run_parser)
     run_parser.add_argument(
         "--run-index",
-        type=int,
         action="append",
+        metavar="INDEX|START-END",
         help=(
-            "Execute a deterministic planned-run index. Repeat to select multiple "
-            "indices in one explicit partial execution. Omit to execute the "
-            "complete Contract plan."
+            "Select a planned-run index or inclusive range (for example 20-39). "
+            "Repeat to combine selectors. Overlaps are deduplicated. Omit to "
+            "select all run indices."
+        ),
+    )
+    run_parser.add_argument(
+        "--subject",
+        action="append",
+        metavar="SUBJECT_ID",
+        help=(
+            "Select a Contract subject (agent) ID. Repeat to select multiple "
+            "subjects. When combined with --run-index, filters are intersected."
+        ),
+    )
+    run_parser.add_argument(
+        "--preview",
+        action="store_true",
+        help=(
+            "Validate and print the resolved run selection without creating an "
+            "execution session or contacting subject runtimes."
         ),
     )
     run_parser.add_argument(
@@ -858,7 +1182,12 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
-    return args.handler(args)
+
+    try:
+        return args.handler(args)
+    except KeyboardInterrupt:
+        print("\nInterrupted before an execution could be finalized.", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":
