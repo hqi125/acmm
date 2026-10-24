@@ -84,6 +84,13 @@ def _prepare_repo(
         "_preflight",
         lambda: ("/venv/bin/acmm", "/usr/bin/Rscript"),
     )
+
+    def build_workbook(export_path: Path, output_path: Path) -> None:
+        del export_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"test workbook")
+
+    monkeypatch.setattr(analyze_execution, "build_analysis_workbook", build_workbook)
     return repo_root, execution_dir, export_dir
 
 
@@ -104,8 +111,16 @@ def test_workflow_exports_then_runs_all_analysis_stages(
         analysis_commands.append((list(command), output_path))
         return 0
 
+    workbook_calls: list[tuple[Path, Path]] = []
+
+    def build_workbook(export_path: Path, output_path: Path) -> None:
+        workbook_calls.append((export_path, output_path))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"test workbook")
+
     monkeypatch.setattr(analyze_execution, "_run_command", run_command)
     monkeypatch.setattr(analyze_execution, "_run_and_save", run_and_save)
+    monkeypatch.setattr(analyze_execution, "build_analysis_workbook", build_workbook)
 
     assert analyze_execution.run_analysis_workflow(execution_dir) == 0
     assert export_commands == [[
@@ -135,6 +150,10 @@ def test_workflow_exports_then_runs_all_analysis_stages(
         "dimension_scores.csv",
         "dimension_intervals.csv",
     ]
+    assert workbook_calls == [(
+        export_dir,
+        export_dir / "analysis_output" / "analysis_report.xlsx",
+    )]
 
 
 def test_existing_matching_export_is_reused(
@@ -192,6 +211,30 @@ def test_r_failure_stops_later_analysis_stages(
 
     assert analyze_execution.run_analysis_workflow(execution_dir) == 9
     assert analysis_calls == ["analyze_export.R"]
+
+
+def test_workbook_failure_is_reported_after_r_stages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, execution_dir, export_dir = _prepare_repo(tmp_path, monkeypatch)
+
+    def run_command(command: Sequence[str]) -> int:
+        _write_export(export_dir)
+        return 0
+
+    def fail_workbook(export_path: Path, output_path: Path) -> None:
+        del export_path
+        del output_path
+        raise analyze_execution.analysis_workbook_error("workbook failed")
+
+    monkeypatch.setattr(analyze_execution, "_run_command", run_command)
+    monkeypatch.setattr(analyze_execution, "_run_and_save", lambda command, path: 0)
+    monkeypatch.setattr(analyze_execution, "build_analysis_workbook", fail_workbook)
+
+    assert analyze_execution.run_analysis_workflow(execution_dir) == 1
+    failed_path = export_dir / "analysis_output" / "analysis_report.failed.txt"
+    assert failed_path.read_text(encoding="utf-8") == "workbook failed\n"
 
 
 def test_malformed_execution_manifest_fails_cleanly(tmp_path: Path) -> None:

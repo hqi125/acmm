@@ -250,7 +250,8 @@ dimension_intervals.csv
 ```
 
 Each table includes an `estimand` column (`opportunity`, `run`, or `scenario`) so it can be filtered
-or imported directly into RStudio, Excel, or a later workbook-reporting layer.
+or imported directly into RStudio or Excel. `tools/analyze_execution.py` also uses these tables as the
+authoritative inputs to its final `analysis_report.xlsx` presentation stage.
 
 
 ## Repository workflow wrapper
@@ -270,9 +271,11 @@ storage conventions to:
 2. verify and safely reuse a matching existing export when rerunning after an analysis-stage failure;
 3. run requirement point estimates, requirement uncertainty, dimension point scores, and dimension
    uncertainty in order;
-4. stop immediately when any stage fails; and
+4. stop immediately when any stage fails;
 5. store both human-readable text output and normalized analysis CSV tables under
-   `<export-directory>/analysis_output/`.
+   `<export-directory>/analysis_output/`; and
+6. build `analysis_report.xlsx` from the normalized analysis tables plus `runs.csv` and
+   `judgments.csv`.
 
 The current analysis protocol is intentionally fixed in this research tool at 2,000 hierarchical
 bootstrap replicates, seed 12,345, and confidence level 0.95. Statistical calculations remain entirely

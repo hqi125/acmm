@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,10 +10,17 @@ from typing import Any, Sequence
 
 import yaml
 
+from acmm.analysis.workbook import (
+    WORKBOOK_NAME,
+    analysis_workbook_error,
+    build_analysis_workbook,
+)
+
 
 BOOTSTRAP_REPLICATES = 2000
 BOOTSTRAP_SEED = 12345
 CONFIDENCE_LEVEL = 0.95
+TOTAL_STAGES = 6
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _EXPORT_ROOT = _REPO_ROOT / "exports"
@@ -128,6 +136,12 @@ def _resolve_program(name: str) -> str:
 def _preflight() -> tuple[str, str]:
     acmm_command = _resolve_program("acmm")
     rscript_command = _resolve_program("Rscript")
+
+    if importlib.util.find_spec("xlsxwriter") is None:
+        raise analysis_workflow_error(
+            "Required Python package 'XlsxWriter' is not installed. "
+            "Run 'python -m pip install -e \".[test]\"' from the repository root."
+        )
 
     for _, script_name, _, _, _ in _R_STAGES:
         script_path = _R_SCRIPT_ROOT / script_name
@@ -260,11 +274,11 @@ def run_analysis_workflow(execution: str | Path) -> int:
     export_dir = _EXPORT_ROOT / experiment_id / f"execution_{execution_id}"
 
     if export_dir.exists():
-        print("[1/5] Reusing existing analysis export...")
+        print(f"[1/{TOTAL_STAGES}] Reusing existing analysis export...")
         _validate_reusable_export(export_dir, execution_id, experiment_id)
         print(f"      export: {export_dir}")
     else:
-        print("[1/5] Exporting execution...")
+        print(f"[1/{TOTAL_STAGES}] Exporting execution...")
         return_code = _run_command(
             (
                 acmm_command,
@@ -307,7 +321,7 @@ def run_analysis_workflow(execution: str | Path) -> int:
             str(csv_output_path),
         )
 
-        print(f"[{stage_index}/5] Running {label.lower()}...")
+        print(f"[{stage_index}/{TOTAL_STAGES}] Running {label.lower()}...")
         return_code = _run_and_save(command, output_path)
 
         if return_code != 0:
@@ -325,11 +339,37 @@ def run_analysis_workflow(execution: str | Path) -> int:
         print(f"      output: {output_path}")
         print(f"      table:  {csv_output_path}")
 
+    analysis_output_dir.mkdir(parents=True, exist_ok=True)
+    workbook_path = analysis_output_dir / WORKBOOK_NAME
+    workbook_failed_path = analysis_output_dir / "analysis_report.failed.txt"
+    workbook_failed_path.unlink(missing_ok=True)
+    print(f"[{TOTAL_STAGES}/{TOTAL_STAGES}] Building Excel report...")
+
+    try:
+        build_analysis_workbook(export_dir, workbook_path)
+    except analysis_workbook_error as exc:
+        try:
+            workbook_failed_path.write_text(
+                f"{exc}\n",
+                encoding="utf-8",
+                newline="",
+            )
+        except OSError:
+            pass
+
+        print(f"ERROR: {exc}", file=sys.stderr)
+        print(f"Failed output: {workbook_failed_path}", file=sys.stderr)
+        print("Analysis stopped.", file=sys.stderr)
+        return 1
+
+    print(f"      output: {workbook_path}")
+
     print("\nAnalysis workflow completed successfully.")
     print(f"  execution:       {execution_id}")
     print(f"  experiment:      {experiment_id}")
     print(f"  export:          {export_dir}")
     print(f"  analysis output: {analysis_output_dir}")
+    print(f"  Excel report:    {workbook_path}")
     return 0
 
 

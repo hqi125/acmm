@@ -9,9 +9,11 @@ command surfaces.
 Runs the repository analysis workflow for a completed execution and coordinates the canonical
 CSV export with the R analysis stages. The workflow writes requirement estimates, requirement
 hierarchical intervals, dimension scores, and dimension hierarchical intervals as both readable text
-reports and normalized CSV tables under the execution export's `analysis_output/` directory.
-The wrapper keeps those report tables out of the console; terminal output is limited to workflow
-progress, output paths, warnings, and errors.
+reports and normalized CSV tables under the execution export's `analysis_output/` directory. A final
+presentation stage builds `analysis_report.xlsx` with an Overview, the four normalized analysis tables,
+raw Runs/Judgments sheets, and workbook metadata. The workbook is derived from the CSV outputs and does
+not replace them as analysis artifacts. The wrapper keeps report tables out of the console; terminal
+output is limited to workflow progress, output paths, warnings, and errors.
 
 ## Controlled-tool smoke programs
 

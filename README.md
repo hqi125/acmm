@@ -619,9 +619,11 @@ python tools/analyze_execution.py \
 
 The wrapper performs or reuses the deterministic CSV export, then runs requirement point
 estimates, requirement hierarchical uncertainty, dimension scores, and dimension hierarchical
-uncertainty in sequence. Each stage stores both readable text and a normalized CSV table under
-`analysis_output/`. The individual R scripts remain available for interactive R/RStudio work; see
-`analysis/r/README.md`.
+uncertainty in sequence. Each statistical stage stores both readable text and a normalized CSV table
+under `analysis_output/`. A final Python presentation stage generates `analysis_report.xlsx` from those
+normalized tables plus `runs.csv` and `judgments.csv`. The workbook is for human exploration; the CSV
+analysis tables, export manifest, and canonical experiment records retain their existing authority. The
+individual R scripts remain available for interactive R/RStudio work; see `analysis/r/README.md`.
 
 See `docs/analysis/boundary.md`, `docs/analysis/export.md`, and `analysis/r/README.md`.
 
