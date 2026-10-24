@@ -681,6 +681,11 @@ pytest
 Before the live execution command, the repository now includes a reproducible infrastructure
 management layer.
 
+A new agent should pass a broader qualification workflow before it is treated as a comparative
+ACMM subject: managed desired state, machine-interface study, runtime adapter/evidence
+normalization, exact termination mapping, live smoke, and subject-only stress qualification. See
+`docs/integration/agent_integration.md` for the general integration workflow and coding surface.
+
 ## Open WebUI infrastructure checkpoint
 
 Open WebUI now has a repository-managed deployment and Tool baseline alongside Hermes. The
