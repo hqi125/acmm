@@ -45,6 +45,9 @@ class experiment_execution_result:
     contract_sha256: str
     session_dir: Path
     manifest_path: Path
+    contract_run_count: int
+    started_at: datetime
+    ended_at: datetime
     slots: tuple[slot_execution, ...]
 
     @property
@@ -257,6 +260,9 @@ def execute_experiment(
         contract_sha256=contract_sha256,
         session_dir=session_dir,
         manifest_path=manifest_path,
+        contract_run_count=plan.run_count,
+        started_at=started_at,
+        ended_at=ended_at,
         slots=tuple(slots),
     )
 

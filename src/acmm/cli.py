@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+from datetime import datetime, timezone
 import json
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, TextIO
 
 from acmm.analysis.export import analysis_export_error, export_execution
 from acmm.contract.compatibility import validate_harness_compatibility
@@ -341,7 +343,16 @@ def _run_experiment(args: argparse.Namespace) -> int:
     if validation_status != 0:
         return validation_status
 
-    _print_execution_summary(result)
+    try:
+        summary_path = _write_execution_summary(result)
+    except OSError as exc:
+        summary_path = None
+        print(
+            f"WARNING: Could not persist execution summary: {exc}",
+            file=sys.stderr,
+        )
+
+    _print_execution_completion(result, summary_path)
 
     if result.unresolved_run_indices:
         print(
@@ -399,20 +410,58 @@ def _validate_persisted_execution(
     return 0
 
 
-def _print_execution_summary(
+def _write_execution_summary(
     result: experiment_execution_result,
+) -> Path:
+    summary_path = result.session_dir / "execution_summary.txt"
+
+    with summary_path.open(
+        "x",
+        encoding="utf-8",
+        newline="\n",
+    ) as output:
+        _write_execution_summary_content(result, output)
+
+    return summary_path
+
+
+def _write_execution_summary_content(
+    result: experiment_execution_result,
+    output: TextIO,
 ) -> None:
-    print("")
-    print("Experiment execution persisted successfully.")
-    print(f"  session:  {result.session_dir}")
-    print(f"  manifest: {result.manifest_path}")
+    print("Experiment execution persisted successfully.", file=output)
+    print(f"  session:   {result.session_dir}", file=output)
+    print(f"  manifest:  {result.manifest_path}", file=output)
+    print(
+        f"  started:   {_format_execution_timestamp(result.started_at)}",
+        file=output,
+    )
+    print(
+        f"  ended:     {_format_execution_timestamp(result.ended_at)}",
+        file=output,
+    )
+    print(
+        f"  duration:  {_format_execution_duration(result)}",
+        file=output,
+    )
+    print(
+        f"  selected:  {len(result.slots)} of {result.contract_run_count}",
+        file=output,
+    )
+    print(
+        f"  resolved:  "
+        f"{len(result.slots) - len(result.unresolved_run_indices)} "
+        f"of {len(result.slots)} selected",
+        file=output,
+    )
 
     for slot in result.slots:
         print(
             f"  run {slot.planned.run_index}: "
             f"subject={slot.planned.subject_id}, "
             f"scenario={slot.planned.scenario_id}, "
-            f"repetition={slot.planned.repetition}"
+            f"repetition={slot.planned.repetition}",
+            file=output,
         )
 
         for attempt in slot.attempts:
@@ -422,28 +471,34 @@ def _print_execution_summary(
             print(
                 f"    attempt {attempt.attempt}: "
                 f"validity={attempt.validity}, "
-                f"termination={attempt.termination}"
+                f"termination={attempt.termination}",
+                file=output,
             )
-            print(f"      record: {record_path}")
+            print(f"      record: {record_path}", file=output)
 
             failure = record["execution"].get("failure")
 
             if failure is not None:
                 print(
                     f"      failure: {failure['kind']}: "
-                    f"{failure['message']}"
+                    f"{failure['message']}",
+                    file=output,
                 )
 
             for judgment in record.get("judgments", []):
                 print(
                     f"      judgment {judgment['opportunity_id']}: "
-                    f"{judgment['outcome']}"
+                    f"{judgment['outcome']}",
+                    file=output,
                 )
 
-            _print_tool_evidence_summary(attempt.result_path)
+            _write_tool_evidence_summary(attempt.result_path, output)
 
 
-def _print_tool_evidence_summary(run_dir: Path) -> None:
+def _write_tool_evidence_summary(
+    run_dir: Path,
+    output: TextIO,
+) -> None:
     tool_calls_path = run_dir / "evidence" / "tool_calls.json"
     final_response_path = run_dir / "evidence" / "final_response.txt"
 
@@ -461,7 +516,8 @@ def _print_tool_evidence_summary(run_dir: Path) -> None:
             ]
             print(
                 "      tool calls: "
-                + (", ".join(names) if names else "none")
+                + (", ".join(names) if names else "none"),
+                file=output,
             )
 
     if final_response_path.is_file():
@@ -474,7 +530,74 @@ def _print_tool_evidence_summary(run_dir: Path) -> None:
 
         if final_response:
             one_line = " ".join(final_response.splitlines())
-            print(f"      final response: {one_line}")
+            print(f"      final response: {one_line}", file=output)
+
+
+def _print_execution_completion(
+    result: experiment_execution_result,
+    summary_path: Path | None,
+) -> None:
+    selected_attempts = [
+        attempt
+        for slot in result.slots
+        for attempt in slot.attempts
+        if attempt.run_id == slot.selected_run_id
+    ]
+    termination_counts = Counter(
+        attempt.termination
+        for attempt in selected_attempts
+    )
+    termination_summary = ", ".join(
+        f"{termination}={count}"
+        for termination, count in sorted(termination_counts.items())
+    )
+
+    print("")
+    print("Experiment execution persisted successfully.")
+    print(f"  session:      {result.session_dir}")
+    print(f"  manifest:     {result.manifest_path}")
+
+    if summary_path is not None:
+        print(f"  summary:      {summary_path}")
+    else:
+        print("  summary:      unavailable")
+
+    print(
+        f"  selected:     {len(result.slots)} of {result.contract_run_count}"
+    )
+    print(
+        f"  resolved:     "
+        f"{len(result.slots) - len(result.unresolved_run_indices)} "
+        f"of {len(result.slots)} selected"
+    )
+    print(f"  attempts:     {sum(len(slot.attempts) for slot in result.slots)}")
+
+    if termination_summary:
+        print(f"  terminations: {termination_summary}")
+
+    print(f"  started:      {_format_execution_timestamp(result.started_at)}")
+    print(f"  ended:        {_format_execution_timestamp(result.ended_at)}")
+    print(f"  duration:     {_format_execution_duration(result)}")
+
+
+def _format_execution_timestamp(value: datetime) -> str:
+    normalized = value.astimezone(timezone.utc)
+    return normalized.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _format_execution_duration(
+    result: experiment_execution_result,
+) -> str:
+    elapsed = result.ended_at - result.started_at
+    total_milliseconds = (
+        elapsed.days * 86_400_000
+        + elapsed.seconds * 1_000
+        + elapsed.microseconds // 1_000
+    )
+    hours, remainder = divmod(total_milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    seconds, milliseconds = divmod(remainder, 1_000)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
 
 def _run_export(args: argparse.Namespace) -> int:

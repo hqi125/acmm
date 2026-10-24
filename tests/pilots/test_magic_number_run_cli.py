@@ -212,14 +212,26 @@ def test_run_command_executes_one_magic_number_slot(
         "compliant",
     ]
 
+    summary_path = execution_dir / "execution_summary.txt"
+    assert summary_path.is_file()
+
+    summary = summary_path.read_text(encoding="utf-8")
+    assert "judgment retrieve: compliant" in summary
+    assert "judgment calculate: compliant" in summary
+    assert "tool calls: get_magic_number, add_numbers" in summary
+    assert "final response:" in summary
+
     output = capsys.readouterr().out
     assert "Executing run 0/4" in output
     assert "toolset overlay: acmm" in output
     assert "Inter-run pacing:" not in output
-    assert "judgment retrieve: compliant" in output
-    assert "judgment calculate: compliant" in output
-    assert "tool calls: get_magic_number, add_numbers" in output
-    assert "final response:" in output
+    assert f"summary:      {summary_path}" in output
+    assert "selected:     1 of 5" in output
+    assert "resolved:     1 of 1 selected" in output
+    assert "terminations: agent_completed=1" in output
+    assert "duration:" in output
+    assert "judgment retrieve: compliant" not in output
+    assert "tool calls: get_magic_number, add_numbers" not in output
 
 
 def test_run_command_rejects_out_of_range_index(

@@ -43,6 +43,7 @@ results/
     └── execution_<execution_id>/
         ├── contract.yaml
         ├── experiment_execution.yaml
+        ├── execution_summary.txt
         └── runs/
             ├── run_<run_index>_<run_id>/
             │   ├── run_record.yaml
@@ -87,6 +88,12 @@ silently appearing complete.
 
 The completion manifest itself is written through a temporary sibling file followed by an
 atomic replacement.
+
+`execution_summary.txt` is a researcher-facing CLI report, not a scientific completion marker.
+After persisted Run Records are re-validated, `acmm run` writes the detailed per-run summary to
+this file instead of replaying every judgment and final response to the terminal. The report can
+be regenerated from the canonical manifest, Run Records, and evidence artifacts if necessary.
+Failure to write this convenience report does not invalidate an otherwise completed execution.
 
 ## Planned slots and attempts
 
@@ -215,6 +222,12 @@ persistence, and a second Run Record validation against the exact Contract SHA-2
 scientific execution resolves the selected slot even when its compliance judgments contain
 violations. Infrastructure-invalid attempts leave the slot unresolved and produce a nonzero
 command status.
+
+During acquisition, per-run progress remains visible. At completion, the terminal prints only a
+compact execution summary: session and manifest paths, the detailed summary-file path, selected
+and resolved counts, realized attempt count, selected-run termination counts, UTC start/end
+timestamps, and total wall-clock duration. Detailed per-run judgments, tool-call names, failures,
+record paths, and final responses are written to `execution_summary.txt`.
 
 Omitting `--run-index` executes the entire Contract plan.
 

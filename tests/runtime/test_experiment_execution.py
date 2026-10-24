@@ -214,6 +214,25 @@ def test_execute_experiment_snapshots_contract_and_completes_plan(
     assert result.unresolved_run_indices == ()
     assert len(result.slots) == 5
     assert adapter.call_count == 5
+    assert result.contract_run_count == 5
+    assert result.started_at == datetime(
+        2026,
+        10,
+        15,
+        16,
+        0,
+        0,
+        tzinfo=timezone.utc,
+    )
+    assert result.ended_at == datetime(
+        2026,
+        10,
+        15,
+        16,
+        0,
+        11,
+        tzinfo=timezone.utc,
+    )
 
     assert (
         result.session_dir / "contract.yaml"

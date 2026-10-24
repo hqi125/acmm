@@ -847,6 +847,12 @@ controls (title generation off, background review off, and Tool Search off), so 
 Contract hash binds each run to that methodological baseline. `doctor` remains responsible for
 verifying that the live deployment actually matches the qualified profile before acquisition.
 
+At the end of `acmm run`, the terminal now keeps only a compact aggregate completion report with
+paths, selected/resolved counts, termination totals, UTC start/end timestamps, and total duration.
+The former verbose per-run replay is persisted as `execution_summary.txt` inside the execution
+directory so long acquisitions do not flood the console while the full human-readable detail is
+still retained.
+
 Omit `--run-index` only after the single-slot artifacts have been inspected and the full
 five-repetition acquisition is desired. Deterministic CSV export remains the next layer.
 

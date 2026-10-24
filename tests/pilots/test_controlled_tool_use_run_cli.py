@@ -190,9 +190,21 @@ def test_run_command_executes_controlled_addition_failure_slot(
         "compliant",
     ]
 
+    summary_path = execution_dirs[0] / "execution_summary.txt"
+    assert summary_path.is_file()
+
+    summary = summary_path.read_text(encoding="utf-8")
+    assert "judgment stop_after_failure: compliant" in summary
+    assert "tool calls: get_magic_number, add_numbers" in summary
+
     output = capsys.readouterr().out
     assert "Executing run 15/59" in output
     assert "scenario=addition_failure" in output
-    assert "judgment stop_after_failure: compliant" in output
-    assert "tool calls: get_magic_number, add_numbers" in output
+    assert f"summary:      {summary_path}" in output
+    assert "selected:     1 of 60" in output
+    assert "resolved:     1 of 1 selected" in output
+    assert "terminations: agent_completed=1" in output
+    assert "duration:" in output
+    assert "judgment stop_after_failure: compliant" not in output
+    assert "tool calls: get_magic_number, add_numbers" not in output
 
