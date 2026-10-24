@@ -132,8 +132,9 @@ intervals while retaining opportunities inside sampled runs. It refuses scenario
 intervals when fewer than two scenario clusters are observed. `interval_acmm_wilson()` is available
 only as an explicitly opted-in independent-binomial opportunity baseline.
 
-Dimension aggregation, `S_D`, hypothesis tests, statistical models, and plots remain outside the
-current analysis scope.
+Dimension-level `S_D` point aggregation is implemented separately from the requirement-level
+estimators. Hypothesis tests, statistical models, plots, custom requirement weights, and uncertainty
+propagation through `S_D` remain outside the current analysis scope.
 
 See `analysis/r/README.md` for setup, validation rules, estimators, and uncertainty commands.
 
