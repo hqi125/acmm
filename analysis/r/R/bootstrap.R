@@ -9,7 +9,8 @@ acmm_analysis_source_order <- function()
         "population.R",
         "compliance.R",
         "aggregation.R",
-        "uncertainty.R"
+        "uncertainty.R",
+        "reporting.R"
     )
 }
 

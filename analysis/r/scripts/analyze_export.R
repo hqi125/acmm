@@ -12,14 +12,24 @@ source(file.path(analysisRoot, "R", "bootstrap.R"))
 source_acmm_analysis(analysisRoot)
 
 arguments <- commandArgs(trailingOnly = TRUE)
-if (length(arguments) != 1)
+if (!(length(arguments) %in% c(1, 2)))
 {
-    stop("Usage: Rscript analysis/r/scripts/analyze_export.R <export-directory>")
+    stop(
+        paste0(
+            "Usage: Rscript analysis/r/scripts/analyze_export.R ",
+            "<export-directory> [csv-output]"
+        )
+    )
 }
 
 exportData <- load_acmm_export(arguments[[1]])
 population <- build_acmm_population(exportData)
 estimates <- estimate_acmm_compliance(population)
+
+if (length(arguments) == 2)
+{
+    write_acmm_analysis_csv(estimates, arguments[[2]])
+}
 
 cat("ACMM analysis input validated successfully.\n")
 cat("Execution:", exportData$binding$execution_id, "\n")

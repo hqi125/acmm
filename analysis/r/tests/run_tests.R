@@ -573,4 +573,190 @@ for (estimatorName in c("opportunity", "run", "scenario"))
     )
 }
 
+
+
+reference_dimension_bootstrap_values_for_group <- function(
+    judgments,
+    methods,
+    requirementGroupBy,
+    dimensionGroupBy,
+    bootstrapReplicates
+)
+{
+    estimatorNames <- c("opportunity", "run", "scenario")
+    result <- list()
+
+    for (estimatorName in estimatorNames)
+    {
+        for (method in methods)
+        {
+            key <- paste(estimatorName, method, sep = "_")
+            result[[key]] <- rep(NA_real_, bootstrapReplicates)
+        }
+    }
+
+    for (replicateIndex in seq_len(bootstrapReplicates))
+    {
+        sampledJudgments <- acmm_bootstrap_group_judgments(judgments)
+        sampledPopulation <- acmm_population_from_judgments(sampledJudgments)
+        scores <- estimate_acmm_dimension_scores(
+            sampledPopulation,
+            methods = methods,
+            requirementGroupBy = requirementGroupBy,
+            dimensionGroupBy = dimensionGroupBy
+        )
+
+        for (estimatorName in estimatorNames)
+        {
+            table <- scores[[estimatorName]]
+            for (method in methods)
+            {
+                methodRows <- table$aggregation_method == method
+                key <- paste(estimatorName, method, sep = "_")
+                result[[key]][[replicateIndex]] <- table$s_d[methodRows][[1]]
+            }
+        }
+    }
+
+    result
+}
+
+secondRequirementJudgments <- weightedJudgments
+secondRequirementJudgments$requirement_id <- "requirement_b"
+secondRequirementJudgments$outcome[
+    secondRequirementJudgments$run_id == "run_a2"
+] <- "violation"
+multiRequirementJudgments <- rbind(
+    weightedJudgments,
+    secondRequirementJudgments
+)
+referenceDimensionBootstrap <- acmm_with_seed(8642,
+    reference_dimension_bootstrap_values_for_group(
+        multiRequirementJudgments,
+        acmmDimensionMethods,
+        acmmDefaultGroupBy,
+        acmmDefaultDimensionGroupBy,
+        25
+    )
+)
+fastDimensionBootstrap <- acmm_with_seed(8642,
+    acmm_dimension_bootstrap_values_for_group(
+        multiRequirementJudgments,
+        acmmDimensionMethods,
+        acmmDefaultGroupBy,
+        acmmDefaultDimensionGroupBy,
+        25
+    )
+)
+assert_true(
+    identical(names(referenceDimensionBootstrap), names(fastDimensionBootstrap)),
+    "Optimized dimension bootstrap changed result keys."
+)
+for (key in names(referenceDimensionBootstrap))
+{
+    assert_equal(fastDimensionBootstrap[[key]], referenceDimensionBootstrap[[key]])
+}
+
+dimensionIntervalsFirst <- interval_acmm_dimension_scores_hierarchical(
+    weightedPopulation,
+    bootstrapReplicates = 200,
+    seed = 2468
+)
+dimensionIntervalsSecond <- interval_acmm_dimension_scores_hierarchical(
+    weightedPopulation,
+    bootstrapReplicates = 200,
+    seed = 2468
+)
+
+for (estimatorName in c("opportunity", "run", "scenario"))
+{
+    firstTable <- dimensionIntervalsFirst[[estimatorName]]
+    secondTable <- dimensionIntervalsSecond[[estimatorName]]
+    assert_equal(nrow(firstTable), length(acmmDimensionMethods))
+    assert_true(
+        all(firstTable$s_d_interval_status == "ok"),
+        paste0(estimatorName, " dimension intervals were not estimable.")
+    )
+    assert_true(
+        all(firstTable$s_d_bootstrap_replicates == 200),
+        paste0(estimatorName, " dimension bootstrap replicate count was incorrect.")
+    )
+    assert_equal(firstTable$s_d_lower, secondTable$s_d_lower)
+    assert_equal(firstTable$s_d_upper, secondTable$s_d_upper)
+    assert_true(
+        all(firstTable$s_d_lower >= 0) &&
+            all(firstTable$s_d_lower <= firstTable$s_d_upper) &&
+            all(firstTable$s_d_upper <= 1),
+        paste0(estimatorName, " dimension interval bounds are invalid.")
+    )
+}
+
+singleScenarioDimensionIntervals <- interval_acmm_dimension_scores_hierarchical(
+    coveragePopulation,
+    bootstrapReplicates = 20,
+    seed = 1357
+)
+assert_true(
+    all(
+        singleScenarioDimensionIntervals$opportunity$s_d_interval_status ==
+            "insufficient_scenario_clusters"
+    ),
+    "Single-scenario dimension bootstrap did not refuse interval reporting."
+)
+assert_true(
+    all(is.na(singleScenarioDimensionIntervals$opportunity$s_d_lower)),
+    "Single-scenario dimension bootstrap reported a lower interval bound."
+)
+assert_true(
+    all(singleScenarioDimensionIntervals$opportunity$s_d_bootstrap_replicates == 0),
+    "Single-scenario dimension bootstrap reported bootstrap replicates."
+)
+
+
+stackedDimensionScores <- acmm_stack_estimator_tables(weightedDimensionScores)
+assert_equal(nrow(stackedDimensionScores), 3 * length(acmmDimensionMethods))
+assert_true(
+    identical(unique(stackedDimensionScores$estimand), c("opportunity", "run", "scenario")),
+    "Stacked analysis tables did not preserve estimator names."
+)
+
+weightedEstimates <- estimate_acmm_compliance(weightedPopulation)
+stackedRequirementEstimates <- acmm_stack_estimator_tables(weightedEstimates)
+assert_equal(nrow(stackedRequirementEstimates), 3)
+assert_true(
+    all(c(
+        "compliant",
+        "total_runs",
+        "total_scenarios",
+        "p_hat",
+        "coverage"
+    ) %in% names(stackedRequirementEstimates)),
+    "Stacked requirement estimates did not preserve the union of estimator columns."
+)
+assert_true(
+    is.na(stackedRequirementEstimates$total_runs[[1]]) &&
+        is.na(stackedRequirementEstimates$total_scenarios[[1]]),
+    "Opportunity rows did not fill estimator-specific columns with NA."
+)
+assert_true(
+    !is.na(stackedRequirementEstimates$total_runs[[2]]) &&
+        is.na(stackedRequirementEstimates$total_scenarios[[2]]),
+    "Run rows did not preserve run-specific columns."
+)
+assert_true(
+    is.na(stackedRequirementEstimates$total_runs[[3]]) &&
+        !is.na(stackedRequirementEstimates$total_scenarios[[3]]),
+    "Scenario rows did not preserve scenario-specific columns."
+)
+
+reportCsvPath <- tempfile(fileext = ".csv")
+write_acmm_analysis_csv(weightedDimensionScores, reportCsvPath)
+reportCsv <- utils::read.csv(reportCsvPath, stringsAsFactors = FALSE)
+unlink(reportCsvPath)
+assert_equal(nrow(reportCsv), nrow(stackedDimensionScores))
+assert_true(
+    "estimand" %in% names(reportCsv),
+    "Analysis CSV output did not include estimand."
+)
+
 cat("ACMM R analysis tests passed.\n")

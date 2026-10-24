@@ -22,12 +22,14 @@ _R_STAGES = (
         "Requirement estimates",
         "analyze_export.R",
         "point_estimates.txt",
+        "requirement_estimates.csv",
         (),
     ),
     (
         "Hierarchical uncertainty",
         "analyze_uncertainty.R",
         "hierarchical_intervals.txt",
+        "requirement_intervals.csv",
         (
             str(BOOTSTRAP_REPLICATES),
             str(BOOTSTRAP_SEED),
@@ -38,7 +40,19 @@ _R_STAGES = (
         "Dimension scores",
         "analyze_dimensions.R",
         "dimension_scores.txt",
+        "dimension_scores.csv",
         (),
+    ),
+    (
+        "Dimension-score uncertainty",
+        "analyze_dimension_uncertainty.R",
+        "dimension_intervals.txt",
+        "dimension_intervals.csv",
+        (
+            str(BOOTSTRAP_REPLICATES),
+            str(BOOTSTRAP_SEED),
+            str(CONFIDENCE_LEVEL),
+        ),
     ),
 )
 
@@ -115,7 +129,7 @@ def _preflight() -> tuple[str, str]:
     acmm_command = _resolve_program("acmm")
     rscript_command = _resolve_program("Rscript")
 
-    for _, script_name, _, _ in _R_STAGES:
+    for _, script_name, _, _, _ in _R_STAGES:
         script_path = _R_SCRIPT_ROOT / script_name
 
         if not script_path.is_file():
@@ -178,54 +192,52 @@ def _run_and_save(command: Sequence[str], output_path: Path) -> int:
         failed_path = _failed_output_path(output_path)
         temp_path.unlink(missing_ok=True)
         failed_path.unlink(missing_ok=True)
-        process = subprocess.Popen(
-            list(command),
-            cwd=_REPO_ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        )
-    except OSError as exc:
-        raise analysis_workflow_error(
-            f"Could not start analysis command '{command[0]}': {exc}"
-        ) from exc
 
-    assert process.stdout is not None
-
-    try:
         with temp_path.open("w", encoding="utf-8", newline="") as output_file:
-            for line in process.stdout:
-                print(line, end="", flush=True)
-                output_file.write(line)
-    except KeyboardInterrupt:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+            process = subprocess.Popen(
+                list(command),
+                cwd=_REPO_ROOT,
+                stdout=output_file,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
 
-        if temp_path.exists():
-            temp_path.replace(failed_path)
-        print("\nAnalysis command interrupted by user.", file=sys.stderr)
-        return 130
+            try:
+                _, stderr_output = process.communicate()
+            except KeyboardInterrupt:
+                process.terminate()
+                try:
+                    _, stderr_output = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    _, stderr_output = process.communicate()
+
+                if stderr_output:
+                    print(stderr_output, end="", file=sys.stderr, flush=True)
+                temp_path.replace(failed_path)
+                print("\nAnalysis command interrupted by user.", file=sys.stderr)
+                return 130
     except OSError as exc:
-        process.kill()
-        process.wait()
         temp_path.unlink(missing_ok=True)
         raise analysis_workflow_error(
-            f"Could not save analysis output '{output_path}': {exc}"
+            f"Could not execute or save analysis output '{output_path}': {exc}"
         ) from exc
 
-    return_code = process.wait()
+    if stderr_output:
+        print(stderr_output, end="", file=sys.stderr, flush=True)
+
+    return_code = process.returncode
 
     try:
         if return_code == 0:
             temp_path.replace(output_path)
         else:
+            with temp_path.open("a", encoding="utf-8", newline="") as output_file:
+                if stderr_output:
+                    output_file.write("\n--- stderr ---\n")
+                    output_file.write(stderr_output)
             temp_path.replace(failed_path)
     except OSError as exc:
         raise analysis_workflow_error(
@@ -248,11 +260,11 @@ def run_analysis_workflow(execution: str | Path) -> int:
     export_dir = _EXPORT_ROOT / experiment_id / f"execution_{execution_id}"
 
     if export_dir.exists():
-        print("[1/4] Reusing existing analysis export...")
+        print("[1/5] Reusing existing analysis export...")
         _validate_reusable_export(export_dir, execution_id, experiment_id)
         print(f"      export: {export_dir}")
     else:
-        print("[1/4] Exporting execution...")
+        print("[1/5] Exporting execution...")
         return_code = _run_command(
             (
                 acmm_command,
@@ -275,19 +287,27 @@ def run_analysis_workflow(execution: str | Path) -> int:
 
     analysis_output_dir = export_dir / "analysis_output"
 
-    for stage_index, (label, script_name, output_name, arguments) in enumerate(
+    for stage_index, (
+        label,
+        script_name,
+        output_name,
+        csv_output_name,
+        arguments,
+    ) in enumerate(
         _R_STAGES,
         start=2,
     ):
         output_path = analysis_output_dir / output_name
+        csv_output_path = analysis_output_dir / csv_output_name
         command = (
             rscript_command,
             str(_R_SCRIPT_ROOT / script_name),
             str(export_dir),
             *arguments,
+            str(csv_output_path),
         )
 
-        print(f"[{stage_index}/4] Running {label.lower()}...")
+        print(f"[{stage_index}/5] Running {label.lower()}...")
         return_code = _run_and_save(command, output_path)
 
         if return_code != 0:
@@ -303,6 +323,7 @@ def run_analysis_workflow(execution: str | Path) -> int:
             return return_code if return_code > 0 else 1
 
         print(f"      output: {output_path}")
+        print(f"      table:  {csv_output_path}")
 
     print("\nAnalysis workflow completed successfully.")
     print(f"  execution:       {execution_id}")

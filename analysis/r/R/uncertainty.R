@@ -552,3 +552,277 @@ interval_acmm_hierarchical <- function(
     }
     result
 }
+
+acmm_dimension_bootstrap_values_for_group <- function(
+    judgments,
+    methods,
+    requirementGroupBy,
+    dimensionGroupBy,
+    bootstrapReplicates
+)
+{
+    estimatorNames <- c("opportunity", "run", "scenario")
+    result <- list()
+
+    for (estimatorName in estimatorNames)
+    {
+        for (method in methods)
+        {
+            key <- paste(estimatorName, method, sep = "_")
+            result[[key]] <- rep(NA_real_, bootstrapReplicates)
+        }
+    }
+
+    requirementGroups <- acmm_group_rows(judgments, requirementGroupBy)
+    requirementContexts <- lapply(requirementGroups, function(groupRows)
+    {
+        requirementJudgments <- judgments[groupRows, , drop = FALSE]
+        runUnits <- acmm_bootstrap_run_units(requirementJudgments)
+        unitRowByRunId <- seq_len(nrow(runUnits))
+        names(unitRowByRunId) <- runUnits$run_id
+
+        list(
+            run_units = runUnits,
+            unit_row_by_run_id = unitRowByRunId
+        )
+    })
+
+    scenarioIds <- unique(judgments$scenario_id)
+    runIdsByScenario <- lapply(
+        scenarioIds,
+        function(scenarioId)
+        {
+            unique(judgments$run_id[judgments$scenario_id == scenarioId])
+        }
+    )
+    names(runIdsByScenario) <- scenarioIds
+
+    for (replicateIndex in seq_len(bootstrapReplicates))
+    {
+        sampledScenarios <- sample(
+            scenarioIds,
+            size = length(scenarioIds),
+            replace = TRUE
+        )
+        sampledRunIds <- character(0)
+        sampledScenarioIndexes <- integer(0)
+
+        for (scenarioIndex in seq_along(sampledScenarios))
+        {
+            sourceScenario <- sampledScenarios[[scenarioIndex]]
+            sourceRunIds <- runIdsByScenario[[sourceScenario]]
+            sampledRuns <- sample(
+                sourceRunIds,
+                size = length(sourceRunIds),
+                replace = TRUE
+            )
+            sampledRunIds <- c(sampledRunIds, sampledRuns)
+            sampledScenarioIndexes <- c(
+                sampledScenarioIndexes,
+                rep.int(scenarioIndex, length(sampledRuns))
+            )
+        }
+
+        requirementEstimates <- list(
+            opportunity = rep(NA_real_, length(requirementContexts)),
+            run = rep(NA_real_, length(requirementContexts)),
+            scenario = rep(NA_real_, length(requirementContexts))
+        )
+
+        for (requirementIndex in seq_along(requirementContexts))
+        {
+            context <- requirementContexts[[requirementIndex]]
+            sampledUnitRows <- unname(
+                context$unit_row_by_run_id[sampledRunIds]
+            )
+            presentRows <- !is.na(sampledUnitRows)
+
+            if (any(presentRows))
+            {
+                estimates <- acmm_bootstrap_estimates_from_run_units(
+                    context$run_units,
+                    sampledUnitRows[presentRows],
+                    sampledScenarioIndexes[presentRows]
+                )
+                requirementEstimates$opportunity[[requirementIndex]] <-
+                    estimates[["opportunity_p_hat"]]
+                requirementEstimates$run[[requirementIndex]] <-
+                    estimates[["run_p_hat"]]
+                requirementEstimates$scenario[[requirementIndex]] <-
+                    estimates[["scenario_p_hat"]]
+            }
+        }
+
+        for (estimatorName in estimatorNames)
+        {
+            scores <- requirementEstimates[[estimatorName]]
+            for (method in methods)
+            {
+                key <- paste(estimatorName, method, sep = "_")
+                if (!anyNA(scores))
+                {
+                    result[[key]][[replicateIndex]] <-
+                        acmm_dimension_score(scores, method)
+                }
+            }
+        }
+    }
+
+    result
+}
+
+acmm_dimension_interval_row <- function(
+    pointRow,
+    estimatorName,
+    scenarioClusters,
+    runClusters,
+    bootstrapReplicates,
+    confidenceLevel,
+    bootstrapValues
+)
+{
+    method <- pointRow$aggregation_method[[1]]
+    key <- paste(estimatorName, method, sep = "_")
+    interval <- acmm_percentile_bounds(
+        pointRow$s_d[[1]],
+        scenarioClusters,
+        bootstrapValues[[key]],
+        confidenceLevel
+    )
+
+    pointRow$confidence_level <- confidenceLevel
+    pointRow$interval_method <- "scenario_run_cluster_percentile_bootstrap"
+    pointRow$scenario_clusters <- scenarioClusters
+    pointRow$run_clusters <- runClusters
+    pointRow$bootstrap_replicates_requested <- bootstrapReplicates
+    pointRow$s_d_lower <- interval$lower
+    pointRow$s_d_upper <- interval$upper
+    pointRow$s_d_bootstrap_replicates <- interval$replicates
+    pointRow$s_d_interval_status <- interval$status
+    pointRow
+}
+
+interval_acmm_dimension_scores_hierarchical <- function(
+    population,
+    methods = acmmDimensionMethods,
+    requirementGroupBy = acmmDefaultGroupBy,
+    dimensionGroupBy = acmmDefaultDimensionGroupBy,
+    confidenceLevel = 0.95,
+    bootstrapReplicates = 2000,
+    seed
+)
+{
+    acmm_validate_population(population)
+    judgments <- population$judgments
+    methods <- acmm_validate_dimension_methods(methods)
+    acmm_validate_hierarchical_group_by(judgments, requirementGroupBy)
+    acmm_validate_hierarchical_group_by(judgments, dimensionGroupBy)
+    confidenceLevel <- acmm_validate_confidence_level(confidenceLevel)
+    bootstrapReplicates <- acmm_validate_bootstrap_replicates(bootstrapReplicates)
+    seed <- acmm_validate_bootstrap_seed(seed)
+
+    pointScores <- estimate_acmm_dimension_scores(
+        population,
+        methods = methods,
+        requirementGroupBy = requirementGroupBy,
+        dimensionGroupBy = dimensionGroupBy
+    )
+    groups <- acmm_group_rows(judgments, dimensionGroupBy)
+
+    if (length(groups) == 0)
+    {
+        return(list(
+            opportunity = data.frame(),
+            run = data.frame(),
+            scenario = data.frame()
+        ))
+    }
+
+    compute <- function()
+    {
+        rowsByEstimator <- list(
+            opportunity = list(),
+            run = list(),
+            scenario = list()
+        )
+
+        for (groupIndex in seq_along(groups))
+        {
+            groupRows <- groups[[groupIndex]]
+            groupJudgments <- judgments[groupRows, , drop = FALSE]
+            groupValues <- acmm_group_values(judgments, groupRows, dimensionGroupBy)
+            scenarioClusters <- length(unique(groupJudgments$scenario_id))
+            runClusters <- length(unique(groupJudgments$run_id))
+
+            if (scenarioClusters >= 2)
+            {
+                bootstrapValues <- acmm_dimension_bootstrap_values_for_group(
+                    groupJudgments,
+                    methods,
+                    requirementGroupBy,
+                    dimensionGroupBy,
+                    bootstrapReplicates
+                )
+            }
+            else
+            {
+                bootstrapValues <- list()
+                for (estimatorName in names(rowsByEstimator))
+                {
+                    for (method in methods)
+                    {
+                        key <- paste(estimatorName, method, sep = "_")
+                        bootstrapValues[[key]] <- numeric(0)
+                    }
+                }
+            }
+
+            for (estimatorName in names(rowsByEstimator))
+            {
+                estimatorPoints <- pointScores[[estimatorName]]
+                pointRows <- rep(TRUE, nrow(estimatorPoints))
+                for (columnName in dimensionGroupBy)
+                {
+                    pointRows <- pointRows &
+                        estimatorPoints[[columnName]] == groupValues[[columnName]]
+                }
+
+                groupPoints <- estimatorPoints[pointRows, , drop = FALSE]
+                acmm_assert(
+                    nrow(groupPoints) == length(methods),
+                    "Dimension point estimates are inconsistent with bootstrap groups.",
+                    "acmm_analysis_error"
+                )
+
+                for (method in methods)
+                {
+                    methodRow <- groupPoints[
+                        groupPoints$aggregation_method == method,
+                        ,
+                        drop = FALSE
+                    ]
+                    rowIndex <- length(rowsByEstimator[[estimatorName]]) + 1
+                    rowsByEstimator[[estimatorName]][[rowIndex]] <-
+                        acmm_dimension_interval_row(
+                            methodRow,
+                            estimatorName,
+                            scenarioClusters,
+                            runClusters,
+                            bootstrapReplicates,
+                            confidenceLevel,
+                            bootstrapValues
+                        )
+                }
+            }
+        }
+
+        lapply(rowsByEstimator, function(rows)
+        {
+            result <- do.call(rbind, rows)
+            rownames(result) <- NULL
+            result
+        })
+    }
+
+    acmm_with_seed(seed, compute())
+}

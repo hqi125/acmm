@@ -73,7 +73,7 @@ def _prepare_repo(
     _write_execution(execution_dir)
     script_root.mkdir(parents=True)
 
-    for _, script_name, _, _ in analyze_execution._R_STAGES:
+    for _, script_name, _, _, _ in analyze_execution._R_STAGES:
         (script_root / script_name).write_text("# test\n", encoding="utf-8")
 
     monkeypatch.setattr(analyze_execution, "_REPO_ROOT", repo_root)
@@ -119,12 +119,21 @@ def test_workflow_exports_then_runs_all_analysis_stages(
         "analyze_export.R",
         "analyze_uncertainty.R",
         "analyze_dimensions.R",
+        "analyze_dimension_uncertainty.R",
     ]
-    assert analysis_commands[1][0][-3:] == ["2000", "12345", "0.95"]
+    assert analysis_commands[1][0][-4:-1] == ["2000", "12345", "0.95"]
+    assert analysis_commands[3][0][-4:-1] == ["2000", "12345", "0.95"]
     assert [path.name for _, path in analysis_commands] == [
         "point_estimates.txt",
         "hierarchical_intervals.txt",
         "dimension_scores.txt",
+        "dimension_intervals.txt",
+    ]
+    assert [Path(command[-1]).name for command, _ in analysis_commands] == [
+        "requirement_estimates.csv",
+        "requirement_intervals.csv",
+        "dimension_scores.csv",
+        "dimension_intervals.csv",
     ]
 
 
@@ -219,26 +228,43 @@ def test_mismatched_existing_export_is_rejected(tmp_path: Path) -> None:
         )
 
 
-def test_saved_command_publishes_success_output(tmp_path: Path) -> None:
+def test_saved_command_publishes_success_output_without_echoing_stdout(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     output_path = tmp_path / "analysis_output" / "result.txt"
     command = [sys.executable, "-c", "print('analysis complete')"]
 
     assert analyze_execution._run_and_save(command, output_path) == 0
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert captured.err == ""
     assert output_path.read_text(encoding="utf-8") == "analysis complete\n"
     assert not analyze_execution._failed_output_path(output_path).exists()
 
 
-def test_saved_command_preserves_failed_output(tmp_path: Path) -> None:
+def test_saved_command_preserves_failed_output_and_shows_stderr(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     output_path = tmp_path / "analysis_output" / "result.txt"
     command = [
         sys.executable,
         "-c",
-        "import sys; print('analysis failed'); raise SystemExit(6)",
+        (
+            "import sys; print('analysis failed'); "
+            "print('diagnostic', file=sys.stderr); raise SystemExit(6)"
+        ),
     ]
 
     assert analyze_execution._run_and_save(command, output_path) == 6
+    captured = capsys.readouterr()
+
+    assert captured.out == ""
+    assert captured.err == "diagnostic\n"
     assert not output_path.exists()
     assert (
         analyze_execution._failed_output_path(output_path).read_text(encoding="utf-8")
-        == "analysis failed\n"
+        == "analysis failed\n\n--- stderr ---\ndiagnostic\n"
     )

@@ -599,10 +599,10 @@ truth. `acmm export` projects validated experimental facts into CSV tables for t
 The R workspace validates export manifests/hashes and reconstructs the selected valid
 population before computing opportunity-, run-, and scenario-weighted compliance rates.
 Requirement-level grouping is the default. The current analysis layer also implements
-scenario-to-run hierarchical bootstrap intervals and explicit dimension-level `S_D` point
-scores with arithmetic, geometric, harmonic, and minimum aggregation. Hypothesis tests,
-statistical models, plots, custom requirement weights, and uncertainty propagation through
-`S_D` remain later analysis stages.
+scenario-to-run hierarchical bootstrap intervals, explicit dimension-level `S_D` scores with
+arithmetic, geometric, harmonic, and minimum aggregation, and hierarchical uncertainty propagated
+through those dimension scores. Hypothesis tests, statistical models, plots, and custom requirement
+weights remain later analysis stages.
 
 Run the R regression suite with:
 
@@ -618,8 +618,10 @@ python tools/analyze_execution.py \
 ```
 
 The wrapper performs or reuses the deterministic CSV export, then runs requirement point
-estimates, hierarchical uncertainty analysis, and dimension-score analysis in sequence. The
-individual R scripts remain available for interactive R/RStudio work; see `analysis/r/README.md`.
+estimates, requirement hierarchical uncertainty, dimension scores, and dimension hierarchical
+uncertainty in sequence. Each stage stores both readable text and a normalized CSV table under
+`analysis_output/`. The individual R scripts remain available for interactive R/RStudio work; see
+`analysis/r/README.md`.
 
 See `docs/analysis/boundary.md`, `docs/analysis/export.md`, and `analysis/r/README.md`.
 

@@ -132,9 +132,11 @@ intervals while retaining opportunities inside sampled runs. It refuses scenario
 intervals when fewer than two scenario clusters are observed. `interval_acmm_wilson()` is available
 only as an explicitly opted-in independent-binomial opportunity baseline.
 
-Dimension-level `S_D` point aggregation is implemented separately from the requirement-level
-estimators. Hypothesis tests, statistical models, plots, custom requirement weights, and uncertainty
-propagation through `S_D` remain outside the current analysis scope.
+Dimension-level `S_D` aggregation is implemented separately from the requirement-level estimators.
+Hierarchical dimension uncertainty resamples scenario/run clusters jointly across the requirements in
+one dimension, recomputes requirement estimands inside each replicate, and then recomputes `S_D`.
+Hypothesis tests, statistical models, plots, and custom requirement weights remain outside the current
+analysis scope.
 
 See `analysis/r/README.md` for setup, validation rules, estimators, and uncertainty commands.
 
@@ -143,5 +145,6 @@ See `analysis/r/README.md` for setup, validation rules, estimators, and uncertai
 The downstream R analysis layer may aggregate validated requirement-level compliance estimates into
 dimension-level `S_D` point scores. The aggregation method must remain explicit: arithmetic,
 geometric, harmonic, or minimum. The initial implementation uses equal requirement weights only and
-refuses to renormalize over missing requirement estimates. Statistical uncertainty propagation through
-`S_D` remains a later analysis concern.
+refuses to renormalize over missing requirement estimates. The same scenario-to-run hierarchical
+bootstrap can now be propagated through `S_D`; dimension intervals are therefore based on replicate
+dimension scores, not on separately aggregated requirement interval endpoints.

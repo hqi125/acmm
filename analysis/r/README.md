@@ -17,14 +17,16 @@ The analysis layer currently implements:
 - explicit Wilson score intervals for independent-binomial opportunity reporting;
 - scenario-to-run hierarchical percentile bootstrap intervals;
 - explicit dimension-level `S_D` aggregation with arithmetic, geometric, harmonic, and minimum
-  compensation policies.
+  compensation policies;
+- cluster-aware hierarchical uncertainty intervals propagated through `S_D`; and
+- machine-readable CSV tables for each analysis stage.
 
 Requirement-level grouping remains the estimator default. Dimension scores are a separate, explicit
 aggregation step so the compensation choice is always visible. Equal requirement weights are the only
 weighting policy implemented in this stage.
 
-Hypothesis tests, statistical models, plots, custom requirement weights, and uncertainty propagation
-through `S_D` are not implemented in this stage.
+Hypothesis tests, statistical models, plots, and custom requirement weights are not implemented in
+this stage.
 
 ## Dependencies
 
@@ -142,6 +144,30 @@ intervals <- interval_acmm_hierarchical(
 Each returned table records the scenario/run cluster counts, requested bootstrap count, finite
 replicate count, interval bounds, and a status for `p_hat` and coverage.
 
+### Dimension-score hierarchical bootstrap
+
+`interval_acmm_dimension_scores_hierarchical()` propagates the same scenario-to-run resampling
+through dimension aggregation. Each replicate jointly resamples all requirement judgments in one
+`subject_id + dimension` group, recomputes the selected requirement-level estimand, and then
+recomputes arithmetic, geometric, harmonic, and minimum `S_D`. Percentile bounds are formed from
+the resulting finite `S_D` replicates.
+
+This joint recomputation preserves observed dependence between requirements inside a dimension. ACMM
+does not construct a dimension interval by aggregating lower and upper requirement-interval endpoints.
+The same minimum-two-scenario rule applies; a replicate whose dimension score is not estimable is
+excluded from the percentile calculation and reported through the finite replicate count.
+
+Example API call:
+
+```r
+dimensionIntervals <- interval_acmm_dimension_scores_hierarchical(
+    population,
+    confidenceLevel = 0.95,
+    bootstrapReplicates = 2000,
+    seed = 12345
+)
+```
+
 ### Wilson independent-binomial baseline
 
 `interval_acmm_wilson()` implements the Wilson score interval for opportunity-level reporting only.
@@ -201,9 +227,30 @@ Rscript analysis/r/scripts/analyze_dimensions.R \
     exports/<experiment_id>/execution_<execution_id>
 ```
 
-This reports arithmetic, geometric, harmonic, and minimum `S_D` values separately for the
-opportunity-, run-, and scenario-weighted requirement estimands. It reports point scores only; the
-current hierarchical uncertainty intervals are not yet propagated through the dimension aggregation.
+This reports arithmetic, geometric, harmonic, and minimum `S_D` point values separately for the
+opportunity-, run-, and scenario-weighted requirement estimands.
+
+Dimension-score hierarchical uncertainty:
+
+```text
+Rscript analysis/r/scripts/analyze_dimension_uncertainty.R \
+    exports/<experiment_id>/execution_<execution_id> \
+    2000 \
+    12345 \
+    0.95
+```
+
+The repository wrapper also asks each R stage to write a normalized CSV table beside its text report:
+
+```text
+requirement_estimates.csv
+requirement_intervals.csv
+dimension_scores.csv
+dimension_intervals.csv
+```
+
+Each table includes an `estimand` column (`opportunity`, `run`, or `scenario`) so it can be filtered
+or imported directly into RStudio, Excel, or a later workbook-reporting layer.
 
 
 ## Repository workflow wrapper
@@ -221,9 +268,11 @@ storage conventions to:
 
 1. run `acmm export` when the canonical export does not already exist;
 2. verify and safely reuse a matching existing export when rerunning after an analysis-stage failure;
-3. run the point-estimate, hierarchical-uncertainty, and dimension-score R scripts in order;
+3. run requirement point estimates, requirement uncertainty, dimension point scores, and dimension
+   uncertainty in order;
 4. stop immediately when any stage fails; and
-5. store successful R console output under `<export-directory>/analysis_output/`.
+5. store both human-readable text output and normalized analysis CSV tables under
+   `<export-directory>/analysis_output/`.
 
 The current analysis protocol is intentionally fixed in this research tool at 2,000 hierarchical
 bootstrap replicates, seed 12,345, and confidence level 0.95. Statistical calculations remain entirely
