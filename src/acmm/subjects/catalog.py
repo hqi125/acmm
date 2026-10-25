@@ -25,7 +25,7 @@ class subject_execution_binding:
     """Runtime adapter construction for one qualified subject."""
 
     adapter_builder: Callable[[], subject_adapter]
-    runtime_description: str
+    runtime_details: tuple[tuple[str, str], ...]
     infrastructure_subject: str
     termination_support: subject_termination_support
 
@@ -51,8 +51,9 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
     bindings = {
         "hermes_nemotron30b": subject_execution_binding(
             adapter_builder=_build_hermes_nemotron30b_adapter,
-            runtime_description=(
-                "Hermes container: acmm-hermes; toolset overlay: acmm."
+            runtime_details=(
+                ("container", "acmm-hermes"),
+                ("toolset overlay", "acmm"),
             ),
             infrastructure_subject="hermes",
             termination_support=subject_termination_support(
@@ -62,9 +63,9 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
         ),
         "open_webui_nemotron30b": subject_execution_binding(
             adapter_builder=_build_open_webui_nemotron30b_adapter,
-            runtime_description=(
-                "Open WebUI API: http://127.0.0.1:3000; experiment Tool apparatus "
-                "selected separately."
+            runtime_details=(
+                ("API", "http://127.0.0.1:3000"),
+                ("experiment Tool apparatus", "selected separately"),
             ),
             infrastructure_subject="open-webui",
             termination_support=subject_termination_support(
@@ -74,9 +75,10 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
         ),
         "agent_zero_nemotron30b": subject_execution_binding(
             adapter_builder=_build_agent_zero_nemotron30b_adapter,
-            runtime_description=(
-                "Agent Zero API: http://127.0.0.1:50080; profile: acmm; "
-                "experiment plugin apparatus selected separately."
+            runtime_details=(
+                ("API", "http://127.0.0.1:50080"),
+                ("profile", "acmm"),
+                ("experiment plugin apparatus", "selected separately"),
             ),
             infrastructure_subject="agent-zero",
             termination_support=subject_termination_support(

@@ -7,6 +7,10 @@ import subprocess
 import yaml
 
 from acmm.cli import _build_parser
+from acmm.live_preflight import (
+    live_readiness_preflight_result,
+    subject_live_readiness,
+)
 from acmm_infra.deployment import write_experiment_apparatus_state
 from acmm_infra.profiles.experiments import experiment_apparatus_sha256
 
@@ -19,6 +23,22 @@ CONTRACT_PATH = (
     / "controlled_tool_use_multiscenario"
     / "experiment.yaml"
 )
+
+
+def _ready_live_preflight(*, subject_bindings, **kwargs):
+    del kwargs
+    return live_readiness_preflight_result(
+        subjects=tuple(
+            subject_live_readiness(
+                subject_id=subject_id,
+                infrastructure_subject=binding.infrastructure_subject,
+                experiment_id=None,
+                checks=(),
+                error=None,
+            )
+            for subject_id, binding in subject_bindings.items()
+        )
+    )
 
 
 def _prepare_hermes_experiment_context(
@@ -140,6 +160,7 @@ def test_run_command_executes_controlled_addition_failure_slot(
     monkeypatch,
     capsys,
 ) -> None:
+    monkeypatch.setattr("acmm.cli.inspect_live_readiness", _ready_live_preflight)
     runtime_root = _prepare_hermes_experiment_context(
         tmp_path,
         "controlled_tool_use_multiscenario_v1",
@@ -226,8 +247,9 @@ def test_run_command_executes_controlled_addition_failure_slot(
     assert "tool calls: get_magic_number, add_numbers" in summary
 
     output = capsys.readouterr().out
-    assert "Executing run 15/59" in output
-    assert "scenario=addition_failure" in output
+    assert "Experiment execution:" in output
+    assert "  run:        15/59" in output
+    assert "  scenario:   addition_failure" in output
     assert f"summary:      {summary_path}" in output
     assert "selected:     1 of 60" in output
     assert "resolved:     1 of 1 selected" in output
@@ -272,8 +294,12 @@ def test_run_command_previews_subject_range_without_execution(
     assert "selected:      20" in output
     assert "subjects:      open_webui_nemotron30b" in output
     assert "run indices:   20-39" in output
-    assert "single_addition_success: runs=20-24" in output
-    assert "double_addition_success: runs=25-29" in output
-    assert "retrieval_failure: runs=30-34" in output
-    assert "addition_failure: runs=35-39" in output
+    assert "open_webui_nemotron30b / single_addition_success:" in output
+    assert "      runs:        20-24" in output
+    assert "open_webui_nemotron30b / double_addition_success:" in output
+    assert "      runs:        25-29" in output
+    assert "open_webui_nemotron30b / retrieval_failure:" in output
+    assert "      runs:        30-34" in output
+    assert "open_webui_nemotron30b / addition_failure:" in output
+    assert "      runs:        35-39" in output
     assert "No execution started (--preview)." in output

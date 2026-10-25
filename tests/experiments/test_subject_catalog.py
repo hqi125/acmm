@@ -25,8 +25,8 @@ def test_subject_catalog_builds_hermes_runtime_adapter() -> None:
     adapter = binding.adapter_builder()
 
     assert isinstance(adapter, hermes_adapter)
-    assert "Hermes container: acmm-hermes" in binding.runtime_description
-    assert "toolset overlay: acmm" in binding.runtime_description
+    assert ("container", "acmm-hermes") in binding.runtime_details
+    assert ("toolset overlay", "acmm") in binding.runtime_details
     assert binding.termination_support.max_steps is True
     assert binding.termination_support.timeout_seconds is True
 
@@ -36,7 +36,7 @@ def test_subject_catalog_builds_open_webui_runtime_adapter() -> None:
 
     assert binding is not None
     assert isinstance(binding.adapter_builder(), open_webui_adapter)
-    assert "http://127.0.0.1:3000" in binding.runtime_description
+    assert ("API", "http://127.0.0.1:3000") in binding.runtime_details
     assert binding.termination_support.max_steps is False
     assert binding.termination_support.timeout_seconds is True
 
@@ -46,7 +46,7 @@ def test_subject_catalog_builds_agent_zero_runtime_adapter() -> None:
 
     assert binding is not None
     assert isinstance(binding.adapter_builder(), agent_zero_adapter)
-    assert "http://127.0.0.1:50080" in binding.runtime_description
+    assert ("API", "http://127.0.0.1:50080") in binding.runtime_details
     assert binding.termination_support.max_steps is False
     assert binding.termination_support.timeout_seconds is True
 

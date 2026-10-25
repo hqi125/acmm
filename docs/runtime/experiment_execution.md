@@ -253,13 +253,14 @@ experiment deployment contexts for the selected subjects, but reports mismatches
 preview remains usable before infrastructure preparation. Omit both selector types to execute the
 entire Contract plan.
 
-A real execution requires every selected subject deployment to record the Contract experiment ID,
-full `experiment` application scope, and the exact repository apparatus SHA-256. This local
-preflight runs before adapter construction and before an execution directory is created. Use
-`--runtime-root` when mutable deployments are not under the default ACMM runtime root and
-`--repo-root` when apparatus verification should use a different repository checkout. Live
-runtime readiness remains the responsibility of `acmm-infra <subject> doctor`; this phase verifies
-experiment identity/provenance rather than contacting the agent runtime.
+A real execution first requires every selected subject deployment to record the Contract experiment
+ID, full `experiment` application scope, and the exact repository apparatus SHA-256. After that
+local provenance check succeeds, `acmm run` executes the same passive doctor logic used by
+`acmm-infra <subject> doctor` and requires every selected runtime to be live and `READY`. Both gates
+run before adapter construction and before an execution directory is created. Use `--runtime-root`
+when mutable deployments are not under the default ACMM runtime root and `--repo-root` when
+apparatus/readiness verification should use a different repository checkout. `--preview` stops
+after the local context inspection and does not contact agent runtimes.
 
 The Contract path is optional for built-in experiments. With bare `acmm run`, deployment contexts are
 read first, one converged experiment ID is inferred, and the canonical Contract path registered in

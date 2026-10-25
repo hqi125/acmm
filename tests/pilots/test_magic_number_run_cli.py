@@ -8,6 +8,10 @@ import subprocess
 import yaml
 
 from acmm.cli import _build_parser
+from acmm.live_preflight import (
+    live_readiness_preflight_result,
+    subject_live_readiness,
+)
 from acmm_infra.deployment import write_experiment_apparatus_state
 from acmm_infra.profiles.experiments import experiment_apparatus_sha256
 from acmm.runtime.experiment_execution import (
@@ -24,6 +28,22 @@ CONTRACT_PATH = (
     / "magic_number"
     / "experiment.yaml"
 )
+
+
+def _ready_live_preflight(*, subject_bindings, **kwargs):
+    del kwargs
+    return live_readiness_preflight_result(
+        subjects=tuple(
+            subject_live_readiness(
+                subject_id=subject_id,
+                infrastructure_subject=binding.infrastructure_subject,
+                experiment_id=None,
+                checks=(),
+                error=None,
+            )
+            for subject_id, binding in subject_bindings.items()
+        )
+    )
 
 
 def _prepare_hermes_experiment_context(
@@ -126,6 +146,7 @@ def test_run_command_executes_one_magic_number_slot(
     monkeypatch,
     capsys,
 ) -> None:
+    monkeypatch.setattr("acmm.cli.inspect_live_readiness", _ready_live_preflight)
     runtime_root = _prepare_hermes_experiment_context(
         tmp_path,
         "magic_number_tool_use_v1",
@@ -255,8 +276,9 @@ def test_run_command_executes_one_magic_number_slot(
     assert "final response:" in summary
 
     output = capsys.readouterr().out
-    assert "Executing run 0/4" in output
-    assert "toolset overlay: acmm" in output
+    assert "Experiment execution:" in output
+    assert "  run:        0/4" in output
+    assert "    toolset overlay: acmm" in output
     assert "Inter-run pacing:" not in output
     assert f"summary:      {summary_path}" in output
     assert "selected:     1 of 5" in output
@@ -296,6 +318,7 @@ def test_run_command_reports_graceful_ctrl_c_interruption(
     monkeypatch,
     capsys,
 ) -> None:
+    monkeypatch.setattr("acmm.cli.inspect_live_readiness", _ready_live_preflight)
     runtime_root = _prepare_hermes_experiment_context(
         tmp_path,
         "magic_number_tool_use_v1",

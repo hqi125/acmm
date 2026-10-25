@@ -871,12 +871,14 @@ scenario, and repetition breakdown without creating an execution directory or co
 subject runtimes. Preview also inspects the selected subjects' recorded deployment contexts;
 context mismatches are warnings in preview mode so planning remains available before deployment.
 
-Before a real acquisition, `acmm run` now performs a deployment-context preflight for exactly the
-selected subjects. Each subject must record the Contract experiment ID with full `experiment`
-application scope and an apparatus SHA-256 matching the repository apparatus for that subject and
-experiment. A missing, stale, Tool-only, or different-experiment context aborts before runtime
-adapter construction or execution-session creation. `--runtime-root` and `--repo-root` can override
-the roots used for this verification.
+Before a real acquisition, `acmm run` performs two preflight layers for exactly the selected
+subjects. The deployment-context layer requires the Contract experiment ID, full `experiment`
+application scope, and an apparatus SHA-256 matching the repository apparatus for that subject and
+experiment. After provenance passes, a live readiness layer runs the same passive doctor logic used
+by `acmm-infra <subject> doctor` and requires every selected subject to report `READY`. Either layer
+can abort before runtime adapter construction or execution-session creation. `--runtime-root` and
+`--repo-root` can override the roots used for these checks. `--preview` performs only the local
+deployment-context inspection and never contacts subject runtimes.
 
 When the Contract path is omitted, `acmm run` can infer a built-in experiment from deployed
 subject contexts and load that experiment's canonical Contract from the experiment catalog:
@@ -904,8 +906,9 @@ and Agent Zero bindings currently support timeout-only Contracts because neither
 an exact supported per-run mapping for `max_steps`.
 The Contract's Hermes subject configuration also records the required ACMM experiment-isolation
 controls (title generation off, background review off, and Tool Search off), so the persisted
-Contract hash binds each run to that methodological baseline. `doctor` remains responsible for
-verifying that the live deployment actually matches the qualified profile before acquisition.
+Contract hash binds each run to that methodological baseline. Standalone `doctor` remains useful for
+operator diagnostics; real `acmm run` now reuses that readiness logic automatically as its final
+pre-execution gate.
 
 At the end of `acmm run`, the terminal now keeps only a compact aggregate completion report with
 paths, selected/resolved counts, termination totals, UTC start/end timestamps, and total duration.

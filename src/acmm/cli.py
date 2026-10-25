@@ -19,6 +19,10 @@ from acmm.deployment_preflight import (
     inspect_deployment_contexts,
 )
 from acmm.experiments.catalog import lookup_experiment_execution_binding
+from acmm.live_preflight import (
+    inspect_live_readiness,
+    live_readiness_preflight_result,
+)
 from acmm.subjects.catalog import (
     lookup_subject_execution_binding,
     registered_subject_ids,
@@ -331,6 +335,31 @@ def _compact_integer_ranges(values: tuple[int, ...] | list[int]) -> str:
     return ", ".join(groups)
 
 
+def _print_labeled_fields(
+    fields: tuple[tuple[str, object], ...] | list[tuple[str, object]],
+    *,
+    indent: int,
+) -> None:
+    if not fields:
+        return
+
+    label_width = max(len(label) for label, _ in fields)
+    prefix = " " * indent
+
+    for label, value in fields:
+        print(f"{prefix}{label + ':':<{label_width + 1}} {value}")
+
+
+def _print_subject_runtime_details(
+    runtime_details: list[tuple[str, tuple[tuple[str, str], ...]]],
+) -> None:
+    print("Execution subject runtime:")
+
+    for subject_id, details in runtime_details:
+        print(f"  {subject_id}:")
+        _print_labeled_fields(details, indent=4)
+
+
 def _print_deployment_preflight(
     result: deployment_preflight_result,
     *,
@@ -354,9 +383,15 @@ def _print_deployment_preflight(
             apparatus = "mismatch"
 
         context = "ready" if subject.is_ready else "not-ready"
-        print(
-            f"  {subject.subject_id}: context={context}; "
-            f"experiment={experiment}; scope={scope}; apparatus={apparatus}"
+        print(f"  {subject.subject_id}:")
+        _print_labeled_fields(
+            [
+                ("context", context),
+                ("experiment", experiment),
+                ("application scope", scope),
+                ("apparatus", apparatus),
+            ],
+            indent=4,
         )
 
         if subject.is_ready:
@@ -367,10 +402,33 @@ def _print_deployment_preflight(
             print(f"{severity}: {subject.subject_id}: {issue}", file=sys.stderr)
 
 
+def _print_live_readiness_preflight(
+    result: live_readiness_preflight_result,
+) -> None:
+    print("Live readiness preflight:")
+
+    for subject in result.subjects:
+        readiness = "ready" if subject.is_ready else "not-ready"
+        print(f"  {subject.subject_id}:")
+        _print_labeled_fields([("readiness", readiness)], indent=4)
+
+        if subject.error is not None:
+            print(
+                f"ERROR: {subject.subject_id}: {subject.error}",
+                file=sys.stderr,
+            )
+
+        for check in subject.failed_checks:
+            print(
+                f"ERROR: {subject.subject_id}: [{check.name}] {check.detail}",
+                file=sys.stderr,
+            )
+
+
 def _print_run_selection_preview(
     plan: experiment_plan,
     selected_runs: tuple[planned_run, ...],
-    runtime_descriptions: list[tuple[str, str]],
+    runtime_details: list[tuple[str, tuple[tuple[str, str], ...]]],
 ) -> None:
     subject_ids = _selected_subject_ids(selected_runs)
     run_indices = tuple(run.run_index for run in selected_runs)
@@ -379,7 +437,8 @@ def _print_run_selection_preview(
     for run in selected_runs:
         grouped.setdefault((run.subject_id, run.scenario_id), []).append(run)
 
-    print(f"Run selection preview for '{plan.experiment_id}'.")
+    print("Run selection preview:")
+    print(f"  experiment:    {plan.experiment_id}")
     print(f"  contract runs: {plan.run_count}")
     print(f"  selected:      {len(selected_runs)}")
     print(f"  subjects:      {', '.join(subject_ids)}")
@@ -389,17 +448,17 @@ def _print_run_selection_preview(
     for (subject_id, scenario_id), runs in grouped.items():
         indices = tuple(run.run_index for run in runs)
         repetitions = tuple(run.repetition for run in runs)
-        print(
-            f"    {subject_id} / {scenario_id}: "
-            f"runs={_compact_integer_ranges(indices)}; "
-            f"repetitions={_compact_integer_ranges(repetitions)}; "
-            f"count={len(runs)}"
+        print(f"    {subject_id} / {scenario_id}:")
+        _print_labeled_fields(
+            [
+                ("runs", _compact_integer_ranges(indices)),
+                ("repetitions", _compact_integer_ranges(repetitions)),
+                ("count", len(runs)),
+            ],
+            indent=6,
         )
 
-    print("Execution subject runtime:")
-    for subject_id, description in runtime_descriptions:
-        print(f"  {subject_id}: {description}")
-
+    _print_subject_runtime_details(runtime_details)
     print("No execution started (--preview).")
 
 def _context_discovery_subject_bindings(
@@ -437,23 +496,25 @@ def _resolve_run_contract_path(args: argparse.Namespace) -> Path:
     experiment_ids = discovery.experiment_ids
 
     if not experiment_ids:
-        details = "; ".join(
-            f"{subject.subject_id}=none"
+        details = "\n".join(
+            f"  {subject.subject_id}: none"
             for subject in discovery.subjects
         )
         raise ValueError(
             "Cannot infer an experiment because no selected deployment context "
-            f"declares an experiment ({details})."
+            "declares an experiment:\n"
+            f"{details}"
         )
 
     if len(experiment_ids) != 1:
-        details = "; ".join(
-            f"{subject.subject_id}={subject.experiment_id or 'none'}"
+        details = "\n".join(
+            f"  {subject.subject_id}: {subject.experiment_id or 'none'}"
             for subject in discovery.subjects
         )
         raise ValueError(
             "Cannot infer one experiment because selected deployment contexts "
-            f"do not converge ({details})."
+            "do not converge:\n"
+            f"{details}"
         )
 
     experiment_id = experiment_ids[0]
@@ -465,8 +526,15 @@ def _resolve_run_contract_path(args: argparse.Namespace) -> Path:
         )
 
     contract_path = Path(args.repo_root) / binding.canonical_contract
-    print(f"Resolved experiment from deployment context: {experiment_id}")
-    print(f"Canonical Contract: {contract_path}")
+    print("Experiment resolution:")
+    _print_labeled_fields(
+        [
+            ("source", "deployment context"),
+            ("experiment", experiment_id),
+            ("canonical Contract", contract_path),
+        ],
+        indent=2,
+    )
     return contract_path
 
 
@@ -533,7 +601,9 @@ def _run_experiment(args: argparse.Namespace) -> int:
     selected_subject_ids = _selected_subject_ids(selected_runs)
     selected_subject_set = set(selected_subject_ids)
     subject_bindings = {}
-    subject_runtime_descriptions: list[tuple[str, str]] = []
+    subject_runtime_details: list[
+        tuple[str, tuple[tuple[str, str], ...]]
+    ] = []
 
     for subject in contract["subjects"]:
         subject_id = subject["id"]
@@ -566,8 +636,8 @@ def _run_experiment(args: argparse.Namespace) -> int:
             return 2
 
         subject_bindings[subject_id] = subject_binding
-        subject_runtime_descriptions.append(
-            (subject_id, subject_binding.runtime_description)
+        subject_runtime_details.append(
+            (subject_id, subject_binding.runtime_details)
         )
 
     deployment_preflight = inspect_deployment_contexts(
@@ -586,7 +656,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
         _print_run_selection_preview(
             plan,
             selected_runs,
-            subject_runtime_descriptions,
+            subject_runtime_details,
         )
         return 0
 
@@ -598,6 +668,21 @@ def _run_experiment(args: argparse.Namespace) -> int:
         )
         return 2
 
+    live_readiness = inspect_live_readiness(
+        repo_root=Path(args.repo_root),
+        runtime_root=Path(args.runtime_root).expanduser(),
+        subject_bindings=subject_bindings,
+    )
+    _print_live_readiness_preflight(live_readiness)
+
+    if not live_readiness.is_ready:
+        print(
+            "ERROR: Live readiness preflight failed; no execution session was "
+            "created.",
+            file=sys.stderr,
+        )
+        return 2
+
     subject_adapters = {
         subject_id: subject_bindings[subject_id].adapter_builder()
         for subject_id in selected_subject_ids
@@ -605,27 +690,41 @@ def _run_experiment(args: argparse.Namespace) -> int:
     registry = binding.registry_builder(subject_adapters)
 
     if len(selected_runs) == plan.run_count:
-        print(
-            f"Executing all {plan.run_count} planned run(s) for "
-            f"'{plan.experiment_id}'."
+        print("Experiment execution:")
+        _print_labeled_fields(
+            [
+                ("experiment", plan.experiment_id),
+                ("selection", f"all {plan.run_count} planned runs"),
+            ],
+            indent=2,
         )
     elif len(selected_runs) == 1:
         planned = selected_runs[0]
-        print(
-            f"Executing run {planned.run_index}/{plan.run_count - 1}: "
-            f"subject={planned.subject_id}, scenario={planned.scenario_id}, "
-            f"repetition={planned.repetition}."
+        print("Experiment execution:")
+        _print_labeled_fields(
+            [
+                ("run", f"{planned.run_index}/{plan.run_count - 1}"),
+                ("subject", planned.subject_id),
+                ("scenario", planned.scenario_id),
+                ("repetition", planned.repetition),
+            ],
+            indent=2,
         )
     else:
-        print(
-            f"Executing {len(selected_runs)} selected run(s) of "
-            f"{plan.run_count} for '{plan.experiment_id}': "
-            f"{_compact_integer_ranges(selected_indices)}."
+        print("Experiment execution:")
+        _print_labeled_fields(
+            [
+                ("experiment", plan.experiment_id),
+                (
+                    "selection",
+                    f"{len(selected_runs)} of {plan.run_count} planned runs",
+                ),
+                ("run indices", _compact_integer_ranges(selected_indices)),
+            ],
+            indent=2,
         )
 
-    print("Execution subject runtime:")
-    for subject_id, description in subject_runtime_descriptions:
-        print(f"  {subject_id}: {description}")
+    _print_subject_runtime_details(subject_runtime_details)
 
     pacing = contract["run_protocol"].get("pacing", {})
     inter_run_delay = pacing.get("inter_run_delay_seconds", 0)

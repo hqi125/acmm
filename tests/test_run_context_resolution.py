@@ -65,10 +65,11 @@ def test_bare_run_preview_infers_converged_experiment(
 
     captured = capsys.readouterr()
     assert captured.err == ""
-    assert f"Resolved experiment from deployment context: {EXPERIMENT_1}" in captured.out
+    assert "Experiment resolution:" in captured.out
+    assert f"  experiment:         {EXPERIMENT_1}" in captured.out
     assert "controlled_tool_use_multiscenario/experiment.yaml" in captured.out
     assert "selected:      60" in captured.out
-    assert captured.out.count("context=ready") == 3
+    assert captured.out.count("    context:           ready") == 3
 
 
 def test_bare_run_preview_rejects_divergent_experiments(
@@ -124,8 +125,10 @@ def test_bare_run_preview_uses_unique_candidate_with_missing_context(
     assert args.handler(args) == 0
 
     captured = capsys.readouterr()
-    assert f"Resolved experiment from deployment context: {EXPERIMENT_1}" in captured.out
-    assert "agent_zero_nemotron30b: context=not-ready" in captured.out
+    assert "Experiment resolution:" in captured.out
+    assert f"  experiment:         {EXPERIMENT_1}" in captured.out
+    assert "  agent_zero_nemotron30b:" in captured.out
+    assert "    context:           not-ready" in captured.out
     assert "no active experiment deployment context" in captured.err
     assert "Run selection preview" in captured.out
 
@@ -156,7 +159,8 @@ def test_bare_run_subject_filter_scopes_context_inference(
     assert args.handler(args) == 0
 
     captured = capsys.readouterr()
-    assert f"Resolved experiment from deployment context: {PILOT}" in captured.out
+    assert "Experiment resolution:" in captured.out
+    assert f"  experiment:         {PILOT}" in captured.out
     assert "magic_number/experiment.yaml" in captured.out
     assert f"subjects:      {SUBJECTS[0]}" in captured.out
     assert SUBJECTS[1] not in captured.err

@@ -138,6 +138,8 @@ acmm run --preview
 
 Bare `acmm run` infers this experiment only when deployed subject contexts are unambiguous, then loads
 this canonical Contract from the experiment catalog. The explicit Contract path remains available for
-qualification, debugging, and provenance-visible commands.
+qualification, debugging, and provenance-visible commands. Preview checks recorded deployment
+context only; a real run additionally requires each selected subject to pass its live doctor/readiness
+checks before any execution session is created.
 
 After the slice is clean, omit `--run-index` to execute all 60 planned runs.
