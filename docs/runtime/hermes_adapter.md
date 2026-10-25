@@ -141,22 +141,23 @@ final response reporting the correct result.
 The repository-owned plugin source is:
 
 ```text
-infrastructure/hermes/plugins/acmm-tools/
+infrastructure/hermes/experiments/magic_number_tool_use_v1/plugins/acmm-tools/
 ```
 
-Before a live experiment, `acmm-infra hermes doctor` must report `READY`. If only managed
-tool/plugin code changed after the baseline was established, reconcile that narrow scope
-with:
+Before a live pilot run, reconcile and verify that experiment's apparatus:
 
 ```text
 acmm-infra hermes down
-acmm-infra hermes apply-tools
+acmm-infra hermes apply --experiment magic_number_tool_use_v1
 acmm-infra hermes up
 acmm-infra hermes doctor
 ```
 
-A change to the model route, Blank Slate baseline, or ACMM experiment-isolation settings
-requires the full `acmm-infra hermes apply` path instead.
+The qualified Hermes baseline itself remains experiment-independent.
+
+A change to the model route, Blank Slate baseline, or ACMM experiment-isolation settings is
+covered by the preferred `acmm-infra hermes apply --experiment <experiment-id>` path, which
+reconciles the baseline before applying the selected experiment overlay.
 
 ## Live pilot command
 

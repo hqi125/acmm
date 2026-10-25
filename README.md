@@ -644,8 +644,8 @@ src/acmm/adapters/hermes_session.py
 src/acmm/pilots/magic_number.py
     magic-number fixture + deterministic opportunity evaluators
 
-infrastructure/hermes/plugins/acmm-tools/
-    repository-owned Hermes plugin exposing get_magic_number and add_numbers
+infrastructure/hermes/experiments/magic_number_tool_use_v1/plugins/acmm-tools/
+    pilot-owned Hermes plugin exposing get_magic_number and add_numbers
 ```
 
 The adapter runs a quiet Hermes one-shot chat and then exports that exact persisted
@@ -694,21 +694,22 @@ pinned subject is Open WebUI `v0.11.4` at the qualified image digest recorded in
 
 ```text
 acmm-infra open-webui init
-acmm-infra open-webui apply
+acmm-infra open-webui apply --experiment controlled_tool_use_multiscenario_v1
 acmm-infra open-webui up
-acmm-infra open-webui apply-tools
 acmm-infra open-webui status
 acmm-infra open-webui doctor
 acmm-infra open-webui down
 ```
 
-`apply` is the full Open WebUI baseline reconciler: it updates deployment state, temporarily
-starts the backend, waits for readiness, reconciles persistent provider settings and managed
-Tools through Open WebUI's supported APIs, then stops the provisioning service. `apply-tools`
-is the narrower running-service shortcut for Tool-only changes. `up` waits for `/ready` before
-returning. `doctor` checks persisted provider configuration, experiment-model availability,
-and exact managed-Tool state in addition to Docker/deployment state. ACMM does not modify
-`webui.db` directly. See `infrastructure/open-webui/README.md` for the current boundary.
+`apply` without `--experiment` is the experiment-independent Open WebUI baseline reconciler:
+it updates deployment state, temporarily starts the backend, waits for readiness, reconciles
+persistent provider settings, removes active experiment Tools, and then stops the provisioning
+service. `apply --experiment <experiment-id>` composes the baseline with the selected experiment
+apparatus and reconciles that effective state in one provisioning pass. `apply-tools --experiment <experiment-id>` is the narrower
+Tool-only path. `up` waits for `/ready` before returning.
+`status` and `doctor` discover the active experiment context from the deployment marker;
+`doctor` checks the baseline and exact selected Tool state together. ACMM does not modify `webui.db` directly. See
+`infrastructure/open-webui/README.md` for the current boundary.
 
 The experiment-facing Open WebUI runtime adapter now lives under `src/acmm/adapters/`. It
 uses the backend native multi-round Tool loop, creates and removes fresh chat state per run,
@@ -724,35 +725,37 @@ in `infrastructure/agent-zero/profile.yaml`. The managed lifecycle is:
 ```text
 acmm-infra agent-zero init
 acmm-infra agent-zero apply
+acmm-infra agent-zero apply --experiment controlled_tool_use_multiscenario_v1
 acmm-infra agent-zero up
-acmm-infra agent-zero apply-tools
 acmm-infra agent-zero status
 acmm-infra agent-zero doctor
 acmm-infra agent-zero down
 ```
 
 Agent Zero persists only its `/a0/usr` user-state tree into the ACMM runtime root; framework
-code remains owned by the pinned image. Full `apply` reconciles deployment state, managed
-ACMM Tool/plugin files, the `acmm` Agent Profile, the v2.14 `_model_config` `Default` preset,
-and experiment-isolation files, including narrow local-model communication/solving/initial-message prompt
-overrides, then uses one temporary service lifetime to persist and verify core settings through
-Agent Zero's own APIs. `apply-tools` remains the narrower Tool/plugin-only subset.
+code remains owned by the pinned image. Baseline `apply` reconciles deployment state, the `acmm`
+Agent Profile, the v2.14 `_model_config` `Default` preset, and experiment-isolation files,
+including narrow local-model communication/solving/initial-message prompt overrides. It also
+removes active experiment plugins and returns the Tool allow-list to empty.
+`apply --experiment <experiment-id>` composes that baseline with the selected experiment
+plugin and Tool allow-list, then reconciles the effective state in one provisioning pass. `apply-tools --experiment <experiment-id>` applies only
+the experiment-facing Tool/plugin layer.
 
 The qualified Agent Zero baseline pins main and utility roles to
 `nemotron-3-nano:30b-cloud` through Windows Ollama with 64K contexts. The `acmm` profile
-blocks all Tools by default except the controlled `get_magic_number` and `add_numbers` Tools,
-blocks Skills and MCP Tools by default, disables memory recall/memorization/consolidation and
-automatic chat naming, and disables MCP/A2A servers, update checks, project inheritance, and
-automatic RFC Docker behavior. `doctor` verifies persistent settings, effective model config,
-and model availability in addition to the deployment layer. See
-`infrastructure/agent-zero/README.md`.
+blocks all experiment Tools, Skills, and MCP Tools by default; a selected experiment apparatus
+adds only its own Tool allow-list. The baseline also disables memory
+recall/memorization/consolidation and automatic chat naming, and disables MCP/A2A servers,
+update checks, project inheritance, and automatic RFC Docker behavior. `doctor` verifies
+persistent settings, effective model config, and model availability in addition to the
+deployment layer. See `infrastructure/agent-zero/README.md`.
 
 The experiment-facing Agent Zero runtime adapter now lives under `src/acmm/adapters/`. It
 reuses the persistent running Agent Zero service, configures per-run `acmm_tools` state through
 the supported plugin API, creates and removes a fresh context, executes through the external
-API, and normalizes Agent Zero Tool logs into the existing ACMM evidence channels. See `docs/runtime/agent_zero_adapter.md`; the standalone live smoke helper is
-`tools/smoke_agent_zero.py`. Exact per-run `termination.max_steps` enforcement remains a
-qualification item, so the frozen Experiment 1 catalog is intentionally unchanged.
+API, and normalizes Agent Zero Tool logs into the existing ACMM evidence channels. See
+`docs/runtime/agent_zero_adapter.md`; the standalone live smoke helper is
+`tools/smoke_agent_zero.py`.
 
 ## Infrastructure management
 
@@ -766,7 +769,9 @@ For Hermes:
 └── infrastructure/hermes/
     ├── profile.yaml
     ├── defaults/
-    └── plugins/acmm-tools/
+    └── experiments/<experiment-id>/
+        ├── apparatus.yaml
+        └── plugins/...
 
 ~/acmm_runtime/
 └── hermes/
@@ -809,18 +814,20 @@ set to `off`. These are ACMM methodological controls intended to remove auxiliar
 calls and tool-routing indirection; they are not part of Hermes's definition of Blank
 Slate.
 
-For later repository-owned tool/plugin changes, the narrower reconciliation path is:
+Experiment apparatus is reconciled separately from the qualified baseline:
 
 ```text
 acmm-infra hermes down
-acmm-infra hermes apply-tools
+acmm-infra hermes apply --experiment controlled_tool_use_multiscenario_v1
 acmm-infra hermes up
 acmm-infra hermes doctor
 ```
 
-`apply-tools` replaces managed plugin bytes and reconciles plugin/tool-routing policy without
-reapplying the stable model route or Blank Slate baseline. Full `apply` remains required
-when the broader qualified baseline changes.
+`apply --experiment <experiment-id>` composes the stable Hermes baseline with the selected
+experiment plugin/tool-routing policy and reconciles that effective state in one provisioning
+batch. `apply-tools --experiment
+<experiment-id>` performs only the experiment-facing plugin/tool reconciliation. Baseline
+`apply` returns Hermes to the experiment-independent state.
 
 `apply` requires the persistent Hermes gateway to be stopped. It reconciles all Hermes
 settings and managed-plugin enablement inside one bounded one-off Compose container rather

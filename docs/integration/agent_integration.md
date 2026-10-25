@@ -139,8 +139,11 @@ A typical source layout is conceptually:
 infrastructure/<agent>/
 |-- profile.yaml
 |-- defaults/
-|-- tools/ or plugins/
-`-- README.md
+|-- README.md
+`-- experiments/
+    `-- <experiment-id>/
+        |-- apparatus.yaml
+        `-- tools/ or plugins/
 ```
 
 The exact files vary by agent, but the managed baseline generally needs to cover:
@@ -148,11 +151,14 @@ The exact files vary by agent, but the managed baseline generally needs to cover
 - deployment image/package and version;
 - ports, volumes, environment variables, and provider endpoints;
 - model configuration;
-- profile or prompt overrides;
-- controlled ACMM tools;
-- experiment-isolation settings;
+- profile or prompt overrides that belong to the qualified subject baseline;
+- experiment-isolation settings that remain invariant across experiments;
 - mutable application settings that must be reconciled through supported APIs;
 - expected runtime paths and ownership boundaries.
+
+Experiment-facing tools, plugins, permissions, and other laboratory apparatus should begin
+under `experiments/<experiment-id>/` even when that duplicates small amounts of code. Promote
+a component into the subject baseline only after it is genuinely experiment-independent.
 
 Secrets should not be committed as desired-state content. The repository may describe where a
 credential comes from, but credentials should stay in the appropriate local/runtime mechanism.
@@ -164,21 +170,33 @@ Where practical, a new managed subject should fit the common lifecycle:
 ```text
 acmm-infra <agent> init
 acmm-infra <agent> apply
+acmm-infra <agent> apply --experiment <experiment-id>
 acmm-infra <agent> up
-acmm-infra <agent> apply-tools
 acmm-infra <agent> status
 acmm-infra <agent> doctor
 acmm-infra <agent> down
 ```
 
+This is a command vocabulary, not a universal ordering constraint. The preferred full
+experiment-aware `apply` may use different subject-specific provisioning mechanics. The
+narrower `apply-tools --experiment <experiment-id>` path may additionally require a running
+service, as Open WebUI does. The subject-specific README owns the exact sequence.
+
 The commands do not need identical internal implementations. Their semantics should be consistent:
 
 - `init` creates the mutable runtime/deployment skeleton without silently qualifying it;
-- `apply` reconciles the full qualified baseline;
-- `apply-tools` is a narrower tool-only update when the product permits it safely;
+- `apply` without `--experiment` reconciles the experiment-independent qualified baseline and
+  removes active experiment apparatus;
+- `apply --experiment <experiment-id>` composes the baseline and selected experiment
+  apparatus as one requested target state;
+- `apply-tools --experiment <experiment-id>` reconciles only the selected experiment-facing
+  Tool/plugin/policy layer;
+- `apply-experiment <experiment-id>` remains a compatibility alias for the full
+  experiment-aware `apply`;
 - `up` starts the qualified service and waits for meaningful readiness;
 - `status` reports observed state without claiming qualification;
-- `doctor` verifies that observed state agrees with the expected experimental baseline;
+- `doctor` discovers the deployment context from the apparatus marker and verifies either the
+  baseline alone or the composed baseline plus active experiment apparatus;
 - `down` stops the service without destroying the version-controlled definition.
 
 For a new product, this usually requires agent-specific code under `src/acmm_infra/`: a manager,
@@ -430,7 +448,7 @@ Cover:
 
 - profile/default parsing;
 - deployment generation;
-- `apply`/`apply-tools` reconciliation;
+- baseline `apply`, experiment-aware `apply`, and Tool-only experiment reconciliation;
 - `status` observations;
 - `doctor` drift detection;
 - command failure and timeout paths;

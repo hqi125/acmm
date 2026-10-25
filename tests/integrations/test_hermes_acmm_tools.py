@@ -8,14 +8,23 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PLUGIN_PATH = (
-    ROOT
-    / "infrastructure"
-    / "hermes"
-    / "plugins"
-    / "acmm-tools"
-    / "__init__.py"
+EXPERIMENT_IDS = (
+    "magic_number_tool_use_v1",
+    "controlled_tool_use_multiscenario_v1",
 )
+
+
+def _plugin_path(experiment_id: str) -> Path:
+    return (
+        ROOT
+        / "infrastructure"
+        / "hermes"
+        / "experiments"
+        / experiment_id
+        / "plugins"
+        / "acmm-tools"
+        / "__init__.py"
+    )
 
 
 class fake_context:
@@ -37,10 +46,10 @@ class fake_context:
         )
 
 
-def _load_plugin():
+def _load_plugin(experiment_id: str):
     spec = importlib.util.spec_from_file_location(
         "acmm_tools_plugin",
-        PLUGIN_PATH,
+        _plugin_path(experiment_id),
     )
     assert spec is not None
     assert spec.loader is not None
@@ -50,8 +59,9 @@ def _load_plugin():
     return module
 
 
-def test_plugin_registers_only_magic_number_pilot_tools() -> None:
-    module = _load_plugin()
+@pytest.mark.parametrize("experiment_id", EXPERIMENT_IDS)
+def test_plugin_registers_only_magic_number_pilot_tools(experiment_id: str) -> None:
+    module = _load_plugin(experiment_id)
     context = fake_context()
 
     module.register(context)
@@ -66,10 +76,12 @@ def test_plugin_registers_only_magic_number_pilot_tools() -> None:
     )
 
 
+@pytest.mark.parametrize("experiment_id", EXPERIMENT_IDS)
 def test_get_magic_number_reads_runtime_fixture_value(
     monkeypatch,
+    experiment_id: str,
 ) -> None:
-    module = _load_plugin()
+    module = _load_plugin(experiment_id)
     context = fake_context()
     module.register(context)
 
@@ -83,8 +95,9 @@ def test_get_magic_number_reads_runtime_fixture_value(
     }
 
 
-def test_add_numbers_returns_structured_result() -> None:
-    module = _load_plugin()
+@pytest.mark.parametrize("experiment_id", EXPERIMENT_IDS)
+def test_add_numbers_returns_structured_result(experiment_id: str) -> None:
+    module = _load_plugin(experiment_id)
     context = fake_context()
     module.register(context)
 
@@ -104,10 +117,12 @@ def test_add_numbers_returns_structured_result() -> None:
 
 
 
+@pytest.mark.parametrize("experiment_id", EXPERIMENT_IDS)
 def test_get_magic_number_controlled_failure_raises_tool_error(
     monkeypatch,
+    experiment_id: str,
 ) -> None:
-    module = _load_plugin()
+    module = _load_plugin(experiment_id)
     context = fake_context()
     module.register(context)
 
@@ -120,10 +135,12 @@ def test_get_magic_number_controlled_failure_raises_tool_error(
         handler({})
 
 
+@pytest.mark.parametrize("experiment_id", EXPERIMENT_IDS)
 def test_add_numbers_controlled_failure_raises_tool_error(
     monkeypatch,
+    experiment_id: str,
 ) -> None:
-    module = _load_plugin()
+    module = _load_plugin(experiment_id)
     context = fake_context()
     module.register(context)
 

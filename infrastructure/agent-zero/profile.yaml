@@ -37,9 +37,7 @@ experiment_isolation:
   tool_policy:
     default: block
     mcp_default: block
-    allowed:
-      - plugin:acmm_tools:get_magic_number
-      - plugin:acmm_tools:add_numbers
+    allowed: []
   skills_policy:
     default: block
   memory:
@@ -49,11 +47,9 @@ experiment_isolation:
   chat_naming:
     automatic_naming: false
 
+
 plugins:
-  managed:
-    - name: acmm_tools
-      source: plugins/acmm_tools
-      destination: plugins/acmm_tools
+  managed: []
 
 reset_scopes:
   configuration:

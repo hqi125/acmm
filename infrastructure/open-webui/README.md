@@ -35,8 +35,10 @@ open-webui/
 |-- defaults/
 |   |-- compose.yaml
 |   `-- env.defaults
-|-- tools/
-|   `-- acmm_tools.py
+|-- experiments/
+|   `-- <experiment-id>/
+|       |-- apparatus.yaml
+|       `-- tools/
 `-- README.md
 ```
 
@@ -59,9 +61,8 @@ Open WebUI implements the common ACMM infrastructure lifecycle:
 
 ```text
 acmm-infra open-webui init
-acmm-infra open-webui apply
+acmm-infra open-webui apply --experiment controlled_tool_use_multiscenario_v1
 acmm-infra open-webui up
-acmm-infra open-webui apply-tools
 acmm-infra open-webui status
 acmm-infra open-webui doctor
 acmm-infra open-webui down
@@ -71,8 +72,9 @@ acmm-infra open-webui reset configuration --yes
 `apply` is the full stopped-service baseline reconciler, matching the semantics used for
 Hermes. It reconciles deployment files/environment first, starts Open WebUI temporarily,
 waits for the backend `/ready` endpoint, reconciles persistent provider configuration through
-Open WebUI's supported admin APIs, reconciles repository-managed Tools, and then stops the
-provisioning service again. The command therefore leaves the ordinary agent service stopped.
+Open WebUI's supported admin APIs, removes active repository-managed experiment Tools, and
+then stops the provisioning service again. The command therefore leaves the ordinary agent
+service stopped and experiment-independent.
 
 Open WebUI stores provider and feature settings persistently in its application database, so
 environment variables alone are not sufficient after those keys have been initialized. `apply`
@@ -87,23 +89,24 @@ autocomplete, search-query generation, and retrieval-query generation. These val
 seeded through the container environment so the temporary provisioning startup begins in the
 restricted state before the persistent database values are repaired.
 
-`apply-tools` is the narrower running-service shortcut. With `WEBUI_AUTH=false`, it obtains
-the local system-admin session and reconciles only repository-managed Tools through Open
-WebUI's supported Tool API. ACMM does not edit the Open WebUI SQLite database directly.
+`apply --experiment <experiment-id>` is the preferred full experiment reconciler. It
+composes the baseline with the selected apparatus and reconciles that effective state during
+one temporary provisioning-service lifetime. The narrower `apply-tools
+--experiment <experiment-id>` path assumes the ordinary service is already running; with
+`WEBUI_AUTH=false`, it obtains the local system-admin session and reconciles only the Tools
+owned by the selected `experiments/<experiment-id>/apparatus.yaml` through Open WebUI's
+supported Tool API. ACMM does not edit the Open WebUI SQLite database directly.
 
-Because this shortcut works through the live Tool API, the ordinary Open WebUI service must
-already be running. Full `apply` does not have that prerequisite: it starts and stops a temporary
-provisioning service itself. This asymmetry is deliberate for now and does not change the
-semantic rule that `apply-tools` is only a subset of full `apply`.
+Because the Tool-only path works through the live Tool API, the ordinary Open WebUI service
+must already be running. The command creates missing selected Tools, preserves exact Tools,
+repairs source/name/description drift, removes stale apparatus from a previously selected
+experiment, and records the selected apparatus SHA-256 with application scope `tools`.
+`apply-experiment <experiment-id>` remains a compatibility alias for the full
+`apply --experiment <experiment-id>` workflow.
 
-The managed `acmm_tools` source is checked into `tools/acmm_tools.py`. Its code is treated as
-desired state. `apply-tools` creates the Tool when absent, preserves it when exact, and repairs
-source/name/description drift through the Open WebUI API.
-
-The Tool exposes Valves for controlled experiment state. The current fields are the magic
-number and the success/failure modes for retrieval and addition. Later experiment execution
-code can set these values through the Tool Valves API before a run; run-specific valve values
-are not part of the static infrastructure baseline.
+The Experiment 1 `acmm_tools.py` source now lives under its own experiment directory. Its
+Valves still provide controlled magic-number/retrieval/addition state for that experiment;
+those per-run values remain runtime fixture state rather than static infrastructure state.
 
 Runtime installation of packages declared through tool/function frontmatter is explicitly
 disabled. The ACMM Tool therefore depends only on packages already present in the pinned
@@ -127,17 +130,21 @@ running, including persisted provider configuration and the model IDs returned b
 - persisted Ollama/OpenAI provider configuration;
 - exact persistent experiment-isolation settings;
 - availability of the configured experiment model; and
-- presence and exact repository match of every ACMM-managed Tool.
+- when an experiment marker is active, presence and exact repository match of every Tool in
+  the discovered experiment apparatus.
 
-A normal workflow is therefore `init` -> `apply` -> `up` -> `doctor`. `apply-tools` is only
-needed as a faster path after changing managed Tool source without reapplying the rest of the
-baseline.
+A baseline workflow is `init` -> `apply` -> `up` -> `doctor`. Before an experiment run, the
+preferred full path is `apply --experiment <experiment-id>` while the service is stopped,
+followed by `up` and `doctor`, which discovers that experiment from the deployment marker. During Tool-only development,
+`apply-tools --experiment <experiment-id>` may be used while the service is running. A later
+baseline `apply` removes active experiment Tools and returns Open WebUI to the
+experiment-independent baseline.
 
 ## Persistent state and reset
 
 `down` is deliberately non-destructive. The bind-mounted `data/` directory survives ordinary
-container shutdown/removal and retains the secret key, database, managed tools, and other
-application state.
+container shutdown/removal and retains the secret key, database, and other application state.
+Experiment Tools are explicitly reconciled or removed by the apparatus/baseline commands.
 
 The current `configuration` reset removes `data/webui.db` while the container is stopped. It
 is intended only for rebuilding the isolated Open WebUI application database from a fresh

@@ -25,7 +25,7 @@ Agent Zero implements the common ACMM infrastructure vocabulary:
 ```text
 acmm-infra agent-zero init
 acmm-infra agent-zero apply
-acmm-infra agent-zero apply-tools
+acmm-infra agent-zero apply --experiment controlled_tool_use_multiscenario_v1
 acmm-infra agent-zero up
 acmm-infra agent-zero status
 acmm-infra agent-zero doctor
@@ -36,16 +36,19 @@ acmm-infra agent-zero reset configuration --yes
 `apply` is the full baseline reconciler. It requires the ordinary Agent Zero service to
 be stopped. It first reconciles the ACMM-owned Compose/environment files, then starts one
 temporary Agent Zero service and keeps it up for the entire application-provisioning
-phase. Managed plugin/profile files are written through that running container so host
-UID/GID differences cannot block writes under `/a0/usr`. The model preset is reconciled
-through Agent Zero's own Model Configuration API, application settings through the
-settings API, and the effective model/profile state is verified before the same
-provisioning service is stopped. It does not restart the container between individual
-settings.
+phase. Baseline profile files are written through that running container so host UID/GID
+differences cannot block writes under `/a0/usr`. The model preset is reconciled through
+Agent Zero's own Model Configuration API, application settings through the settings API,
+and the effective model/profile state is verified before the same provisioning service is
+stopped. The baseline blocks all experiment Tools and removes active repository-managed
+experiment plugins.
 
-`apply-tools` is the narrower Tool/plugin path. It uses one temporary Agent Zero container to replace the
-repository-managed ACMM plugin while Agent Zero is stopped; it does not reapply model,
-profile, or application settings.
+`apply --experiment <experiment-id>` is the preferred full experiment path: it composes the
+baseline with the selected apparatus, then uses one temporary provisioning-service lifetime
+to reconcile the resulting profile, experiment-owned plugin bytes, Tool allow-list, model,
+and persistent settings before recording the apparatus SHA-256. `apply-tools --experiment <experiment-id>`
+performs only the Tool/plugin phase. `apply-experiment <experiment-id>` remains a compatibility
+alias for the full experiment-aware apply.
 
 `up` starts the persistent service and waits until the HTTP backend responds before
 returning. `down` stops/removes the Compose service while preserving `usr/`.
@@ -141,8 +144,9 @@ the rest of the Tiny Local profile.
 
 In particular:
 
-- Tool policy defaults to block and allows only
-  `plugin:acmm_tools:get_magic_number` and `plugin:acmm_tools:add_numbers`;
+- baseline Tool policy defaults to block and allows no experiment Tools;
+- experiment-aware `apply` replaces that empty allow-list with the selected experiment's exact
+  apparatus Tool policy;
 - MCP Tool policy defaults to block;
 - Skills visibility defaults to block with no allowed Skills;
 - memory recall, memorization, and consolidation are disabled;
@@ -153,25 +157,26 @@ The goal is not to turn Agent Zero into a different agent. Core response handlin
 reasoning, retry, and repair behavior remain available; ACMM removes auxiliary
 capabilities that would add uncontrolled experiment channels or background model calls.
 
-## Managed ACMM tools
+## Experiment apparatus
 
-The repository-managed custom plugin is:
-
-```text
-infrastructure/agent-zero/plugins/acmm_tools/
-```
-
-It is deployed to:
+Agent-facing custom plugins are owned per experiment, for example:
 
 ```text
-/a0/usr/plugins/acmm_tools/
+infrastructure/agent-zero/experiments/controlled_tool_use_multiscenario_v1/
+|-- apparatus.yaml
+`-- plugins/acmm_tools/
 ```
 
-The plugin contains controlled `get_magic_number` and `add_numbers` Tool implementations
-plus agent-facing prompt fragments. `default_config.yaml` defines the controlled baseline
-state. The Tools read configuration through Agent Zero's normal plugin-config resolver; the
-runtime adapter writes per-run values through the supported plugin API and restores the
-baseline afterward. ACMM does not maintain a private Tool-state file.
+The selected plugin is deployed to its apparatus-defined destination under `/a0/usr` (for
+Experiment 1, `/a0/usr/plugins/acmm_tools/`). Experiment 1's plugin contains the controlled
+`get_magic_number` and `add_numbers` Tools plus agent-facing prompt fragments. Its
+`default_config.yaml` defines controlled baseline state. The runtime adapter writes per-run
+values through Agent Zero's supported plugin API and restores the experiment baseline
+afterward.
+
+A later experiment may duplicate and change this plugin without mutating Experiment 1's
+frozen apparatus. Full baseline `apply` removes the active experiment plugin and restores an
+empty Tool allow-list.
 
 ## Readiness boundary
 
@@ -180,8 +185,9 @@ At this stage, `doctor` qualifies both deployment and application baseline state
 - Docker and Docker Compose availability;
 - repository Compose identity;
 - managed environment values;
-- exact repository-managed ACMM plugin files;
 - exact Agent Profile/local-model prompt/model/isolation files;
+- when an experiment marker is active, exact plugin files and Tool allow-list for the
+  discovered experiment;
 - running container and exact pinned image;
 - observed Agent Zero release tag;
 - HTTP backend responsiveness;
@@ -189,7 +195,6 @@ At this stage, `doctor` qualifies both deployment and application baseline state
 - effective `acmm` profile model configuration;
 - availability of `nemotron-3-nano:30b-cloud` through the configured Ollama route.
 
-A `READY` result therefore means the Agent Zero infrastructure/application baseline is
-qualified. The experiment-facing runtime adapter is documented in
-`docs/runtime/agent_zero_adapter.md`; frozen Experiment 1 remains unbound until the per-run
-step-budget difference is resolved or explicitly qualified.
+A `READY` result therefore means the Agent Zero infrastructure/application state matches its
+declared baseline or active experiment context. The experiment-facing runtime adapter is documented in
+`docs/runtime/agent_zero_adapter.md`.

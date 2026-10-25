@@ -31,8 +31,8 @@ def test_agent_zero_profile_loads_repository_baseline() -> None:
     assert profile.experiment_isolation.tool_default == "block"
     assert profile.experiment_isolation.mcp_tool_default == "block"
     assert profile.experiment_isolation.automatic_chat_naming is False
-    assert profile.plugins[0].name == "acmm_tools"
-    assert profile.plugins[0].destination == Path("plugins/acmm_tools")
+    assert profile.experiment_isolation.allowed_tools == ()
+    assert profile.plugins == ()
     assert profile.reset_scopes["configuration"] == (
         Path("settings.json"),
         Path("agents/acmm"),

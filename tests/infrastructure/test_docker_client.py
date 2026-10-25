@@ -73,6 +73,31 @@ def test_compose_uses_structural_deployment_attributes(
         "--quiet",
     )
 
+
+def test_write_container_files_updates_without_replacing_tree(
+    tmp_path: Path,
+) -> None:
+    attributes = test_deployment_attributes()
+    runner = recording_runner()
+    client = docker_client(
+        repo_root=tmp_path / "repo",
+        runtime_root=tmp_path,
+        attributes=attributes,
+        runner=runner,
+    )
+
+    client.write_container_files(
+        "/a0/usr/agents/acmm",
+        {"plugins/_tool_access/config.json": b"{}"},
+    )
+
+    call = runner.calls[-1]
+    args = call["args"]
+    assert args[:4] == ("docker", "exec", "-i", "acmm-agent")
+    script = args[6]
+    assert "shutil.rmtree" not in script
+    assert args[-2] == "/a0/usr/agents/acmm"
+
 def test_provision_uses_one_named_compose_container(
     tmp_path: Path,
 ) -> None:

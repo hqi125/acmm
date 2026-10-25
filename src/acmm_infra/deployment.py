@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import shutil
-from typing import Iterable
+from typing import Iterable, Literal
 
 from acmm_infra.common import infrastructure_error
 
@@ -59,3 +60,90 @@ def files_equal(left: Path, right: Path) -> bool:
 
 def bool_text(value: bool) -> str:
     return "true" if value else "false"
+EXPERIMENT_APPARATUS_STATE_FILE = ".acmm-experiment-apparatus.json"
+experiment_application_scope = Literal["experiment", "tools"]
+EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION = "0.2"
+
+
+def read_experiment_apparatus_state(deployment_root: Path) -> dict[str, object] | None:
+    path = deployment_root / EXPERIMENT_APPARATUS_STATE_FILE
+    if not path.is_file():
+        return None
+
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise infrastructure_error(
+            f"Could not read experiment apparatus state '{path}': {exc}"
+        ) from exc
+
+    if not isinstance(value, dict):
+        raise infrastructure_error(
+            f"Experiment apparatus state '{path}' has an unsupported format."
+        )
+
+    schema_version = value.get("schema_version")
+    if schema_version == "0.1":
+        value = dict(value)
+        value["application_scope"] = "experiment"
+        return value
+
+    if schema_version != EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION:
+        raise infrastructure_error(
+            f"Experiment apparatus state '{path}' has an unsupported format."
+        )
+
+    application_scope = value.get("application_scope")
+    if application_scope not in {"experiment", "tools"}:
+        raise infrastructure_error(
+            f"Experiment apparatus state '{path}' has an invalid application scope."
+        )
+    return value
+
+
+def active_experiment_id(deployment_root: Path) -> str | None:
+    state = read_experiment_apparatus_state(deployment_root)
+    if state is None:
+        return None
+
+    experiment_id = state.get("experiment_id")
+    if not isinstance(experiment_id, str) or not experiment_id.strip():
+        path = deployment_root / EXPERIMENT_APPARATUS_STATE_FILE
+        raise infrastructure_error(
+            f"Experiment apparatus state '{path}' has an invalid experiment ID."
+        )
+
+    return experiment_id
+
+
+def write_experiment_apparatus_state(
+    deployment_root: Path,
+    *,
+    experiment_id: str,
+    source_sha256: str,
+    application_scope: experiment_application_scope,
+    resources: list[dict[str, str]],
+) -> None:
+    path = deployment_root / EXPERIMENT_APPARATUS_STATE_FILE
+    payload = {
+        "schema_version": EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION,
+        "experiment_id": experiment_id,
+        "source_sha256": source_sha256,
+        "application_scope": application_scope,
+        "resources": resources,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    temporary.replace(path)
+
+
+def clear_experiment_apparatus_state(deployment_root: Path) -> None:
+    path = deployment_root / EXPERIMENT_APPARATUS_STATE_FILE
+    if path.exists():
+        path.unlink()
+

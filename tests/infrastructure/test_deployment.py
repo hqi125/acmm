@@ -8,6 +8,8 @@ from acmm_infra.deployment import (
     files_equal,
     install_default_if_missing,
     read_env,
+    read_experiment_apparatus_state,
+    write_experiment_apparatus_state,
     write_env,
 )
 
@@ -85,3 +87,42 @@ def test_files_equal_requires_equal_regular_files(tmp_path: Path) -> None:
 def test_bool_text_uses_lowercase_boolean_literals() -> None:
     assert bool_text(True) == "true"
     assert bool_text(False) == "false"
+
+
+def test_experiment_apparatus_state_records_application_scope(
+    tmp_path: Path,
+) -> None:
+    write_experiment_apparatus_state(
+        tmp_path,
+        experiment_id="controlled_tool_use_multiscenario_v1",
+        source_sha256="abc123",
+        application_scope="tools",
+        resources=[{"kind": "tool", "id": "acmm_tools"}],
+    )
+
+    state = read_experiment_apparatus_state(tmp_path)
+
+    assert state is not None
+    assert state["schema_version"] == "0.2"
+    assert state["application_scope"] == "tools"
+    assert state["experiment_id"] == "controlled_tool_use_multiscenario_v1"
+
+
+def test_experiment_apparatus_state_reads_legacy_scope_as_full_experiment(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / ".acmm-experiment-apparatus.json"
+    path.write_text(
+        "{\n"
+        '  "schema_version": "0.1",\n'
+        '  "experiment_id": "controlled_tool_use_multiscenario_v1",\n'
+        '  "source_sha256": "abc123",\n'
+        '  "resources": []\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    state = read_experiment_apparatus_state(tmp_path)
+
+    assert state is not None
+    assert state["application_scope"] == "experiment"

@@ -38,9 +38,6 @@ def test_hermes_profile_loads_repository_baseline() -> None:
     assert profile.experiment_isolation.tool_search_enabled == "off"
     assert profile.deployment_directory == Path("hermes")
     assert profile.data_directory == Path("data")
-    assert profile.plugins[0].name == "acmm-tools"
-    assert profile.plugins[0].enabled is True
-    assert profile.plugins[0].allow_tool_override is False
-    assert profile.plugins[0].toolsets == ("acmm",)
+    assert profile.plugins == ()
     assert "experiment" in profile.reset_scopes
     assert profile.reset_scopes["configuration"] == (Path("config.yaml"),)

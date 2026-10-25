@@ -37,8 +37,14 @@ STANDARD_AGENT_COMMANDS = (
         "configure_apply_parser",
     ),
     command_definition(
+        "apply-experiment",
+        "Compatibility alias for apply --experiment EXPERIMENT_ID.",
+        "run_apply_experiment",
+        "configure_apply_experiment_parser",
+    ),
+    command_definition(
         "apply-tools",
-        "Reconcile repository-managed agent tools.",
+        "Reconcile baseline or experiment-specific tool apparatus.",
         "run_apply_tools",
         "configure_apply_tools_parser",
     ),
@@ -102,10 +108,27 @@ class agent_cli(ABC):
         del parser
 
     def configure_apply_parser(self, parser: argparse.ArgumentParser) -> None:
-        del parser
+        parser.add_argument(
+            "--experiment",
+            dest="experiment_id",
+            help=(
+                "Apply the selected experiment after the subject baseline. "
+                "Without this option, apply the baseline only."
+            ),
+        )
+
+    def configure_apply_experiment_parser(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("experiment_id")
 
     def configure_apply_tools_parser(self, parser: argparse.ArgumentParser) -> None:
-        del parser
+        parser.add_argument(
+            "--experiment",
+            dest="experiment_id",
+            help=(
+                "Apply the selected experiment's tool apparatus. Without this "
+                "option, reconcile baseline tool policy only."
+            ),
+        )
 
     def configure_status_parser(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--json", action="store_true")
@@ -131,6 +154,10 @@ class agent_cli(ABC):
 
     @abstractmethod
     def run_apply(self, args: argparse.Namespace) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
+    def run_apply_experiment(self, args: argparse.Namespace) -> int:
         raise NotImplementedError
 
     @abstractmethod

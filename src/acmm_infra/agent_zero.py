@@ -14,13 +14,22 @@ from acmm_infra.agent_zero_api import agent_zero_api_client, agent_zero_api_erro
 from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
 from acmm_infra.deployment import (
     bool_text,
+    clear_experiment_apparatus_state,
+    experiment_application_scope,
     files_equal,
     install_default_if_missing,
     read_env,
+    read_experiment_apparatus_state,
     write_env,
+    write_experiment_apparatus_state,
 )
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.profiles.agent_zero import agent_zero_profile, managed_agent_zero_plugin
+from acmm_infra.profiles.experiments import (
+    experiment_apparatus_sha256,
+    registered_experiment_apparatus_ids,
+    with_agent_zero_experiment,
+)
 
 
 _RETIRED_ENV_KEYS = (
@@ -43,11 +52,13 @@ class agent_zero_manager:
         profile: agent_zero_profile,
         docker: docker_client,
         api: agent_zero_api_client | None = None,
+        experiment_id: str | None = None,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.runtime_root = Path(runtime_root).expanduser().resolve()
         self.profile = profile
         self.docker = docker
+        self.experiment_id = experiment_id
         self.deployment_root = (
             self.runtime_root / profile.deployment_directory
         ).resolve()
@@ -106,6 +117,7 @@ class agent_zero_manager:
             )
 
         report = progress if progress is not None else lambda message: None
+        experiment_id = self.experiment_id
         report("[1/5] Reconciling Agent Zero deployment files and environment.")
         self.initialize_deployment()
 
@@ -127,7 +139,19 @@ class agent_zero_manager:
         try:
             self._wait_until_ready(timeout_seconds)
 
-            report("[3/5] Synchronizing managed plugins and ACMM profile files.")
+            if experiment_id is None:
+                report("[3/5] Reconciling baseline profile files and Tool policy.")
+            else:
+                report(
+                    "[3/5] Reconciling Agent Zero apparatus for experiment "
+                    f"'{experiment_id}'."
+                )
+            desired_destinations = {
+                plugin.destination.as_posix() for plugin in self.profile.plugins
+            }
+            self._remove_stale_experiment_plugins(
+                desired_destinations=desired_destinations
+            )
             synchronized = self._reconcile_plugins_live()
             file_state = self._reconcile_application_files_live()
 
@@ -138,13 +162,19 @@ class agent_zero_manager:
         finally:
             require_success(self.docker.down(), "Stopping Agent Zero provisioning service")
 
-        report("[5/5] Agent Zero application baseline reconciled and verified.")
+        if experiment_id is None:
+            report("[5/5] Agent Zero baseline reconciled and verified.")
+        else:
+            report(
+                "[5/5] Agent Zero experiment environment reconciled and verified: "
+                f"{experiment_id}."
+            )
         if live_state is None or live_state.get("error"):
             detail = "unknown application verification failure"
             if live_state is not None:
                 detail = str(live_state.get("error") or detail)
             raise infrastructure_error(
-                "Agent Zero application baseline could not be verified: " + detail
+                "Agent Zero application state could not be verified: " + detail
             )
         if not live_state["settings_exact"]:
             raise infrastructure_error(
@@ -153,6 +183,30 @@ class agent_zero_manager:
         if not live_state["model_config_exact"]:
             raise infrastructure_error(
                 "Agent Zero model preset/profile selection does not match the ACMM profile."
+            )
+
+        source_sha256: str | None = None
+        if experiment_id is None:
+            clear_experiment_apparatus_state(self.deployment_root)
+        else:
+            source_sha256 = experiment_apparatus_sha256(
+                self.repo_root,
+                "agent-zero",
+                experiment_id,
+            )
+            write_experiment_apparatus_state(
+                self.deployment_root,
+                experiment_id=experiment_id,
+                source_sha256=source_sha256,
+                application_scope="experiment",
+                resources=[
+                    {
+                        "kind": "plugin",
+                        "name": plugin.name,
+                        "destination": plugin.destination.as_posix(),
+                    }
+                    for plugin in self.profile.plugins
+                ],
             )
 
         return {
@@ -172,27 +226,200 @@ class agent_zero_manager:
             "model_preset_state": model_state,
             "persistent_settings": settings_state,
             "provisioning_service": "stopped after apply",
+            "experiment_id": experiment_id,
+            "source_sha256": source_sha256,
+            "application_scope": (
+                "experiment" if experiment_id is not None else None
+            ),
         }
 
-    def apply_tools(self) -> dict[str, Any]:
-        self.initialize_deployment()
+    def apply_experiment(
+        self,
+        experiment_id: str,
+        *,
+        application_scope: experiment_application_scope = "experiment",
+        timeout_seconds: float = 120.0,
+    ) -> dict[str, Any]:
+        if not self.profile.plugins:
+            raise infrastructure_error(
+                "Agent Zero experiment profile contains no managed apparatus plugins."
+            )
+        if timeout_seconds <= 0:
+            raise infrastructure_error(
+                "Agent Zero apply-experiment timeout must be greater than zero seconds."
+            )
 
+        self.initialize_deployment()
         if self.docker.container_running():
             raise infrastructure_error(
                 "Agent Zero is running. Run 'acmm-infra agent-zero down' before "
-                "reconciling managed tools."
+                "applying experiment apparatus."
             )
 
         require_success(self.docker.compose_config(), "Docker Compose validation")
-        require_success(self.docker.up(), "Starting Agent Zero Tool provisioning service")
+        require_success(
+            self.docker.up(),
+            "Starting Agent Zero experiment provisioning service",
+        )
         try:
+            self._wait_until_ready(timeout_seconds)
+            desired_destinations = {
+                plugin.destination.as_posix() for plugin in self.profile.plugins
+            }
+            self._remove_stale_experiment_plugins(
+                desired_destinations=desired_destinations
+            )
             synchronized = self._reconcile_plugins_live()
+            self._reconcile_application_files_live()
         finally:
             require_success(
                 self.docker.down(),
-                "Stopping Agent Zero Tool provisioning service",
+                "Stopping Agent Zero experiment provisioning service",
             )
-        return {"plugins_synchronized": synchronized}
+
+        source_sha256 = experiment_apparatus_sha256(
+            self.repo_root,
+            "agent-zero",
+            experiment_id,
+        )
+        write_experiment_apparatus_state(
+            self.deployment_root,
+            experiment_id=experiment_id,
+            source_sha256=source_sha256,
+            application_scope=application_scope,
+            resources=[
+                {
+                    "kind": "plugin",
+                    "name": plugin.name,
+                    "destination": plugin.destination.as_posix(),
+                }
+                for plugin in self.profile.plugins
+            ],
+        )
+        return {
+            "experiment_id": experiment_id,
+            "source_sha256": source_sha256,
+            "application_scope": application_scope,
+            "plugins_synchronized": synchronized,
+        }
+
+    def apply_tools(
+        self,
+        experiment_id: str | None,
+        *,
+        timeout_seconds: float = 120.0,
+    ) -> dict[str, Any]:
+        if experiment_id is not None:
+            if not self.profile.plugins:
+                raise infrastructure_error(
+                    "Agent Zero experiment profile contains no managed apparatus plugins."
+                )
+            return self._apply_tool_apparatus(
+                experiment_id=experiment_id,
+                timeout_seconds=timeout_seconds,
+            )
+
+        if timeout_seconds <= 0:
+            raise infrastructure_error(
+                "Agent Zero apply-tools timeout must be greater than zero seconds."
+            )
+
+        self.initialize_deployment()
+        if self.docker.container_running():
+            raise infrastructure_error(
+                "Agent Zero is running. Run 'acmm-infra agent-zero down' before "
+                "applying baseline tool policy."
+            )
+
+        require_success(self.docker.compose_config(), "Docker Compose validation")
+        require_success(
+            self.docker.up(),
+            "Starting Agent Zero tool-policy provisioning service",
+        )
+        try:
+            self._wait_until_ready(timeout_seconds)
+            self._remove_stale_experiment_plugins(desired_destinations=set())
+            synchronized = self._reconcile_plugins_live()
+            file_state = self._reconcile_tool_policy_live()
+        finally:
+            require_success(
+                self.docker.down(),
+                "Stopping Agent Zero tool-policy provisioning service",
+            )
+
+        clear_experiment_apparatus_state(self.deployment_root)
+        return {
+            "experiment_id": None,
+            "application_scope": "tools",
+            "plugins_synchronized": synchronized,
+            "application_files": file_state,
+        }
+
+    def _apply_tool_apparatus(
+        self,
+        *,
+        experiment_id: str,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        if timeout_seconds <= 0:
+            raise infrastructure_error(
+                "Agent Zero apply-tools timeout must be greater than zero seconds."
+            )
+
+        self.initialize_deployment()
+        if self.docker.container_running():
+            raise infrastructure_error(
+                "Agent Zero is running. Run 'acmm-infra agent-zero down' before "
+                "applying experiment tool apparatus."
+            )
+
+        require_success(self.docker.compose_config(), "Docker Compose validation")
+        require_success(
+            self.docker.up(),
+            "Starting Agent Zero tool-policy provisioning service",
+        )
+        try:
+            self._wait_until_ready(timeout_seconds)
+            desired_destinations = {
+                plugin.destination.as_posix() for plugin in self.profile.plugins
+            }
+            self._remove_stale_experiment_plugins(
+                desired_destinations=desired_destinations
+            )
+            synchronized = self._reconcile_plugins_live()
+            file_state = self._reconcile_tool_policy_live()
+        finally:
+            require_success(
+                self.docker.down(),
+                "Stopping Agent Zero tool-policy provisioning service",
+            )
+
+        source_sha256 = experiment_apparatus_sha256(
+            self.repo_root,
+            "agent-zero",
+            experiment_id,
+        )
+        write_experiment_apparatus_state(
+            self.deployment_root,
+            experiment_id=experiment_id,
+            source_sha256=source_sha256,
+            application_scope="tools",
+            resources=[
+                {
+                    "kind": "plugin",
+                    "name": plugin.name,
+                    "destination": plugin.destination.as_posix(),
+                }
+                for plugin in self.profile.plugins
+            ],
+        )
+        return {
+            "experiment_id": experiment_id,
+            "source_sha256": source_sha256,
+            "application_scope": "tools",
+            "plugins_synchronized": synchronized,
+            "application_files": file_state,
+        }
 
     def status(self) -> dict[str, Any]:
         running, image = self.docker.container_info()
@@ -220,6 +447,9 @@ class agent_zero_manager:
         return {
             "runtime_root": str(self.runtime_root),
             "deployment_root": str(self.deployment_root),
+            "experiment_apparatus": read_experiment_apparatus_state(
+                self.deployment_root
+            ),
             "data_root": str(self.data_root),
             "deployment": {
                 "compose_path": str(compose_path),
@@ -263,6 +493,44 @@ class agent_zero_manager:
         observed = status["observed"]
         deployment = status["deployment"]
         checks: list[doctor_check] = []
+
+        marker = status["experiment_apparatus"]
+        if self.experiment_id is None:
+            apparatus_ok = marker is None
+            apparatus_detail = (
+                "none"
+                if marker is None
+                else f"active={marker.get('experiment_id')!r}"
+            )
+        else:
+            expected_apparatus_hash = experiment_apparatus_sha256(
+                self.repo_root,
+                "agent-zero",
+                self.experiment_id,
+            )
+            apparatus_ok = (
+                isinstance(marker, dict)
+                and marker.get("experiment_id") == self.experiment_id
+                and marker.get("source_sha256") == expected_apparatus_hash
+            )
+            apparatus_detail = (
+                f"observed_id={marker.get('experiment_id')!r}, "
+                f"observed_sha256={marker.get('source_sha256')!r}, "
+                f"expected_id={self.experiment_id!r}, "
+                f"expected_sha256={expected_apparatus_hash!r}"
+                if isinstance(marker, dict)
+                else (
+                    f"observed=None, expected_id={self.experiment_id!r}, "
+                    f"expected_sha256={expected_apparatus_hash!r}"
+                )
+            )
+        checks.append(
+            doctor_check(
+                "experiment_apparatus_identity",
+                apparatus_ok,
+                apparatus_detail,
+            )
+        )
 
         docker_version = self.docker.docker_version()
         checks.append(
@@ -644,6 +912,46 @@ class agent_zero_manager:
             ).read_bytes(),
         }
 
+    def _remove_stale_experiment_plugins(
+        self,
+        *,
+        desired_destinations: set[str],
+    ) -> None:
+        candidates: set[str] = set()
+        state = read_experiment_apparatus_state(self.deployment_root)
+        if state is not None:
+            resources = state.get("resources")
+            if isinstance(resources, list):
+                for resource in resources:
+                    if (
+                        isinstance(resource, dict)
+                        and resource.get("kind") == "plugin"
+                        and isinstance(resource.get("destination"), str)
+                    ):
+                        candidates.add(resource["destination"])
+
+        for experiment_id in registered_experiment_apparatus_ids(
+            self.repo_root,
+            "agent-zero",
+        ):
+            profile = with_agent_zero_experiment(
+                self.repo_root,
+                self.profile,
+                experiment_id,
+            )
+            candidates.update(
+                plugin.destination.as_posix() for plugin in profile.plugins
+            )
+
+        for destination in sorted(candidates - desired_destinations):
+            require_success(
+                self.docker.replace_container_tree(
+                    f"/a0/usr/{destination}",
+                    {},
+                ),
+                f"Removing stale Agent Zero experiment plugin '{destination}'",
+            )
+
     def _reconcile_plugins_live(self) -> tuple[str, ...]:
         synchronized: list[str] = []
         for plugin in self.profile.plugins:
@@ -694,6 +1002,33 @@ class agent_zero_manager:
             "Reconciling Agent Zero ACMM profile files",
         )
         return states
+
+    def _reconcile_tool_policy_live(self) -> dict[str, str]:
+        profile_root = Path("agents") / self.profile.agent_profile
+        relative = profile_root / "plugins/_tool_access/config.json"
+        payload = self._application_file_payloads()[relative]
+        target = (self.data_root / relative).resolve()
+        if not target.is_relative_to(self.data_root):
+            raise infrastructure_error(
+                f"Refusing Agent Zero application file outside data root: '{target}'."
+            )
+
+        previous = target.read_bytes() if target.is_file() else None
+        state = (
+            "created"
+            if previous is None
+            else "unchanged"
+            if previous == payload
+            else "updated"
+        )
+        require_success(
+            self.docker.write_container_files(
+                f"/a0/usr/{profile_root.as_posix()}",
+                {"plugins/_tool_access/config.json": payload},
+            ),
+            "Reconciling Agent Zero Tool policy",
+        )
+        return {str(relative): state}
 
     def _reconcile_model_preset(self) -> str:
         client = self.api

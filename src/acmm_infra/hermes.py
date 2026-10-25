@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 from pathlib import Path
 import shutil
@@ -9,8 +10,19 @@ from typing import Any, Callable, Literal
 import yaml
 
 from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
-from acmm_infra.deployment import install_default_if_missing
+from acmm_infra.deployment import (
+    clear_experiment_apparatus_state,
+    experiment_application_scope,
+    install_default_if_missing,
+    read_experiment_apparatus_state,
+    write_experiment_apparatus_state,
+)
 from acmm_infra.docker import docker_client
+from acmm_infra.profiles.experiments import (
+    experiment_apparatus_sha256,
+    registered_experiment_apparatus_ids,
+    with_hermes_experiment,
+)
 from acmm_infra.profiles.hermes import hermes_profile, managed_hermes_plugin
 from acmm_infra.hermes_client import hermes_client, managed_overlay_toolsets
 
@@ -25,11 +37,13 @@ class hermes_manager:
         runtime_root: str | Path,
         profile: hermes_profile,
         docker: docker_client,
+        experiment_id: str | None = None,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.runtime_root = Path(runtime_root).expanduser().resolve()
         self.profile = profile
         self.docker = docker
+        self.experiment_id = experiment_id
         self.client = hermes_client(docker)
         self.deployment_root = (
             self.runtime_root / profile.deployment_directory
@@ -87,6 +101,7 @@ class hermes_manager:
             )
 
         report = progress if progress is not None else lambda message: None
+        experiment_id = self.experiment_id
 
         if output_mode != "quiet":
             report("[1/4] Verifying initialized Hermes deployment.")
@@ -100,32 +115,91 @@ class hermes_manager:
 
         self._validate_existing_config_version()
 
-        if output_mode != "quiet":
-            report("[2/4] Synchronizing repository-managed Hermes plugins.")
+        desired_plugins = {
+            (plugin.name, plugin.destination.as_posix())
+            for plugin in self.profile.plugins
+        }
+        previous_state = read_experiment_apparatus_state(self.deployment_root)
+        stale_plugins = self._stale_plugins(
+            previous_state,
+            desired_plugins=desired_plugins,
+        )
+
         synchronized: list[str] = []
+        if experiment_id is None:
+            if output_mode != "quiet":
+                report("[2/4] Reconciling experiment-independent Hermes state.")
+        else:
+            if output_mode != "quiet":
+                report(
+                    "[2/4] Synchronizing Hermes apparatus for experiment "
+                    f"'{experiment_id}'."
+                )
+            for plugin in self.profile.plugins:
+                self._sync_plugin(plugin)
+                synchronized.append(plugin.name)
 
-        for plugin in self.profile.plugins:
-            self._sync_plugin(plugin)
-            synchronized.append(plugin.name)
-
-        operation_count = self.client.profile_operation_count(self.profile)
+        provisioning_profile = replace(
+            self.profile,
+            plugins=tuple(self.profile.plugins) + tuple(stale_plugins),
+        )
+        operation_count = self.client.profile_operation_count(provisioning_profile)
 
         if output_mode != "quiet":
+            target = (
+                "experiment-specific Hermes state"
+                if experiment_id is not None
+                else "Hermes baseline state"
+            )
             report(
                 "[3/4] Applying "
-                f"{operation_count} Hermes operations in one provisioning container "
-                f"(timeout {timeout_seconds:g}s)."
+                f"{operation_count} operations for {target} in one provisioning "
+                f"container (timeout {timeout_seconds:g}s)."
             )
 
         self.client.apply_profile(
-            self.profile,
+            provisioning_profile,
             timeout_seconds=timeout_seconds,
             output_mode=output_mode,
             output=report,
         )
 
+        for plugin in stale_plugins:
+            self._remove_plugin_destination(plugin.destination)
+
+        source_sha256: str | None = None
+        if experiment_id is None:
+            clear_experiment_apparatus_state(self.deployment_root)
+        else:
+            source_sha256 = experiment_apparatus_sha256(
+                self.repo_root,
+                "hermes",
+                experiment_id,
+            )
+            write_experiment_apparatus_state(
+                self.deployment_root,
+                experiment_id=experiment_id,
+                source_sha256=source_sha256,
+                application_scope="experiment",
+                resources=[
+                    {
+                        "kind": "plugin",
+                        "name": plugin.name,
+                        "destination": plugin.destination.as_posix(),
+                        "toolsets": ",".join(plugin.toolsets),
+                    }
+                    for plugin in self.profile.plugins
+                ],
+            )
+
         if output_mode != "quiet":
-            report("[4/4] Hermes infrastructure baseline applied successfully.")
+            if experiment_id is None:
+                report("[4/4] Hermes baseline applied successfully.")
+            else:
+                report(
+                    "[4/4] Hermes experiment environment applied successfully: "
+                    f"{experiment_id}."
+                )
 
         return {
             "model_provider": self.profile.model_provider,
@@ -148,72 +222,164 @@ class hermes_manager:
                     self.profile.experiment_isolation.tool_search_enabled
                 ),
             },
+            "experiment_id": experiment_id,
+            "source_sha256": source_sha256,
+            "application_scope": (
+                "experiment" if experiment_id is not None else None
+            ),
             "plugins_synchronized": synchronized,
             "provisioning_operations": operation_count,
         }
 
 
-    def apply_tools(
+    def apply_experiment(
         self,
+        experiment_id: str,
         *,
+        application_scope: experiment_application_scope = "experiment",
         timeout_seconds: float = 120.0,
         progress: Callable[[str], None] | None = None,
         output_mode: Literal["quiet", "normal", "verbose"] = "normal",
     ) -> dict[str, Any]:
-        if timeout_seconds <= 0:
+        if not self.profile.plugins:
             raise infrastructure_error(
-                "Hermes tool apply timeout must be greater than zero seconds."
-            )
-
-        if output_mode not in {"quiet", "normal", "verbose"}:
-            raise infrastructure_error(
-                f"Unknown Hermes tool apply output mode: '{output_mode}'."
+                "Hermes experiment profile contains no managed apparatus plugins."
             )
 
         report = progress if progress is not None else lambda message: None
-
-        if output_mode != "quiet":
-            report("[1/3] Verifying initialized Hermes deployment.")
         self.initialize_deployment()
-
         if self.docker.container_running():
             raise infrastructure_error(
                 "Hermes gateway is running. Run 'acmm-infra hermes down' before "
-                "reconciling managed tools."
+                "applying experiment apparatus."
             )
-
         self._validate_existing_config_version()
 
+        desired_plugins = {
+            (plugin.name, plugin.destination.as_posix())
+            for plugin in self.profile.plugins
+        }
+        previous_state = read_experiment_apparatus_state(self.deployment_root)
+        stale_plugins = self._stale_plugins(
+            previous_state,
+            desired_plugins=desired_plugins,
+        )
+
         if output_mode != "quiet":
-            report("[2/3] Replacing repository-managed Hermes tool plugins.")
-
+            report("[1/3] Synchronizing selected Hermes experiment apparatus.")
         synchronized: list[str] = []
-
         for plugin in self.profile.plugins:
             self._sync_plugin(plugin)
             synchronized.append(plugin.name)
 
-        operation_count = self.client.tool_operation_count(self.profile)
-
+        provisioning_profile = replace(
+            self.profile,
+            plugins=tuple(self.profile.plugins) + tuple(stale_plugins),
+        )
+        operation_count = self.client.tool_operation_count(provisioning_profile)
         if output_mode != "quiet":
             report(
-                "[3/3] Applying "
-                f"{operation_count} managed-tool operation(s) in one "
-                f"provisioning container (timeout {timeout_seconds:g}s)."
+                "[2/3] Applying "
+                f"{operation_count} experiment-apparatus operation(s)."
             )
-
         self.client.apply_tools(
-            self.profile,
+            provisioning_profile,
             timeout_seconds=timeout_seconds,
             output_mode=output_mode,
             output=report,
         )
 
+        for plugin in stale_plugins:
+            self._remove_plugin_destination(plugin.destination)
+
+        source_sha256 = experiment_apparatus_sha256(
+            self.repo_root,
+            "hermes",
+            experiment_id,
+        )
+        write_experiment_apparatus_state(
+            self.deployment_root,
+            experiment_id=experiment_id,
+            source_sha256=source_sha256,
+            application_scope=application_scope,
+            resources=[
+                {
+                    "kind": "plugin",
+                    "name": plugin.name,
+                    "destination": plugin.destination.as_posix(),
+                    "toolsets": ",".join(plugin.toolsets),
+                }
+                for plugin in self.profile.plugins
+            ],
+        )
+        if output_mode != "quiet":
+            report("[3/3] Hermes experiment apparatus applied successfully.")
+
         return {
+            "experiment_id": experiment_id,
+            "source_sha256": source_sha256,
+            "application_scope": application_scope,
             "plugins_synchronized": synchronized,
-            "tool_search_enabled": (
-                self.profile.experiment_isolation.tool_search_enabled
-            ),
+            "tool_search_enabled": self.profile.experiment_isolation.tool_search_enabled,
+            "provisioning_operations": operation_count,
+        }
+
+    def apply_tools(
+        self,
+        experiment_id: str | None,
+        *,
+        timeout_seconds: float = 120.0,
+        progress: Callable[[str], None] | None = None,
+        output_mode: Literal["quiet", "normal", "verbose"] = "normal",
+    ) -> dict[str, Any]:
+        if experiment_id is not None:
+            return self.apply_experiment(
+                experiment_id,
+                application_scope="tools",
+                timeout_seconds=timeout_seconds,
+                progress=progress,
+                output_mode=output_mode,
+            )
+
+        if timeout_seconds <= 0:
+            raise infrastructure_error(
+                "Hermes apply-tools timeout must be greater than zero seconds."
+            )
+
+        report = progress if progress is not None else lambda message: None
+        self.initialize_deployment()
+        if self.docker.container_running():
+            raise infrastructure_error(
+                "Hermes gateway is running. Run 'acmm-infra hermes down' before "
+                "applying baseline tool policy."
+            )
+        self._validate_existing_config_version()
+
+        previous_state = read_experiment_apparatus_state(self.deployment_root)
+        stale_plugins = self._stale_plugins(previous_state, desired_plugins=set())
+        provisioning_profile = replace(self.profile, plugins=tuple(stale_plugins))
+
+        if output_mode != "quiet":
+            report("[1/2] Reconciling Hermes baseline tool policy.")
+        operation_count = self.client.tool_operation_count(provisioning_profile)
+        self.client.apply_tools(
+            provisioning_profile,
+            timeout_seconds=timeout_seconds,
+            output_mode=output_mode,
+            output=report,
+        )
+
+        for plugin in stale_plugins:
+            self._remove_plugin_destination(plugin.destination)
+        clear_experiment_apparatus_state(self.deployment_root)
+
+        if output_mode != "quiet":
+            report("[2/2] Hermes baseline tool policy applied successfully.")
+
+        return {
+            "experiment_id": None,
+            "application_scope": "tools",
+            "plugins_synchronized": [],
             "provisioning_operations": operation_count,
         }
 
@@ -316,6 +482,9 @@ class hermes_manager:
         return {
             "runtime_root": str(self.runtime_root),
             "deployment_root": str(self.deployment_root),
+            "experiment_apparatus": read_experiment_apparatus_state(
+                self.deployment_root
+            ),
             "data_root": str(self.data_root),
             "deployment": {
                 "compose_path": str(deployed_compose),
@@ -434,6 +603,44 @@ class hermes_manager:
                 detail=str(self.data_root),
             ),
         ]
+
+        marker = status["experiment_apparatus"]
+        if self.experiment_id is None:
+            apparatus_ok = marker is None
+            apparatus_detail = (
+                "none"
+                if marker is None
+                else f"active={marker.get('experiment_id')!r}"
+            )
+        else:
+            expected_apparatus_hash = experiment_apparatus_sha256(
+                self.repo_root,
+                "hermes",
+                self.experiment_id,
+            )
+            apparatus_ok = (
+                isinstance(marker, dict)
+                and marker.get("experiment_id") == self.experiment_id
+                and marker.get("source_sha256") == expected_apparatus_hash
+            )
+            apparatus_detail = (
+                f"observed_id={marker.get('experiment_id')!r}, "
+                f"observed_sha256={marker.get('source_sha256')!r}, "
+                f"expected_id={self.experiment_id!r}, "
+                f"expected_sha256={expected_apparatus_hash!r}"
+                if isinstance(marker, dict)
+                else (
+                    f"observed=None, expected_id={self.experiment_id!r}, "
+                    f"expected_sha256={expected_apparatus_hash!r}"
+                )
+            )
+        checks.append(
+            doctor_check(
+                "experiment_apparatus_identity",
+                apparatus_ok,
+                apparatus_detail,
+            )
+        )
 
         for plugin in status["plugins"]:
             checks.append(
@@ -901,6 +1108,88 @@ class hermes_manager:
             raise infrastructure_error(
                 f"Could not secure Hermes secret store '{env_path}': {exc}"
             ) from exc
+
+    def _stale_plugins(
+        self,
+        state: dict[str, object] | None,
+        *,
+        desired_plugins: set[tuple[str, str]],
+    ) -> list[managed_hermes_plugin]:
+        stale: dict[tuple[str, str], managed_hermes_plugin] = {}
+
+        def add_stale(
+            name: str,
+            destination: str,
+            toolsets: tuple[str, ...],
+        ) -> None:
+            key = (name, destination)
+            if key in desired_plugins:
+                return
+            existing = stale.get(key)
+            if existing is not None:
+                toolsets = tuple(dict.fromkeys(existing.toolsets + toolsets))
+            stale[key] = managed_hermes_plugin(
+                name=name,
+                source=Path("."),
+                destination=Path(destination),
+                enabled=False,
+                allow_tool_override=False,
+                toolsets=toolsets,
+            )
+
+        if state is not None:
+            resources = state.get("resources")
+            if isinstance(resources, list):
+                for resource in resources:
+                    if (
+                        not isinstance(resource, dict)
+                        or resource.get("kind") != "plugin"
+                    ):
+                        continue
+                    name = resource.get("name")
+                    destination = resource.get("destination")
+                    toolsets_value = resource.get("toolsets", "")
+                    if (
+                        not isinstance(name, str)
+                        or not isinstance(destination, str)
+                        or not isinstance(toolsets_value, str)
+                    ):
+                        continue
+                    add_stale(
+                        name,
+                        destination,
+                        tuple(item for item in toolsets_value.split(",") if item),
+                    )
+
+        for experiment_id in registered_experiment_apparatus_ids(
+            self.repo_root,
+            "hermes",
+        ):
+            profile = with_hermes_experiment(
+                self.repo_root,
+                self.profile,
+                experiment_id,
+            )
+            for plugin in profile.plugins:
+                deployed = _safe_runtime_target(
+                    self.data_root,
+                    plugin.destination,
+                )
+                if deployed.exists():
+                    add_stale(
+                        plugin.name,
+                        plugin.destination.as_posix(),
+                        plugin.toolsets,
+                    )
+
+        return list(stale.values())
+
+    def _remove_plugin_destination(self, destination: Path) -> None:
+        target = _safe_runtime_target(self.data_root, destination)
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
 
     def _sync_plugin(self, plugin: managed_hermes_plugin) -> None:
         source = (self.repo_root / plugin.source).resolve()

@@ -7,8 +7,10 @@ import sys
 
 from acmm_infra.commands.agent import agent_cli
 from acmm_infra.agent_zero import agent_zero_manager
+from acmm_infra.deployment import active_experiment_id
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.profiles.agent_zero import load_agent_zero_profile
+from acmm_infra.profiles.experiments import with_agent_zero_experiment
 
 
 class agent_zero_cli(agent_cli):
@@ -20,13 +22,41 @@ class agent_zero_cli(agent_cli):
     def help(self) -> str:
         return "Manage Agent Zero infrastructure."
 
-    def _context(self, args: argparse.Namespace):
+    def _context_for_experiment(
+        self,
+        args: argparse.Namespace,
+        experiment_id: str | None,
+    ):
         repo_root = Path(args.repo_root).expanduser().resolve()
         runtime_root = Path(args.runtime_root).expanduser().resolve()
         profile = load_agent_zero_profile(repo_root)
+        if experiment_id is not None:
+            profile = with_agent_zero_experiment(repo_root, profile, experiment_id)
         docker = docker_client(repo_root, runtime_root, profile)
-        manager = agent_zero_manager(repo_root, runtime_root, profile, docker)
+        manager = agent_zero_manager(
+            repo_root,
+            runtime_root,
+            profile,
+            docker,
+            experiment_id=experiment_id,
+        )
         return repo_root, runtime_root, profile, docker, manager
+
+    def _context(self, args: argparse.Namespace):
+        return self._context_for_experiment(
+            args,
+            getattr(args, "experiment_id", None),
+        )
+
+    def _deployed_context(self, args: argparse.Namespace):
+        repo_root = Path(args.repo_root).expanduser().resolve()
+        runtime_root = Path(args.runtime_root).expanduser().resolve()
+        baseline = load_agent_zero_profile(repo_root)
+        deployment_root = (
+            runtime_root / baseline.deployment_directory
+        ).resolve()
+        experiment_id = active_experiment_id(deployment_root)
+        return self._context_for_experiment(args, experiment_id)
 
     def configure_up_parser(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
@@ -37,11 +67,30 @@ class agent_zero_cli(agent_cli):
         )
 
     def configure_apply_parser(self, parser: argparse.ArgumentParser) -> None:
+        super().configure_apply_parser(parser)
         parser.add_argument(
             "--timeout-seconds",
             type=float,
             default=120.0,
             help="Maximum time to wait for temporary provisioning startup.",
+        )
+
+    def configure_apply_experiment_parser(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("experiment_id")
+        parser.add_argument(
+            "--timeout-seconds",
+            type=float,
+            default=120.0,
+            help="Maximum time to wait for temporary provisioning startup.",
+        )
+
+    def configure_apply_tools_parser(self, parser: argparse.ArgumentParser) -> None:
+        super().configure_apply_tools_parser(parser)
+        parser.add_argument(
+            "--timeout-seconds",
+            type=float,
+            default=120.0,
+            help="Maximum time to wait for temporary tool provisioning startup.",
         )
 
     def run_init(self, args: argparse.Namespace) -> int:
@@ -68,13 +117,33 @@ class agent_zero_cli(agent_cli):
         return 0
 
     def run_apply(self, args: argparse.Namespace) -> int:
-        _, _, _, _, manager = self._context(args)
-        print("Applying Agent Zero infrastructure baseline...", flush=True)
+        experiment_id = args.experiment_id
+        if experiment_id is None:
+            print(
+                "WARNING: no experiment selected; applying the "
+                "experiment-independent Agent Zero baseline and removing active "
+                "experiment apparatus.",
+                file=sys.stderr,
+            )
+
+        _, _, _, _, manager = self._context_for_experiment(args, experiment_id)
+        if experiment_id is None:
+            print("Applying Agent Zero baseline...", flush=True)
+        else:
+            print(
+                "Applying Agent Zero environment for experiment "
+                f"'{experiment_id}'...",
+                flush=True,
+            )
         result = manager.apply(
             timeout_seconds=args.timeout_seconds,
             progress=lambda message: print(message, flush=True),
         )
-        print("Agent Zero infrastructure baseline applied.")
+        if experiment_id is None:
+            print("Agent Zero baseline applied.")
+        else:
+            print(f"Agent Zero experiment environment applied: {experiment_id}")
+
         print(f"Agent Zero image:       {result['image']}")
         print(f"Agent profile:          {result['agent_profile']}")
         print(f"Model preset:           {result['model_preset']}")
@@ -94,30 +163,46 @@ class agent_zero_cli(agent_cli):
         )
         file_states = set(result["application_files"].values())
         print(
-            "Application baseline:   "
+            "Application state:      "
             + ("unchanged" if file_states == {"unchanged"} else "reconciled")
         )
         print(f"Model preset state:     {result['model_preset_state']}")
         print(f"Persistent settings:    {result['persistent_settings']}")
         print(f"Provisioning service:   {result['provisioning_service']}")
+
+        if experiment_id is not None:
+            print(f"Experiment:             {result['experiment_id']}")
+            print(f"Apparatus SHA-256:      {result['source_sha256']}")
+            print("Application scope:      experiment")
         return 0
 
+    def run_apply_experiment(self, args: argparse.Namespace) -> int:
+        return self.run_apply(args)
+
     def run_apply_tools(self, args: argparse.Namespace) -> int:
-        _, _, _, _, manager = self._context(args)
-        result = manager.apply_tools()
-        print("Agent Zero managed tools reconciled.")
-        print(
-            "  plugins: "
-            + (
-                ", ".join(result["plugins_synchronized"])
-                if result["plugins_synchronized"]
-                else "none"
+        experiment_id = args.experiment_id
+        if experiment_id is None:
+            print(
+                "WARNING: no experiment selected; reconciling Agent Zero "
+                "baseline tool policy only.",
+                file=sys.stderr,
             )
+
+        _, _, _, _, manager = self._context_for_experiment(args, experiment_id)
+        result = manager.apply_tools(
+            experiment_id,
+            timeout_seconds=args.timeout_seconds,
         )
+        if experiment_id is None:
+            print("Agent Zero baseline tool policy applied.")
+        else:
+            print(f"Agent Zero experiment tool apparatus applied: {experiment_id}")
+            print(f"  apparatus SHA-256: {result['source_sha256']}")
+            print("  application scope: tools")
         return 0
 
     def run_status(self, args: argparse.Namespace) -> int:
-        _, _, _, _, manager = self._context(args)
+        _, _, _, _, manager = self._deployed_context(args)
         status = manager.status()
         if args.json:
             print(json.dumps(status, indent=2, sort_keys=True))
@@ -128,6 +213,13 @@ class agent_zero_cli(agent_cli):
         print("Agent Zero infrastructure")
         print(f"  runtime root:      {status['runtime_root']}")
         print(f"  deployment root:   {status['deployment_root']}")
+        apparatus = status["experiment_apparatus"]
+        if apparatus is None:
+            print("  active experiment: none")
+        else:
+            print(f"  active experiment: {apparatus.get('experiment_id')}")
+            print(f"  application scope: {apparatus.get('application_scope')}")
+            print(f"  apparatus SHA-256: {apparatus.get('source_sha256')}")
         print(f"  compose baseline:  {status['deployment']['compose_matches_default']}")
         print(f"  container:         {desired['container_name']}")
         print(f"  running:           {observed['container_running']}")
@@ -163,7 +255,7 @@ class agent_zero_cli(agent_cli):
         return 0
 
     def run_doctor(self, args: argparse.Namespace) -> int:
-        _, _, _, _, manager = self._context(args)
+        _, _, _, _, manager = self._deployed_context(args)
         report = manager.doctor()
         if args.json:
             payload = {

@@ -173,6 +173,25 @@ def test_get_tool_returns_none_for_not_found() -> None:
     assert client.get_tool("session-token", "acmm_tools") is None
 
 
+def test_delete_tool_uses_supported_delete_endpoint() -> None:
+    captured = {}
+
+    def opener(request, *, timeout):
+        del timeout
+        captured["request"] = request
+        return fake_response(True)
+
+    client = open_webui_api_client("http://127.0.0.1:3000", opener=opener)
+
+    deleted = client.delete_tool("session-token", "acmm_tools")
+    request = captured["request"]
+
+    assert deleted is True
+    assert request.get_method() == "DELETE"
+    assert request.full_url.endswith("/api/v1/tools/id/acmm_tools/delete")
+    assert request.get_header("Authorization") == "Bearer session-token"
+
+
 def test_update_tool_valves_posts_valve_fields_directly() -> None:
     captured = {}
 

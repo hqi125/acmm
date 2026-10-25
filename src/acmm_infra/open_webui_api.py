@@ -168,6 +168,17 @@ class open_webui_api_client:
             token=token,
         )
 
+    def delete_tool(self, token: str, tool_id: str) -> bool:
+        response = self._request_json(
+            "DELETE",
+            f"/api/v1/tools/id/{tool_id}/delete",
+            token=token,
+        )
+        value = response.get("value")
+        if isinstance(value, bool):
+            return value
+        return True
+
     def _request_json(
         self,
         method: str,
@@ -230,9 +241,11 @@ class open_webui_api_client:
                 f"Open WebUI API {method} {path} returned invalid JSON."
             ) from exc
 
+        if isinstance(parsed, bool):
+            return {"value": parsed}
         if not isinstance(parsed, dict):
             raise open_webui_api_error(
-                f"Open WebUI API {method} {path} returned a non-object JSON response."
+                f"Open WebUI API {method} {path} returned unsupported JSON."
             )
 
         return parsed

@@ -4,10 +4,12 @@ from pathlib import Path
 
 from acmm_infra.hermes_client import hermes_client
 from acmm_infra.process import command_result
+from acmm_infra.profiles.experiments import with_hermes_experiment
 from acmm_infra.profiles.hermes import load_hermes_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENT_ID = "controlled_tool_use_multiscenario_v1"
 
 
 class fake_docker:
@@ -95,7 +97,11 @@ def test_client_filters_hermes_provision_progress() -> None:
 def test_client_observes_and_parses_hermes_state() -> None:
     docker = fake_docker()
     client = hermes_client(docker)  # type: ignore[arg-type]
-    profile = load_hermes_profile(ROOT)
+    profile = with_hermes_experiment(
+        ROOT,
+        load_hermes_profile(ROOT),
+        EXPERIMENT_ID,
+    )
 
     observation = client.observe(profile)
 

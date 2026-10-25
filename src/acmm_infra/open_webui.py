@@ -8,13 +8,22 @@ from typing import Any, Callable
 from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
 from acmm_infra.deployment import (
     bool_text,
+    clear_experiment_apparatus_state,
+    experiment_application_scope,
     files_equal,
     install_default_if_missing,
     read_env,
+    read_experiment_apparatus_state,
     write_env,
+    write_experiment_apparatus_state,
 )
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.open_webui_api import open_webui_api_client, open_webui_api_error
+from acmm_infra.profiles.experiments import (
+    experiment_apparatus_sha256,
+    registered_experiment_apparatus_ids,
+    with_open_webui_experiment,
+)
 from acmm_infra.profiles.open_webui import managed_open_webui_tool, open_webui_profile
 
 
@@ -26,11 +35,13 @@ class open_webui_manager:
         profile: open_webui_profile,
         docker: docker_client,
         api: open_webui_api_client | None = None,
+        experiment_id: str | None = None,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.runtime_root = Path(runtime_root).expanduser().resolve()
         self.profile = profile
         self.docker = docker
+        self.experiment_id = experiment_id
         self.deployment_root = (
             self.runtime_root / profile.deployment_directory
         ).resolve()
@@ -90,6 +101,7 @@ class open_webui_manager:
             )
 
         report = progress if progress is not None else lambda message: None
+        experiment_id = self.experiment_id
         report("[1/4] Reconciling deployment files and environment.")
         self.initialize_deployment()
 
@@ -112,17 +124,45 @@ class open_webui_manager:
             self._wait_until_ready(timeout_seconds)
             session = self._admin_session()
             token = _required_text(session, "token", "Open WebUI session")
+            desired_ids = {tool.id for tool in self.profile.tools}
+            self._remove_stale_experiment_tools(token, desired_ids=desired_ids)
 
             report("[3/4] Reconciling persistent application configuration.")
             application_result = self._reconcile_application_config(token)
 
-            report("[4/4] Reconciling repository-managed tools.")
+            if experiment_id is None:
+                report("[4/4] Reconciling baseline tool policy.")
+            else:
+                report(
+                    "[4/4] Reconciling Open WebUI apparatus for experiment "
+                    f"'{experiment_id}'."
+                )
             tools_result = self._reconcile_tools(token, session)
             provisioned = True
         finally:
             stop_result = self.docker.down()
             if provisioned:
                 require_success(stop_result, "Stopping Open WebUI provisioning service")
+
+        source_sha256: str | None = None
+        if experiment_id is None:
+            clear_experiment_apparatus_state(self.deployment_root)
+        else:
+            source_sha256 = experiment_apparatus_sha256(
+                self.repo_root,
+                "open-webui",
+                experiment_id,
+            )
+            write_experiment_apparatus_state(
+                self.deployment_root,
+                experiment_id=experiment_id,
+                source_sha256=source_sha256,
+                application_scope="experiment",
+                resources=[
+                    {"kind": "tool", "id": tool.id}
+                    for tool in self.profile.tools
+                ],
+            )
 
         return {
             "image": self.profile.image,
@@ -139,23 +179,96 @@ class open_webui_manager:
             "telemetry_enabled": self.profile.telemetry_enabled,
             "application": application_result,
             "tools": tools_result,
+            "experiment_id": experiment_id,
+            "source_sha256": source_sha256,
+            "application_scope": (
+                "experiment" if experiment_id is not None else None
+            ),
         }
 
-    def apply_tools(self, *, timeout_seconds: float = 60.0) -> dict[str, Any]:
+    def apply_experiment(
+        self,
+        experiment_id: str,
+        *,
+        application_scope: experiment_application_scope = "experiment",
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, Any]:
+        if not self.profile.tools:
+            raise infrastructure_error(
+                "Open WebUI experiment profile contains no managed apparatus tools."
+            )
         if timeout_seconds <= 0:
             raise infrastructure_error(
-                "Open WebUI apply-tools timeout must be greater than zero seconds."
+                "Open WebUI apply-experiment timeout must be greater than zero seconds."
             )
-
         if not self.docker.container_running():
             raise infrastructure_error(
-                "Open WebUI is stopped. Run 'acmm-infra open-webui up' before apply-tools."
+                "Open WebUI is stopped. Run 'acmm-infra open-webui up' before "
+                "apply-experiment."
             )
 
         self._wait_until_ready(timeout_seconds)
         session = self._admin_session()
         token = _required_text(session, "token", "Open WebUI session")
-        return self._reconcile_tools(token, session)
+        desired_ids = {tool.id for tool in self.profile.tools}
+        self._remove_stale_experiment_tools(token, desired_ids=desired_ids)
+        result = self._reconcile_tools(token, session)
+        source_sha256 = experiment_apparatus_sha256(
+            self.repo_root,
+            "open-webui",
+            experiment_id,
+        )
+        write_experiment_apparatus_state(
+            self.deployment_root,
+            experiment_id=experiment_id,
+            source_sha256=source_sha256,
+            application_scope=application_scope,
+            resources=[
+                {"kind": "tool", "id": tool.id}
+                for tool in self.profile.tools
+            ],
+        )
+        return {
+            **result,
+            "experiment_id": experiment_id,
+            "source_sha256": source_sha256,
+            "application_scope": application_scope,
+        }
+
+    def apply_tools(
+        self,
+        experiment_id: str | None,
+        *,
+        timeout_seconds: float = 60.0,
+    ) -> dict[str, Any]:
+        if experiment_id is not None:
+            return self.apply_experiment(
+                experiment_id,
+                application_scope="tools",
+                timeout_seconds=timeout_seconds,
+            )
+
+        if timeout_seconds <= 0:
+            raise infrastructure_error(
+                "Open WebUI apply-tools timeout must be greater than zero seconds."
+            )
+        if not self.docker.container_running():
+            raise infrastructure_error(
+                "Open WebUI is stopped. Run 'acmm-infra open-webui up' before "
+                "applying baseline tool policy."
+            )
+
+        self._wait_until_ready(timeout_seconds)
+        session = self._admin_session()
+        token = _required_text(session, "token", "Open WebUI session")
+        self._remove_stale_experiment_tools(token, desired_ids=set())
+        result = self._reconcile_tools(token, session)
+        clear_experiment_apparatus_state(self.deployment_root)
+        return {
+            **result,
+            "experiment_id": None,
+            "application_scope": "tools",
+        }
 
     def status(self) -> dict[str, Any]:
         running, image = self.docker.container_info()
@@ -181,6 +294,9 @@ class open_webui_manager:
         return {
             "runtime_root": str(self.runtime_root),
             "deployment_root": str(self.deployment_root),
+            "experiment_apparatus": read_experiment_apparatus_state(
+                self.deployment_root
+            ),
             "data_root": str(self.data_root),
             "deployment": {
                 "compose_path": str(compose_path),
@@ -224,6 +340,44 @@ class open_webui_manager:
         observed = status["observed"]
         deployment = status["deployment"]
         checks: list[doctor_check] = []
+
+        marker = status["experiment_apparatus"]
+        if self.experiment_id is None:
+            apparatus_ok = marker is None
+            apparatus_detail = (
+                "none"
+                if marker is None
+                else f"active={marker.get('experiment_id')!r}"
+            )
+        else:
+            expected_apparatus_hash = experiment_apparatus_sha256(
+                self.repo_root,
+                "open-webui",
+                self.experiment_id,
+            )
+            apparatus_ok = (
+                isinstance(marker, dict)
+                and marker.get("experiment_id") == self.experiment_id
+                and marker.get("source_sha256") == expected_apparatus_hash
+            )
+            apparatus_detail = (
+                f"observed_id={marker.get('experiment_id')!r}, "
+                f"observed_sha256={marker.get('source_sha256')!r}, "
+                f"expected_id={self.experiment_id!r}, "
+                f"expected_sha256={expected_apparatus_hash!r}"
+                if isinstance(marker, dict)
+                else (
+                    f"observed=None, expected_id={self.experiment_id!r}, "
+                    f"expected_sha256={expected_apparatus_hash!r}"
+                )
+            )
+        checks.append(
+            doctor_check(
+                "experiment_apparatus_identity",
+                apparatus_ok,
+                apparatus_detail,
+            )
+        )
 
         docker_version = self.docker.docker_version()
         checks.append(
@@ -513,6 +667,40 @@ class open_webui_manager:
             "isolation_changed": isolation_changed,
             "isolation_config": _config_subset(observed_config, desired_isolation),
         }
+
+    def _remove_stale_experiment_tools(
+        self,
+        token: str,
+        *,
+        desired_ids: set[str],
+    ) -> None:
+        candidates: set[str] = set()
+        state = read_experiment_apparatus_state(self.deployment_root)
+        if state is not None:
+            resources = state.get("resources")
+            if isinstance(resources, list):
+                for resource in resources:
+                    if (
+                        isinstance(resource, dict)
+                        and resource.get("kind") == "tool"
+                        and isinstance(resource.get("id"), str)
+                    ):
+                        candidates.add(resource["id"])
+
+        for experiment_id in registered_experiment_apparatus_ids(
+            self.repo_root,
+            "open-webui",
+        ):
+            profile = with_open_webui_experiment(
+                self.repo_root,
+                self.profile,
+                experiment_id,
+            )
+            candidates.update(tool.id for tool in profile.tools)
+
+        for tool_id in sorted(candidates - desired_ids):
+            if self.api.get_tool(token, tool_id) is not None:
+                self.api.delete_tool(token, tool_id)
 
     def _reconcile_tools(
         self,

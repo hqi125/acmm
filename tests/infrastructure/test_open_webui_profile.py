@@ -25,7 +25,4 @@ def test_open_webui_profile_loads_repository_baseline() -> None:
     assert profile.telemetry_enabled is False
     assert profile.deployment_directory == Path("open-webui")
     assert profile.data_directory == Path("data")
-    assert len(profile.tools) == 1
-    assert profile.tools[0].id == "acmm_tools"
-    assert profile.tools[0].name == "ACMM Tools"
-    assert profile.tools[0].source == Path("tools/acmm_tools.py")
+    assert profile.tools == ()

@@ -6,8 +6,10 @@ from pathlib import Path
 import sys
 
 from acmm_infra.commands.agent import agent_cli, command_definition
+from acmm_infra.deployment import active_experiment_id
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.hermes import hermes_manager
+from acmm_infra.profiles.experiments import with_hermes_experiment
 from acmm_infra.profiles.hermes import load_hermes_profile
 
 
@@ -30,25 +32,63 @@ class hermes_cli(agent_cli):
             ),
         )
 
-    def _context(self, args: argparse.Namespace):
+    def _context_for_experiment(
+        self,
+        args: argparse.Namespace,
+        experiment_id: str | None,
+    ):
         repo_root = Path(args.repo_root).expanduser().resolve()
         runtime_root = Path(args.runtime_root).expanduser().resolve()
         profile = load_hermes_profile(repo_root)
+        if experiment_id is not None:
+            profile = with_hermes_experiment(repo_root, profile, experiment_id)
         docker = docker_client(repo_root, runtime_root, profile)
-        manager = hermes_manager(repo_root, runtime_root, profile, docker)
+        manager = hermes_manager(
+            repo_root,
+            runtime_root,
+            profile,
+            docker,
+            experiment_id=experiment_id,
+        )
         return repo_root, runtime_root, profile, docker, manager
 
+    def _context(self, args: argparse.Namespace):
+        return self._context_for_experiment(
+            args,
+            getattr(args, "experiment_id", None),
+        )
+
+    def _deployed_context(self, args: argparse.Namespace):
+        repo_root = Path(args.repo_root).expanduser().resolve()
+        runtime_root = Path(args.runtime_root).expanduser().resolve()
+        baseline = load_hermes_profile(repo_root)
+        deployment_root = (
+            runtime_root / baseline.deployment_directory
+        ).resolve()
+        experiment_id = active_experiment_id(deployment_root)
+        return self._context_for_experiment(args, experiment_id)
+
     def configure_apply_parser(self, parser: argparse.ArgumentParser) -> None:
+        super().configure_apply_parser(parser)
         self._configure_provisioning_parser(
             parser,
             "Maximum duration of the single Hermes provisioning batch "
             "(default: 120).",
         )
 
-    def configure_apply_tools_parser(self, parser: argparse.ArgumentParser) -> None:
+    def configure_apply_experiment_parser(self, parser: argparse.ArgumentParser) -> None:
+        parser.add_argument("experiment_id")
         self._configure_provisioning_parser(
             parser,
-            "Maximum duration of the managed-tool provisioning batch "
+            "Maximum duration of the experiment-apparatus provisioning batch "
+            "(default: 120).",
+        )
+
+    def configure_apply_tools_parser(self, parser: argparse.ArgumentParser) -> None:
+        super().configure_apply_tools_parser(parser)
+        self._configure_provisioning_parser(
+            parser,
+            "Maximum duration of the tool-policy provisioning batch "
             "(default: 120).",
         )
 
@@ -115,11 +155,27 @@ class hermes_cli(agent_cli):
         return 0
 
     def run_apply(self, args: argparse.Namespace) -> int:
-        _, _, _, _, manager = self._context(args)
+        experiment_id = args.experiment_id
+        if experiment_id is None:
+            print(
+                "WARNING: no experiment selected; applying the "
+                "experiment-independent Hermes baseline and removing active "
+                "experiment apparatus.",
+                file=sys.stderr,
+            )
+
+        _, _, _, _, manager = self._context_for_experiment(args, experiment_id)
         output_mode = self._provisioning_output_mode(args)
 
         if output_mode != "quiet":
-            print("Applying Hermes infrastructure baseline...", flush=True)
+            if experiment_id is None:
+                print("Applying Hermes baseline...", flush=True)
+            else:
+                print(
+                    "Applying Hermes environment for experiment "
+                    f"'{experiment_id}'...",
+                    flush=True,
+                )
 
         result = manager.apply(
             timeout_seconds=args.timeout_seconds,
@@ -128,7 +184,10 @@ class hermes_cli(agent_cli):
         )
 
         if output_mode == "quiet":
-            print("Hermes infrastructure baseline applied.")
+            if experiment_id is None:
+                print("Hermes baseline applied.")
+            else:
+                print(f"Hermes experiment environment applied: {experiment_id}")
             return 0
 
         print(f"Hermes provider:      {result['model_provider']}")
@@ -142,7 +201,10 @@ class hermes_cli(agent_cli):
             "Hermes Blank Slate:   "
             + ("enabled" if result["blank_slate"] else "disabled")
         )
-        print("Baseline toolsets:     " + ", ".join(result["blank_slate_toolsets"]))
+        print(
+            "Baseline toolsets:     "
+            + ", ".join(result["blank_slate_toolsets"])
+        )
         isolation = result["experiment_isolation"]
         print(
             "ACMM title generation: "
@@ -157,36 +219,45 @@ class hermes_cli(agent_cli):
         print(f"Batch operations:     {result['provisioning_operations']}")
         print("Plugin tool override: denied unless explicitly enabled in profile")
         print("Configuration path:   one bounded provisioning container")
+
+        if experiment_id is not None:
+            print(f"Experiment:           {result['experiment_id']}")
+            print(f"Apparatus SHA-256:    {result['source_sha256']}")
+            print("Application scope:    experiment")
         return 0
 
+    def run_apply_experiment(self, args: argparse.Namespace) -> int:
+        return self.run_apply(args)
+
     def run_apply_tools(self, args: argparse.Namespace) -> int:
-        _, _, _, _, manager = self._context(args)
+        experiment_id = args.experiment_id
+        if experiment_id is None:
+            print(
+                "WARNING: no experiment selected; reconciling Hermes baseline "
+                "tool policy only.",
+                file=sys.stderr,
+            )
+
+        _, _, _, _, manager = self._context_for_experiment(args, experiment_id)
         output_mode = self._provisioning_output_mode(args)
-
-        if output_mode != "quiet":
-            print("Reconciling Hermes managed tools...", flush=True)
-
         result = manager.apply_tools(
+            experiment_id,
             timeout_seconds=args.timeout_seconds,
             progress=lambda message: print(message, flush=True),
             output_mode=output_mode,
         )
 
-        if output_mode == "quiet":
-            print("Hermes managed tools reconciled.")
-            return 0
-
-        print("Synchronized plugins: " + ", ".join(result["plugins_synchronized"]))
-        print("Tool Search policy:   " f"{result['tool_search_enabled']}")
-        print("Batch operations:     " f"{result['provisioning_operations']}")
-        print(
-            "Scope:                managed plugin bytes + plugin enable policy "
-            "+ tool-routing policy only"
-        )
+        if experiment_id is None:
+            print("Hermes baseline tool policy applied.")
+        else:
+            print(f"Hermes experiment tool apparatus applied: {experiment_id}")
+            if output_mode != "quiet":
+                print(f"  apparatus SHA-256: {result['source_sha256']}")
+                print("  application scope: tools")
         return 0
 
     def run_status(self, args: argparse.Namespace) -> int:
-        _, _, _, _, manager = self._context(args)
+        _, _, _, _, manager = self._deployed_context(args)
         status = manager.status()
 
         if args.json:
@@ -199,6 +270,13 @@ class hermes_cli(agent_cli):
         print("Hermes infrastructure")
         print(f"  runtime root:      {status['runtime_root']}")
         print(f"  deployment root:   {status['deployment_root']}")
+        apparatus = status["experiment_apparatus"]
+        if apparatus is None:
+            print("  active experiment: none")
+        else:
+            print(f"  active experiment: {apparatus.get('experiment_id')}")
+            print(f"  application scope: {apparatus.get('application_scope')}")
+            print(f"  apparatus SHA-256: {apparatus.get('source_sha256')}")
         print(f"  compose:           {status['deployment']['compose_path']}")
         print(f"  compose baseline:  {status['deployment']['compose_matches_default']}")
         print(f"  env:               {status['deployment']['env_path']}")
@@ -265,7 +343,7 @@ class hermes_cli(agent_cli):
         return 0
 
     def run_doctor(self, args: argparse.Namespace) -> int:
-        _, _, _, _, manager = self._context(args)
+        _, _, _, _, manager = self._deployed_context(args)
         report = manager.doctor()
 
         if args.json:

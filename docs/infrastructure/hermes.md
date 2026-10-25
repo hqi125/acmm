@@ -239,35 +239,32 @@ the subject instead of being deferred behind Hermes's `tool_call` routing bridge
 `status` reports these values and `doctor` requires them to match before an experiment is
 READY.
 
-## Managed-tool-only reconciliation
+## Experiment apparatus reconciliation
 
-Repository-owned experiment tools are expected to evolve more often than the qualified
-subject baseline. After a plugin/tool change, use:
+Experiment-facing plugins are stored under
+`infrastructure/hermes/experiments/<experiment-id>/` rather than in the qualified baseline.
+Apply one explicitly before acquisition:
 
 ```text
 acmm-infra hermes down
-acmm-infra hermes apply-tools
+acmm-infra hermes apply --experiment controlled_tool_use_multiscenario_v1
 acmm-infra hermes up
 acmm-infra hermes doctor
 ```
 
-`apply-tools` atomically replaces each managed plugin directory from the repository and
-reconciles only:
+The preferred `apply --experiment <experiment-id>` composes the stable baseline with the
+selected experiment apparatus, atomically synchronizes the managed plugin bytes, and
+reconciles the resulting settings/plugin/tool-routing state in one bounded provisioning batch.
+`apply-tools --experiment <experiment-id>` performs only the narrower Tool-facing
+reconciliation.
 
-```text
-managed plugin bytes
-managed plugin enable/disable policy
-managed plugin tool-override policy
-tools.tool_search.enabled
-```
+Baseline `apply` returns Hermes to the experiment-independent state and removes active
+repository-managed experiment apparatus. `apply-experiment <experiment-id>` remains a
+compatibility alias for the full experiment-aware apply.
 
-It deliberately does not replay provider/model/context/reasoning/terminal settings, Blank
-Slate minimization, bundled-skill cleanup, title-generation policy, or background-review
-policy.
-
-Use full `apply` whenever those broader baseline settings change. `doctor` remains the
-conservative gate: stale deployed plugin bytes still produce `NOT READY` until one of the
-appropriate reconciliation paths is run.
+`doctor` discovers the active experiment from the deployment marker and is the pre-run
+qualification gate for the composed
+baseline plus selected apparatus.
 
 
 ## Plugin consent

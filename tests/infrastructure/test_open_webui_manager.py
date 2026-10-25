@@ -1,11 +1,14 @@
+import json
 from pathlib import Path
 
 from acmm_infra.open_webui import open_webui_manager
 from acmm_infra.process import command_result
+from acmm_infra.profiles.experiments import with_open_webui_experiment
 from acmm_infra.profiles.open_webui import load_open_webui_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENT_ID = "controlled_tool_use_multiscenario_v1"
 
 
 class fake_docker:
@@ -13,6 +16,8 @@ class fake_docker:
         self.running = False
         self.image = load_open_webui_profile(ROOT).image
         self.version = "0.11.4"
+        self.up_count = 0
+        self.down_count = 0
 
     def container_running(self) -> bool:
         return self.running
@@ -25,10 +30,12 @@ class fake_docker:
 
     def up(self):
         self.running = True
+        self.up_count += 1
         return command_result(("docker", "compose", "up"), 0, "", "")
 
     def down(self):
         self.running = False
+        self.down_count += 1
         return command_result(("docker", "compose", "down"), 0, "", "")
 
     def docker_version(self):
@@ -122,15 +129,48 @@ class fake_open_webui_api:
         self.tools[tool_id] = stored
         return dict(stored)
 
+    def delete_tool(self, token: str, tool_id: str):
+        assert token == "test-token"
+        return self.tools.pop(tool_id, None) is not None
 
-def _manager(tmp_path: Path):
+
+def _manager(tmp_path: Path, *, experiment: bool = False):
     profile = load_open_webui_profile(ROOT)
+    if experiment:
+        profile = with_open_webui_experiment(ROOT, profile, EXPERIMENT_ID)
     docker = fake_docker()
     api = fake_open_webui_api(profile.model_default)
     return (
-        open_webui_manager(ROOT, tmp_path, profile, docker, api),
+        open_webui_manager(
+            ROOT,
+            tmp_path,
+            profile,
+            docker,
+            api,
+            experiment_id=EXPERIMENT_ID if experiment else None,
+        ),
         docker,
         api,
+    )
+
+
+def _experiment_manager(
+    tmp_path: Path,
+    docker: fake_docker,
+    api: fake_open_webui_api,
+) -> open_webui_manager:
+    profile = with_open_webui_experiment(
+        ROOT,
+        load_open_webui_profile(ROOT),
+        EXPERIMENT_ID,
+    )
+    return open_webui_manager(
+        ROOT,
+        tmp_path,
+        profile,
+        docker,
+        api,
+        experiment_id=EXPERIMENT_ID,
     )
 
 
@@ -170,8 +210,28 @@ def test_apply_reconciles_open_webui_managed_environment(tmp_path: Path) -> None
     assert result["application"]["ollama_changed"] is True
     assert result["application"]["openai_changed"] is True
     assert result["application"]["isolation_changed"] is True
-    assert result["tools"]["created"] == ("acmm_tools",)
+    assert result["tools"]["created"] == ()
     assert manager.docker.running is False
+
+
+def test_apply_with_experiment_reconciles_one_composed_state(
+    tmp_path: Path,
+) -> None:
+    manager, docker, api = _manager(tmp_path, experiment=True)
+
+    result = manager.apply()
+
+    assert result["experiment_id"] == EXPERIMENT_ID
+    assert result["application_scope"] == "experiment"
+    assert result["tools"]["created"] == ("acmm_tools",)
+    assert docker.up_count == 1
+    assert docker.down_count == 1
+    assert "acmm_tools" in api.tools
+
+    marker_path = manager.deployment_root / ".acmm-experiment-apparatus.json"
+    state = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert state["experiment_id"] == EXPERIMENT_ID
+    assert state["application_scope"] == "experiment"
 
 
 def test_apply_reconciles_acmm_owned_compose_baseline(tmp_path: Path) -> None:
@@ -186,13 +246,14 @@ def test_apply_reconciles_acmm_owned_compose_baseline(tmp_path: Path) -> None:
     assert compose.read_bytes() == expected.read_bytes()
 
 
-def test_apply_tools_creates_then_preserves_managed_tool(tmp_path: Path) -> None:
-    manager, docker, api = _manager(tmp_path)
+def test_apply_experiment_creates_then_preserves_managed_tool(tmp_path: Path) -> None:
+    manager, docker, api = _manager(tmp_path, experiment=True)
     docker.running = True
 
-    first = manager.apply_tools()
-    second = manager.apply_tools()
+    first = manager.apply_experiment(EXPERIMENT_ID)
+    second = manager.apply_experiment(EXPERIMENT_ID)
 
+    assert first["application_scope"] == "experiment"
     assert first["created"] == ("acmm_tools",)
     assert first["updated"] == ()
     assert second["created"] == ()
@@ -200,13 +261,46 @@ def test_apply_tools_creates_then_preserves_managed_tool(tmp_path: Path) -> None
     assert "class Tools:" in api.tools["acmm_tools"]["content"]
 
 
-def test_apply_tools_repairs_managed_tool_drift(tmp_path: Path) -> None:
-    manager, docker, api = _manager(tmp_path)
+def test_apply_tools_records_tool_only_experiment_scope(tmp_path: Path) -> None:
+    manager, docker, _ = _manager(tmp_path, experiment=True)
     docker.running = True
-    manager.apply_tools()
+
+    result = manager.apply_tools(EXPERIMENT_ID)
+
+    assert result["application_scope"] == "tools"
+    marker = json.loads(
+        (manager.deployment_root / ".acmm-experiment-apparatus.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert marker["application_scope"] == "tools"
+
+
+def test_apply_tools_without_experiment_removes_experiment_tool(
+    tmp_path: Path,
+) -> None:
+    baseline, docker, api = _manager(tmp_path)
+    baseline.apply()
+    docker.running = True
+    experiment = _experiment_manager(tmp_path, docker, api)
+    experiment.apply_tools(EXPERIMENT_ID)
+    assert "acmm_tools" in api.tools
+
+    baseline.apply_tools(None)
+
+    assert "acmm_tools" not in api.tools
+    assert not (
+        baseline.deployment_root / ".acmm-experiment-apparatus.json"
+    ).exists()
+
+
+def test_apply_experiment_repairs_managed_tool_drift(tmp_path: Path) -> None:
+    manager, docker, api = _manager(tmp_path, experiment=True)
+    docker.running = True
+    manager.apply_experiment(EXPERIMENT_ID)
     api.tools["acmm_tools"]["content"] = "class Tools:\n    pass\n"
 
-    result = manager.apply_tools()
+    result = manager.apply_experiment(EXPERIMENT_ID)
 
     assert result["updated"] == ("acmm_tools",)
     assert "get_magic_number" in api.tools["acmm_tools"]["content"]
@@ -238,7 +332,7 @@ def test_apply_reconciles_persistent_provider_config(tmp_path: Path) -> None:
     assert api.config["web.search.enable"] is False
     assert api.config["tool_server.connections"] == []
     assert api.config["terminal_server.connections"] == []
-    assert result["tools"]["created"] == ("acmm_tools",)
+    assert result["tools"]["created"] == ()
     assert docker.running is False
 
 
@@ -253,10 +347,12 @@ def test_doctor_is_ready_for_matching_running_baseline(tmp_path: Path) -> None:
 
 
 def test_doctor_detects_missing_managed_tool(tmp_path: Path) -> None:
-    manager, docker, api = _manager(tmp_path)
-    manager.apply()
-    api.tools.clear()
+    baseline, docker, api = _manager(tmp_path)
+    baseline.apply()
     docker.running = True
+    manager = _experiment_manager(tmp_path, docker, api)
+    manager.apply_experiment(EXPERIMENT_ID)
+    api.tools.clear()
 
     report = manager.doctor()
 
@@ -264,6 +360,21 @@ def test_doctor_detects_missing_managed_tool(tmp_path: Path) -> None:
     check = next(item for item in report.checks if item.name == "managed_tool:acmm_tools")
     assert not check.ok
 
+
+
+def test_baseline_apply_removes_active_experiment_tool(tmp_path: Path) -> None:
+    baseline, docker, api = _manager(tmp_path)
+    baseline.apply()
+    docker.running = True
+    experiment = _experiment_manager(tmp_path, docker, api)
+    experiment.apply_experiment(EXPERIMENT_ID)
+    assert "acmm_tools" in api.tools
+
+    docker.running = False
+    baseline.apply()
+
+    assert "acmm_tools" not in api.tools
+    assert not (baseline.deployment_root / ".acmm-experiment-apparatus.json").exists()
 
 def test_doctor_detects_open_webui_image_drift(tmp_path: Path) -> None:
     manager, docker, _ = _manager(tmp_path)

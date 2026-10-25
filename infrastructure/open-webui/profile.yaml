@@ -45,12 +45,9 @@ experiment_isolation:
   external_tool_servers_enabled: false
   terminal_servers_enabled: false
 
+
 tools:
-  managed:
-    - id: acmm_tools
-      name: ACMM Tools
-      description: Minimal controlled tools used by ACMM compliance experiments.
-      source: tools/acmm_tools.py
+  managed: []
 
 reset_scopes:
   configuration:

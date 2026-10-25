@@ -44,15 +44,9 @@ experiment_isolation:
   background_review_enabled: false
   tool_search_enabled: "off"
 
+
 plugins:
-  managed:
-    - name: acmm-tools
-      source: infrastructure/hermes/plugins/acmm-tools
-      destination: plugins/acmm-tools
-      enabled: true
-      allow_tool_override: false
-      toolsets:
-        - acmm
+  managed: []
 
 reset_scopes:
   sessions:

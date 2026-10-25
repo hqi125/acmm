@@ -61,7 +61,8 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
         "open_webui_nemotron30b": subject_execution_binding(
             adapter_builder=_build_open_webui_nemotron30b_adapter,
             runtime_description=(
-                "Open WebUI API: http://127.0.0.1:3000; managed Tool: acmm_tools."
+                "Open WebUI API: http://127.0.0.1:3000; experiment Tool apparatus "
+                "selected separately."
             ),
             termination_support=subject_termination_support(
                 max_steps=False,
@@ -72,7 +73,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
             adapter_builder=_build_agent_zero_nemotron30b_adapter,
             runtime_description=(
                 "Agent Zero API: http://127.0.0.1:50080; profile: acmm; "
-                "managed plugin: acmm_tools."
+                "experiment plugin apparatus selected separately."
             ),
             termination_support=subject_termination_support(
                 max_steps=False,

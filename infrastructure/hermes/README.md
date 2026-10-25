@@ -14,7 +14,7 @@ Model:           nemotron-3-nano:30b-cloud
 Context:         64000
 Reasoning:       medium
 Terminal:        local
-Plugin:          acmm-tools enabled
+Experiment apparatus: none in baseline
 ```
 
 The custom endpoint is the Windows Ollama service. Ollama owns Cloud authentication;
@@ -28,8 +28,10 @@ hermes/
 ├── defaults/
 │   ├── compose.yaml
 │   └── env.defaults
-├── plugins/
-│   └── acmm-tools/
+├── experiments/
+│   └── <experiment-id>/
+│       ├── apparatus.yaml
+│       └── plugins/
 └── README.md
 ```
 
@@ -72,6 +74,15 @@ acmm-infra hermes status
 acmm-infra hermes doctor
 ```
 
+Before running a specific experiment, reconcile its apparatus while Hermes is stopped:
+
+```text
+acmm-infra hermes down
+acmm-infra hermes apply --experiment controlled_tool_use_multiscenario_v1
+acmm-infra hermes up
+acmm-infra hermes doctor
+```
+
 `apply` requires the persistent gateway to be stopped. It runs one named one-off Compose
 container sharing the same `data/` volume and executes the complete Hermes reconciliation
 as a single shell batch. The official image routes an executable command such as `sh`
@@ -103,11 +114,12 @@ auxiliary.background_review.enabled = false
 tools.tool_search.enabled            = off
 ```
 
-It also synchronizes `acmm-tools` into `data/plugins/acmm-tools` and reconciles managed
-plugin enablement.
+`apply` does not install experiment plugins. It also removes any active repository-managed
+experiment apparatus so the resulting state is an experiment-independent subject baseline.
 
-Experiment toolset selection is still not part of `init`. The experiment adapter chooses
-the toolset for a run.
+Experiment plugin bytes and plugin policy are owned by
+`experiments/<experiment-id>/apparatus.yaml` and are installed by an experiment-aware apply.
+The runtime adapter still chooses the experiment toolset for each run.
 
 Reset remains scoped and explicit:
 
@@ -134,8 +146,9 @@ container shell's `PATH`.
 
 ## Blank Slate baseline
 
-The ACMM profile reproduces Hermes v0.21.3's pinned Blank Slate policy, then adds only the
-ACMM experiment plugin as an explicit overlay.
+The ACMM baseline profile reproduces Hermes v0.21.3's pinned Blank Slate policy without
+installing an experiment plugin. A selected experiment may add an explicit plugin/toolset
+overlay after the baseline has been reconciled.
 
 The base CLI surface is:
 
@@ -161,9 +174,11 @@ bundled skills                      essential_only
 
 Hermes applies tool restrictions at two levels. `platform_toolsets.cli` contains only the
 four minimal toolsets, while `agent.disabled_toolsets` hard-suppresses the remaining
-toolsets. ACMM-managed plugin toolsets such as `acmm` are deliberately excluded from that
-hard-disabled set, but they are not added to the default CLI surface. The experiment
-adapter must still request `--toolsets acmm` explicitly for a run.
+toolsets. `apply --experiment <experiment-id>` makes the selected experiment's managed
+toolsets visible after first reconciling the baseline. `apply-tools --experiment
+<experiment-id>` performs only the Tool/plugin reconciliation. The runtime adapter must still
+request the experiment toolset explicitly for a run. A later baseline `apply` disables/removes
+that apparatus again.
 
 Docker seeds bundled skills during container initialization before the ACMM provisioning
 script begins. `apply` therefore adapts Hermes's Blank Slate flow by running:
@@ -202,35 +217,32 @@ the subject instead of being deferred behind Hermes's `tool_call` routing bridge
 `status` reports these values and `doctor` requires them to match before an experiment is
 READY.
 
-## Managed-tool-only reconciliation
+## Experiment apparatus reconciliation
 
-Repository-owned experiment tools are expected to evolve more often than the qualified
-subject baseline. After a plugin/tool change, use:
+Repository-owned experiment tools are versioned under the experiment that uses them. Apply
+the selected apparatus explicitly:
 
 ```text
 acmm-infra hermes down
-acmm-infra hermes apply-tools
+acmm-infra hermes apply --experiment controlled_tool_use_multiscenario_v1
 acmm-infra hermes up
 acmm-infra hermes doctor
 ```
 
-`apply-tools` atomically replaces each managed plugin directory from the repository and
-reconciles only:
+The preferred `apply --experiment <experiment-id>` composes the stable baseline with the
+selected experiment apparatus, atomically synchronizes its plugin directory, and reconciles
+the resulting settings/plugin/tool-routing state in one bounded provisioning batch.
+`apply-tools --experiment <experiment-id>` performs only the narrower Tool-facing
+reconciliation.
 
-```text
-managed plugin bytes
-managed plugin enable/disable policy
-managed plugin tool-override policy
-tools.tool_search.enabled
-```
+The command records the selected experiment, apparatus SHA-256, and application scope in the
+deployment marker. Running baseline `apply` returns Hermes to the experiment-independent
+state and removes the active apparatus. `apply-experiment <experiment-id>` remains a
+compatibility alias for the full `apply --experiment <experiment-id>` workflow.
 
-It deliberately does not replay provider/model/context/reasoning/terminal settings, Blank
-Slate minimization, bundled-skill cleanup, title-generation policy, or background-review
-policy.
-
-Use full `apply` whenever those broader baseline settings change. `doctor` remains the
-conservative gate: stale deployed plugin bytes still produce `NOT READY` until one of the
-appropriate reconciliation paths is run.
+`doctor` is the conservative pre-run gate: it discovers the active experiment from the
+deployment marker and checks the
+qualified baseline and the exact selected apparatus together.
 
 
 ## Plugin consent policy
@@ -241,8 +253,8 @@ appropriate reconciliation paths is run.
 plugins.entries.acmm-tools.allow_tool_override = false
 ```
 
-`acmm-infra hermes apply` passes Hermes's explicit negative CLI flag, so provisioning never
-waits for the interactive built-in-tool-override consent prompt.
+Experiment-aware apply passes Hermes's explicit negative CLI flag, so apparatus provisioning
+never waits for the interactive built-in-tool-override consent prompt.
 
 ## Apply output modes
 

@@ -31,7 +31,8 @@ class hermes_client:
         return len(settings) + len(profile.plugins) + extra_operations
 
     def tool_operation_count(self, profile: hermes_profile) -> int:
-        return 1 + len(profile.plugins)
+        toolset_operation = 1 if profile.plugins else 0
+        return 1 + toolset_operation + len(profile.plugins)
 
     def apply_profile(
         self,
@@ -503,8 +504,63 @@ def _build_tool_provisioning_script(
             )
         )
 
+    if plugins:
+        command = [
+            HERMES_PYTHON,
+            "-c",
+            _experiment_toolset_policy_python(plugins),
+        ]
+        operations.append(
+            (
+                "reconcile experiment toolset visibility",
+                " ".join(shlex.quote(part) for part in command),
+            )
+        )
+
     operations.extend(_plugin_operations(plugins))
     return _render_provisioning_operations(operations)
+
+
+def _experiment_toolset_policy_python(
+    plugins: tuple[managed_hermes_plugin, ...],
+) -> str:
+    enabled = sorted(
+        {
+            toolset
+            for plugin in plugins
+            if plugin.enabled
+            for toolset in plugin.toolsets
+        }
+    )
+    disabled = sorted(
+        {
+            toolset
+            for plugin in plugins
+            if not plugin.enabled
+            for toolset in plugin.toolsets
+        }
+        - set(enabled)
+    )
+
+    return f"""
+from hermes_cli.setup import load_config, save_config
+
+enabled = set({enabled!r})
+disabled_overlay = set({disabled!r})
+config = load_config()
+agent = config.setdefault("agent", {{}})
+disabled_toolsets = set(agent.get("disabled_toolsets") or [])
+disabled_toolsets.update(disabled_overlay)
+disabled_toolsets.difference_update(enabled)
+agent["disabled_toolsets"] = sorted(disabled_toolsets)
+save_config(config)
+print(
+    "✓ Experiment toolset visibility reconciled: enabled="
+    + (",".join(sorted(enabled)) or "none")
+    + "; disabled="
+    + (",".join(sorted(disabled_overlay)) or "none")
+)
+""".strip()
 
 
 def _plugin_operations(

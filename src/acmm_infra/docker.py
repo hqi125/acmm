@@ -150,6 +150,40 @@ class docker_client:
             timeout_seconds=timeout_seconds,
         )
 
+    def write_container_files(
+        self,
+        root: str,
+        files: Mapping[str, bytes],
+        *,
+        timeout_seconds: float = 30.0,
+    ) -> command_result:
+        payload = {
+            path: base64.b64encode(content).decode("ascii")
+            for path, content in files.items()
+        }
+        script = (
+            "import base64,json,pathlib,sys; "
+            "root=pathlib.Path(sys.argv[1]); "
+            "data=json.loads(sys.argv[2]); "
+            "[(root.joinpath(path).parent.mkdir(parents=True, exist_ok=True), "
+            "root.joinpath(path).write_bytes(base64.b64decode(value))) "
+            "for path,value in data.items()]"
+        )
+        return self._runner.run(
+            [
+                "docker",
+                "exec",
+                "-i",
+                self._attributes.container_name,
+                "python3",
+                "-c",
+                script,
+                root,
+                json.dumps(payload, separators=(",", ":")),
+            ],
+            timeout_seconds=timeout_seconds,
+        )
+
     def provision(
         self,
         script: str,

@@ -8,10 +8,12 @@ import pytest
 from acmm_infra.docker import docker_error
 from acmm_infra.hermes import hermes_manager, infrastructure_error
 from acmm_infra.process import command_result
+from acmm_infra.profiles.experiments import with_hermes_experiment
 from acmm_infra.profiles.hermes import load_hermes_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENT_ID = "controlled_tool_use_multiscenario_v1"
 
 
 class fake_docker:
@@ -55,7 +57,7 @@ class fake_docker:
         self.bundled_skills_opt_out = True
         self.bundled_skill_manifest = ["hermes-agent"]
         self.essential_skills = ["hermes-agent"]
-        self.plugins_enabled = ["acmm-tools"]
+        self.plugins_enabled = []
         self.image = "nousresearch/hermes-agent:v2026.9.14"
         self.exec_calls: list[tuple[str, ...]] = []
         self.exec_script_calls: list[tuple[str, float]] = []
@@ -340,11 +342,11 @@ class fake_docker:
 
         if output_mode == "normal" and line_handler is not None:
             if full_apply:
-                line_handler("[Hermes 1/14] set model.provider")
+                line_handler("[Hermes 1/13] set model.provider")
                 line_handler("✓ Set model.provider = custom")
             else:
                 line_handler(
-                    "[Hermes 1/2] set tools.tool_search.enabled"
+                    "[Hermes 1/3] set tools.tool_search.enabled"
                 )
                 line_handler("✓ Set tools.tool_search.enabled = off")
             line_handler("[Hermes] Provisioning batch complete.")
@@ -389,7 +391,18 @@ class fake_docker:
             self.essential_skills = ["hermes-agent"]
 
         self.tool_search_enabled = "off"
-        self.plugins_enabled = ["acmm-tools"]
+        if "plugins enable acmm-tools" in script:
+            if "acmm-tools" not in self.plugins_enabled:
+                self.plugins_enabled.append("acmm-tools")
+            self.disabled_toolsets = [
+                item for item in self.disabled_toolsets if item != "acmm"
+            ]
+        if "plugins disable acmm-tools" in script:
+            self.plugins_enabled = [
+                item for item in self.plugins_enabled if item != "acmm-tools"
+            ]
+            if "acmm" not in self.disabled_toolsets:
+                self.disabled_toolsets.append("acmm")
         return _ok(("provision",), "")
 
 
@@ -402,19 +415,34 @@ def _ok(args: tuple[str, ...], stdout: str) -> command_result:
     )
 
 
-def _manager(tmp_path: Path, docker: fake_docker | None = None):
+def _manager(
+    tmp_path: Path,
+    docker: fake_docker | None = None,
+    *,
+    experiment: bool = False,
+):
     profile = load_hermes_profile(ROOT)
+    if experiment:
+        profile = with_hermes_experiment(ROOT, profile, EXPERIMENT_ID)
     docker_instance = docker or fake_docker()
     manager = hermes_manager(
         repo_root=ROOT,
         runtime_root=tmp_path,
         profile=profile,
         docker=docker_instance,
+        experiment_id=EXPERIMENT_ID if experiment else None,
     )
     return manager, docker_instance
 
 
-def test_apply_synchronizes_plugin_and_configures_hermes(tmp_path: Path) -> None:
+def _experiment_manager(tmp_path: Path, docker: fake_docker) -> hermes_manager:
+    manager, _ = _manager(tmp_path, docker, experiment=True)
+    return manager
+
+
+def test_apply_configures_experiment_independent_hermes_baseline(
+    tmp_path: Path,
+) -> None:
     manager, docker = _manager(tmp_path)
     docker.model_provider = "auto"
     docker.model_default = "old-model"
@@ -423,16 +451,9 @@ def test_apply_synchronizes_plugin_and_configures_hermes(tmp_path: Path) -> None
     result = manager.apply()
 
     deployed = manager.data_root / "plugins" / "acmm-tools"
-    source = ROOT / "infrastructure" / "hermes" / "plugins" / "acmm-tools"
-
-    assert deployed.is_dir()
-    assert (deployed / "plugin.yaml").read_bytes() == (source / "plugin.yaml").read_bytes()
+    assert not deployed.exists()
+    assert result["plugins_synchronized"] == []
     assert result["model_provider"] == "custom"
-    assert result["model_base_url"] == "http://host.docker.internal:11434/v1"
-    assert result["model_api_mode"] == "chat_completions"
-    assert result["context_window"] == 64000
-    assert result["reasoning_effort"] == "medium"
-    assert result["terminal_backend"] == "local"
     assert result["model_default"] == "nemotron-3-nano:30b-cloud"
     assert result["blank_slate"] is True
     assert result["blank_slate_toolsets"] == (
@@ -441,48 +462,14 @@ def test_apply_synchronizes_plugin_and_configures_hermes(tmp_path: Path) -> None
         "terminal",
         "vision",
     )
-    assert result["experiment_isolation"] == {
-        "title_generation_enabled": False,
-        "background_review_enabled": False,
-        "tool_search_enabled": "off",
-    }
-    assert docker.model_provider == "custom"
-    assert docker.model_base_url == "http://host.docker.internal:11434/v1"
-    assert docker.model_api_mode == "chat_completions"
-    assert docker.context_window == 64000
-    assert docker.reasoning_effort == "medium"
-    assert docker.terminal_backend == "local"
-    assert docker.model_default == "nemotron-3-nano:30b-cloud"
-    assert "acmm-tools" in docker.plugins_enabled
+    assert docker.plugins_enabled == []
     assert len(docker.provision_calls) == 1
     script, timeout_seconds = docker.provision_calls[0]
     assert timeout_seconds == 120.0
     assert "model.provider" in script
-    assert "model.base_url" in script
-    assert "model.api_mode" in script
-    assert "model.context_length" in script
-    assert "model.default" in script
-    assert "agent.reasoning_effort" in script
-    assert "terminal.backend" in script
-    assert "auxiliary.title_generation.enabled" in script
-    assert "auxiliary.background_review.enabled" in script
-    assert "tools.tool_search.enabled" in script
-    assert "/opt/hermes/bin/hermes" in script
-    assert "plugins enable acmm-tools --no-allow-tool-override" in script
-    assert "apply Blank Slate policy" in script
-    assert "hermes_cli.setup" in script
-    assert "_blank_slate_minimal_toolsets" in script
-    assert "_blank_slate_minimize_config" in script
-    assert "hermes_cli.config import load_config, save_config" not in script
-    assert "skills opt-out --remove --yes" in script
-    assert "sync_skills" in script
-    assert "/command/s6-setuidgid hermes" not in script
-    assert "/opt/hermes/.venv/bin/python" in script
-    assert "/opt/hermes/.venv/bin/python" in script
-    assert "'acmm'" in script
-    assert result["provisioning_operations"] == 14
+    assert "plugins enable acmm-tools" not in script
+    assert result["provisioning_operations"] == 13
     assert docker.provision_output_modes == ["normal"]
-
 
 def test_status_reports_desired_and_observed_state(tmp_path: Path) -> None:
     manager, docker = _manager(tmp_path)
@@ -508,10 +495,7 @@ def test_status_reports_desired_and_observed_state(tmp_path: Path) -> None:
     assert status["observed"]["bundled_skill_manifest"] == [
         "hermes-agent"
     ]
-    assert status["plugins"][0]["synchronized"] is True
-    assert status["plugins"][0]["enabled_observed"] is True
-    assert status["plugins"][0]["allow_tool_override_desired"] is False
-    assert status["plugins"][0]["allow_tool_override_observed"] is False
+    assert status["plugins"] == []
     assert len(docker.exec_script_calls) == 1
     assert docker.exec_script_calls[0][1] == 30.0
     assert "/opt/hermes/bin/hermes" in docker.exec_script_calls[0][0]
@@ -543,7 +527,7 @@ def test_doctor_reports_stopped_container_without_live_checks(
 
     assert not report.is_ready
     names = [check.name for check in report.checks]
-    assert "plugin_sync:acmm-tools" in names
+    assert "plugin_sync:acmm-tools" not in names
     assert "container_running" in names
     assert "model_provider" not in names
     assert "blank_slate_essential_skills" not in names
@@ -650,11 +634,39 @@ def test_apply_refuses_while_gateway_is_running(
     assert docker.provision_calls == []
 
 
-def test_apply_tools_reconciles_only_managed_tool_scope(
+def test_apply_with_experiment_reconciles_one_composed_state(
     tmp_path: Path,
 ) -> None:
-    manager, docker = _manager(tmp_path)
-    manager.initialize_deployment()
+    manager, docker = _manager(tmp_path, experiment=True)
+
+    result = manager.apply()
+
+    assert result["experiment_id"] == EXPERIMENT_ID
+    assert result["application_scope"] == "experiment"
+    assert result["plugins_synchronized"] == ["acmm-tools"]
+    assert result["provisioning_operations"] == 14
+    assert len(docker.provision_calls) == 1
+
+    script, timeout_seconds = docker.provision_calls[0]
+    assert timeout_seconds == 120.0
+    assert script.count("config set tools.tool_search.enabled") == 1
+    assert "model.provider" in script
+    assert "plugins enable acmm-tools --no-allow-tool-override" in script
+    assert "acmm-tools" in docker.plugins_enabled
+    assert "acmm" not in docker.disabled_toolsets
+
+    marker_path = manager.deployment_root / ".acmm-experiment-apparatus.json"
+    state = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert state["experiment_id"] == EXPERIMENT_ID
+    assert state["application_scope"] == "experiment"
+
+
+def test_apply_experiment_reconciles_only_experiment_scope(
+    tmp_path: Path,
+) -> None:
+    baseline, docker = _manager(tmp_path)
+    baseline.initialize_deployment()
+    manager = _experiment_manager(tmp_path, docker)
 
     docker.model_provider = "custom-stable"
     docker.model_default = "stable-model"
@@ -663,14 +675,14 @@ def test_apply_tools_reconciles_only_managed_tool_scope(
     docker.background_review_enabled = True
     docker.tool_search_enabled = "auto"
     docker.plugins_enabled = []
+    docker.disabled_toolsets = [*docker.disabled_toolsets, "acmm"]
 
-    result = manager.apply_tools()
+    result = manager.apply_experiment(EXPERIMENT_ID)
 
-    assert result == {
-        "plugins_synchronized": ["acmm-tools"],
-        "tool_search_enabled": "off",
-        "provisioning_operations": 2,
-    }
+    assert result["plugins_synchronized"] == ["acmm-tools"]
+    assert result["application_scope"] == "experiment"
+    assert result["tool_search_enabled"] == "off"
+    assert result["provisioning_operations"] == 3
     assert docker.model_provider == "custom-stable"
     assert docker.model_default == "stable-model"
     assert docker.context_window == 12345
@@ -678,54 +690,152 @@ def test_apply_tools_reconciles_only_managed_tool_scope(
     assert docker.background_review_enabled is True
     assert docker.tool_search_enabled == "off"
     assert docker.plugins_enabled == ["acmm-tools"]
+    assert "acmm" not in docker.disabled_toolsets
 
-    assert len(docker.provision_calls) == 1
-    script, timeout_seconds = docker.provision_calls[0]
+    deployed = manager.data_root / "plugins" / "acmm-tools"
+    source = (
+        ROOT
+        / "infrastructure"
+        / "hermes"
+        / "experiments"
+        / EXPERIMENT_ID
+        / "plugins"
+        / "acmm-tools"
+    )
+    assert (deployed / "plugin.yaml").read_bytes() == (
+        source / "plugin.yaml"
+    ).read_bytes()
+    script, timeout_seconds = docker.provision_calls[-1]
     assert timeout_seconds == 120.0
     assert "tools.tool_search.enabled" in script
     assert "plugins enable acmm-tools --no-allow-tool-override" in script
+    assert "acmm-tools" in docker.plugins_enabled
+    assert "acmm" not in docker.disabled_toolsets
     assert "model.provider" not in script
-    assert "model.default" not in script
-    assert "agent.reasoning_effort" not in script
-    assert "terminal.backend" not in script
-    assert "apply Blank Slate policy" not in script
-    assert "skills opt-out" not in script
-    assert "auxiliary.title_generation.enabled" not in script
-    assert "auxiliary.background_review.enabled" not in script
 
 
-def test_apply_tools_refuses_while_gateway_is_running(
+def test_apply_tools_records_tool_only_experiment_scope(tmp_path: Path) -> None:
+    baseline, docker = _manager(tmp_path)
+    baseline.apply()
+    manager = _experiment_manager(tmp_path, docker)
+
+    result = manager.apply_tools(EXPERIMENT_ID)
+
+    assert result["application_scope"] == "tools"
+    marker = json.loads(
+        (manager.deployment_root / ".acmm-experiment-apparatus.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert marker["application_scope"] == "tools"
+
+
+def test_apply_tools_without_experiment_restores_baseline_tool_policy(
+    tmp_path: Path,
+) -> None:
+    baseline, docker = _manager(tmp_path)
+    baseline.apply()
+    experiment = _experiment_manager(tmp_path, docker)
+    experiment.apply_tools(EXPERIMENT_ID)
+
+    baseline.apply_tools(None)
+
+    assert "acmm-tools" not in docker.plugins_enabled
+    assert "acmm" in docker.disabled_toolsets
+    assert not (
+        baseline.deployment_root / ".acmm-experiment-apparatus.json"
+    ).exists()
+
+
+def test_experiment_doctor_rejects_wrong_apparatus_identity(
+    tmp_path: Path,
+) -> None:
+    baseline, docker = _manager(tmp_path)
+    baseline.apply()
+    manager = _experiment_manager(tmp_path, docker)
+    manager.apply_experiment(EXPERIMENT_ID)
+    marker_path = manager.deployment_root / ".acmm-experiment-apparatus.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["experiment_id"] = "magic_number_tool_use_v1"
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+    docker.running = True
+
+    report = manager.doctor()
+
+    assert not report.is_ready
+    check = next(
+        item for item in report.checks
+        if item.name == "experiment_apparatus_identity"
+    )
+    assert not check.ok
+
+
+def test_apply_experiment_refuses_while_gateway_is_running(
     tmp_path: Path,
 ) -> None:
     docker = fake_docker()
     docker.running = True
-    manager, _ = _manager(tmp_path, docker)
+    manager, _ = _manager(tmp_path, docker, experiment=True)
 
     with pytest.raises(infrastructure_error, match="gateway is running"):
-        manager.apply_tools()
+        manager.apply_experiment(EXPERIMENT_ID)
 
     assert docker.provision_calls == []
 
 
-def test_apply_tools_reports_narrow_progress(
+def test_apply_experiment_reports_narrow_progress(
     tmp_path: Path,
 ) -> None:
-    manager, _ = _manager(tmp_path)
+    manager, _ = _manager(tmp_path, experiment=True)
     messages: list[str] = []
 
-    manager.apply_tools(progress=messages.append)
+    manager.apply_experiment(EXPERIMENT_ID, progress=messages.append)
 
-    assert messages == [
-        "[1/3] Verifying initialized Hermes deployment.",
-        "[2/3] Replacing repository-managed Hermes tool plugins.",
-        (
-            "[3/3] Applying 2 managed-tool operation(s) in one "
-            "provisioning container (timeout 120s)."
-        ),
-        "[Hermes 1/2] set tools.tool_search.enabled",
-        "✓ Set tools.tool_search.enabled = off",
-        "[Hermes] Provisioning batch complete.",
-    ]
+    assert messages[0] == "[1/3] Synchronizing selected Hermes experiment apparatus."
+    assert messages[1] == "[2/3] Applying 3 experiment-apparatus operation(s)."
+    assert "[Hermes 1/3] set tools.tool_search.enabled" in messages
+    assert messages[-1] == "[3/3] Hermes experiment apparatus applied successfully."
+
+
+def test_baseline_apply_removes_active_experiment_apparatus(
+    tmp_path: Path,
+) -> None:
+    baseline, docker = _manager(tmp_path)
+    baseline.apply()
+    experiment = _experiment_manager(tmp_path, docker)
+    experiment.apply_experiment(EXPERIMENT_ID)
+    plugin_root = experiment.data_root / "plugins" / "acmm-tools"
+    assert plugin_root.is_dir()
+    assert "acmm-tools" in docker.plugins_enabled
+
+    baseline.apply()
+
+    assert not plugin_root.exists()
+    assert "acmm-tools" not in docker.plugins_enabled
+    assert "acmm" in docker.disabled_toolsets
+    assert not (
+        baseline.deployment_root / ".acmm-experiment-apparatus.json"
+    ).exists()
+
+def test_baseline_apply_removes_unmarked_legacy_experiment_apparatus(
+    tmp_path: Path,
+) -> None:
+    baseline, docker = _manager(tmp_path)
+    baseline.apply()
+    experiment = _experiment_manager(tmp_path, docker)
+    experiment.apply_experiment(EXPERIMENT_ID)
+    marker = baseline.deployment_root / ".acmm-experiment-apparatus.json"
+    marker.unlink()
+
+    plugin_root = experiment.data_root / "plugins" / "acmm-tools"
+    assert plugin_root.is_dir()
+    assert "acmm-tools" in docker.plugins_enabled
+
+    baseline.apply()
+
+    assert not plugin_root.exists()
+    assert "acmm-tools" not in docker.plugins_enabled
+    assert "acmm" in docker.disabled_toolsets
 
 
 def test_doctor_detects_experiment_isolation_drift(
@@ -778,15 +888,15 @@ def test_apply_reports_progress_stages(
 
     assert messages == [
         "[1/4] Verifying initialized Hermes deployment.",
-        "[2/4] Synchronizing repository-managed Hermes plugins.",
+        "[2/4] Reconciling experiment-independent Hermes state.",
         (
-            "[3/4] Applying 14 Hermes operations in one provisioning container "
-            "(timeout 120s)."
+            "[3/4] Applying 13 operations for Hermes baseline state in one "
+            "provisioning container (timeout 120s)."
         ),
-        "[Hermes 1/14] set model.provider",
+        "[Hermes 1/13] set model.provider",
         "✓ Set model.provider = custom",
         "[Hermes] Provisioning batch complete.",
-        "[4/4] Hermes infrastructure baseline applied successfully.",
+        "[4/4] Hermes baseline applied successfully.",
     ]
 
 
@@ -819,12 +929,12 @@ def test_apply_verbose_mode_uses_raw_provision_output(
     assert docker.provision_output_modes == ["verbose"]
     assert messages == [
         "[1/4] Verifying initialized Hermes deployment.",
-        "[2/4] Synchronizing repository-managed Hermes plugins.",
+        "[2/4] Reconciling experiment-independent Hermes state.",
         (
-            "[3/4] Applying 14 Hermes operations in one provisioning container "
-            "(timeout 120s)."
+            "[3/4] Applying 13 operations for Hermes baseline state in one "
+            "provisioning container (timeout 120s)."
         ),
-        "[4/4] Hermes infrastructure baseline applied successfully.",
+        "[4/4] Hermes baseline applied successfully.",
     ]
 
 

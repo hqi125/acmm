@@ -1,0 +1,79 @@
+from pathlib import Path
+
+from acmm_infra.profiles.agent_zero import load_agent_zero_profile
+from acmm_infra.profiles.experiments import (
+    experiment_apparatus_sha256,
+    with_agent_zero_experiment,
+    with_hermes_experiment,
+    with_open_webui_experiment,
+)
+from acmm_infra.profiles.hermes import load_hermes_profile
+from acmm_infra.profiles.open_webui import load_open_webui_profile
+
+
+ROOT = Path(__file__).resolve().parents[2]
+EXPERIMENT_ID = "controlled_tool_use_multiscenario_v1"
+
+
+def test_hermes_experiment_apparatus_composes_over_baseline() -> None:
+    profile = with_hermes_experiment(
+        ROOT,
+        load_hermes_profile(ROOT),
+        EXPERIMENT_ID,
+    )
+
+    assert len(profile.plugins) == 1
+    assert profile.plugins[0].name == "acmm-tools"
+    assert profile.plugins[0].enabled is True
+    assert profile.plugins[0].toolsets == ("acmm",)
+    assert profile.plugins[0].source == Path(
+        "infrastructure/hermes/experiments/"
+        + EXPERIMENT_ID
+        + "/plugins/acmm-tools"
+    )
+
+
+def test_open_webui_experiment_apparatus_composes_over_baseline() -> None:
+    profile = with_open_webui_experiment(
+        ROOT,
+        load_open_webui_profile(ROOT),
+        EXPERIMENT_ID,
+    )
+
+    assert len(profile.tools) == 1
+    assert profile.tools[0].id == "acmm_tools"
+    assert profile.tools[0].source == Path(
+        f"experiments/{EXPERIMENT_ID}/tools/acmm_tools.py"
+    )
+
+
+def test_agent_zero_experiment_apparatus_composes_over_baseline() -> None:
+    profile = with_agent_zero_experiment(
+        ROOT,
+        load_agent_zero_profile(ROOT),
+        EXPERIMENT_ID,
+    )
+
+    assert profile.experiment_isolation.allowed_tools == (
+        "plugin:acmm_tools:get_magic_number",
+        "plugin:acmm_tools:add_numbers",
+    )
+    assert len(profile.plugins) == 1
+    assert profile.plugins[0].name == "acmm_tools"
+    assert profile.plugins[0].source == Path(
+        f"experiments/{EXPERIMENT_ID}/plugins/acmm_tools"
+    )
+
+
+def test_existing_experiments_have_independent_apparatus_copies() -> None:
+    pilot = "magic_number_tool_use_v1"
+    canonical = "controlled_tool_use_multiscenario_v1"
+
+    for subject in ("hermes", "open-webui", "agent-zero"):
+        pilot_root = ROOT / "infrastructure" / subject / "experiments" / pilot
+        canonical_root = ROOT / "infrastructure" / subject / "experiments" / canonical
+        assert pilot_root.is_dir()
+        assert canonical_root.is_dir()
+        assert experiment_apparatus_sha256(ROOT, subject, pilot) != (
+            experiment_apparatus_sha256(ROOT, subject, canonical)
+        )

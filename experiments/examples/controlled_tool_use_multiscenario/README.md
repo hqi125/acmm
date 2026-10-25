@@ -79,13 +79,19 @@ termination:
 Reconcile and verify the managed controlled Tool layer for every subject:
 
 ```bash
-acmm-infra hermes apply-tools
+acmm-infra hermes down
+acmm-infra hermes apply --experiment controlled_tool_use_multiscenario_v1
+acmm-infra hermes up
 acmm-infra hermes doctor
 
-acmm-infra open-webui apply-tools
+acmm-infra open-webui down
+acmm-infra open-webui apply --experiment controlled_tool_use_multiscenario_v1
+acmm-infra open-webui up
 acmm-infra open-webui doctor
 
-acmm-infra agent-zero apply-tools
+acmm-infra agent-zero down
+acmm-infra agent-zero apply --experiment controlled_tool_use_multiscenario_v1
+acmm-infra agent-zero up
 acmm-infra agent-zero doctor
 ```
 
