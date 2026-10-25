@@ -129,4 +129,15 @@ agent-specific behavior that could contaminate the measurement. A successful
 qualification slice is still an engineering/pilot subset and must not be mistaken
 for the complete Contract execution.
 
+After all covered subjects are prepared for this experiment, the catalog-backed shortcut can be used
+for a non-contacting full-plan check:
+
+```bash
+acmm run --preview
+```
+
+Bare `acmm run` infers this experiment only when deployed subject contexts are unambiguous, then loads
+this canonical Contract from the experiment catalog. The explicit Contract path remains available for
+qualification, debugging, and provenance-visible commands.
+
 After the slice is clean, omit `--run-index` to execute all 60 planned runs.

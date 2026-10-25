@@ -15,11 +15,14 @@ from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import load_schema, validate_contract
 from acmm.deployment_preflight import (
     deployment_preflight_result,
+    discover_deployment_contexts,
     inspect_deployment_contexts,
 )
 from acmm.experiments.catalog import lookup_experiment_execution_binding
 from acmm.subjects.catalog import (
     lookup_subject_execution_binding,
+    registered_subject_ids,
+    subject_execution_binding,
     unsupported_termination_controls,
 )
 from acmm.record.loader import load_run_record, run_record_load_error
@@ -399,8 +402,80 @@ def _print_run_selection_preview(
 
     print("No execution started (--preview).")
 
+def _context_discovery_subject_bindings(
+    subject_selectors: list[str] | None,
+) -> dict[str, subject_execution_binding]:
+    subject_ids = (
+        tuple(dict.fromkeys(subject_selectors))
+        if subject_selectors
+        else registered_subject_ids()
+    )
+    bindings: dict[str, subject_execution_binding] = {}
+
+    for subject_id in subject_ids:
+        binding = lookup_subject_execution_binding(subject_id)
+        if binding is None:
+            raise ValueError(
+                f"No qualified execution binding is registered for subject "
+                f"'{subject_id}'."
+            )
+
+        bindings[subject_id] = binding
+
+    return bindings
+
+
+def _resolve_run_contract_path(args: argparse.Namespace) -> Path:
+    if args.contract is not None:
+        return Path(args.contract)
+
+    subject_bindings = _context_discovery_subject_bindings(args.subject)
+    discovery = discover_deployment_contexts(
+        runtime_root=Path(args.runtime_root).expanduser(),
+        subject_bindings=subject_bindings,
+    )
+    experiment_ids = discovery.experiment_ids
+
+    if not experiment_ids:
+        details = "; ".join(
+            f"{subject.subject_id}=none"
+            for subject in discovery.subjects
+        )
+        raise ValueError(
+            "Cannot infer an experiment because no selected deployment context "
+            f"declares an experiment ({details})."
+        )
+
+    if len(experiment_ids) != 1:
+        details = "; ".join(
+            f"{subject.subject_id}={subject.experiment_id or 'none'}"
+            for subject in discovery.subjects
+        )
+        raise ValueError(
+            "Cannot infer one experiment because selected deployment contexts "
+            f"do not converge ({details})."
+        )
+
+    experiment_id = experiment_ids[0]
+    binding = lookup_experiment_execution_binding(experiment_id)
+    if binding is None:
+        raise ValueError(
+            "Cannot infer a runnable experiment because deployment contexts "
+            f"declare unregistered experiment '{experiment_id}'."
+        )
+
+    contract_path = Path(args.repo_root) / binding.canonical_contract
+    print(f"Resolved experiment from deployment context: {experiment_id}")
+    print(f"Canonical Contract: {contract_path}")
+    return contract_path
+
+
 def _run_experiment(args: argparse.Namespace) -> int:
-    contract_path = Path(args.contract)
+    try:
+        contract_path = _resolve_run_contract_path(args)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     schema_path = (
         Path(args.schema)
         if args.schema is not None
@@ -1127,7 +1202,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "contract",
-        help="Path to an experiment YAML file.",
+        nargs="?",
+        help=(
+            "Path to an experiment YAML file. Omit to infer one converged "
+            "experiment from deployed subject contexts and use its registered "
+            "canonical Contract."
+        ),
     )
     _add_contract_schema_argument(run_parser)
     run_parser.add_argument(

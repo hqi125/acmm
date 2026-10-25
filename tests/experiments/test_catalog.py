@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from acmm.experiments.catalog import (
@@ -37,6 +38,9 @@ def test_catalog_resolves_magic_number_execution_binding() -> None:
     binding = lookup_experiment_execution_binding("magic_number_tool_use_v1")
 
     assert binding is not None
+    assert binding.canonical_contract == Path(
+        "experiments/examples/magic_number/experiment.yaml"
+    )
     assert binding.capabilities.evaluators == frozenset(
         {
             "magic_number_retrieval",
@@ -60,6 +64,9 @@ def test_catalog_resolves_controlled_tool_use_execution_binding() -> None:
     )
 
     assert binding is not None
+    assert binding.canonical_contract == Path(
+        "experiments/examples/controlled_tool_use_multiscenario/experiment.yaml"
+    )
     assert binding.capabilities.fixtures == frozenset(
         {"controlled_magic_number_environment_v1"}
     )

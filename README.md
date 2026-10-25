@@ -878,6 +878,20 @@ experiment. A missing, stale, Tool-only, or different-experiment context aborts 
 adapter construction or execution-session creation. `--runtime-root` and `--repo-root` can override
 the roots used for this verification.
 
+When the Contract path is omitted, `acmm run` can infer a built-in experiment from deployed
+subject contexts and load that experiment's canonical Contract from the experiment catalog:
+
+```text
+acmm run --preview
+```
+
+Inference requires one unambiguous deployed experiment ID across the contexts considered for
+resolution. Missing contexts do not invent another candidate, so a unique remaining experiment can
+still be resolved and then reported as not ready by normal preflight. Conflicting experiment IDs are
+an error even in preview mode because no canonical Contract can be chosen safely. Repeatable
+`--subject` selectors scope inference before the Contract is loaded; without them, all qualified
+subject deployments participate in experiment resolution.
+
 The command validates the Contract and harness compatibility, resolves each Contract subject
 through the qualified subject execution catalog, invokes the running `acmm-hermes` container
 with the explicit `acmm` toolset overlay, persists the exact Contract snapshot, Run Record, and

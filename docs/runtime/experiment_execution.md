@@ -261,6 +261,13 @@ preflight runs before adapter construction and before an execution directory is 
 runtime readiness remains the responsibility of `acmm-infra <subject> doctor`; this phase verifies
 experiment identity/provenance rather than contacting the agent runtime.
 
+The Contract path is optional for built-in experiments. With bare `acmm run`, deployment contexts are
+read first, one converged experiment ID is inferred, and the canonical Contract path registered in
+`acmm.experiments.catalog` is loaded. Zero candidates or multiple distinct candidates are resolution
+errors. A unique candidate may still have missing, Tool-only, or stale covered-subject contexts; those
+conditions are handled by the ordinary deployment preflight after the Contract establishes the actual
+run plan. `--subject` scopes context inference before Contract resolution.
+
 Ctrl+C exits with status 130 after persisting an interruption manifest and a human-readable
 summary when an execution session has already started. No completion manifest is written.
 
