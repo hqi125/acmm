@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from acmm.contract.loader import load_contract
 from acmm.experiments.catalog import lookup_experiment_execution_binding
@@ -311,13 +311,17 @@ def doctor_cohort(
     *,
     start_if_needed: bool = False,
     startup_timeout_seconds: float = 120.0,
+    progress: Callable[[int, int, cohort_subject, str], None] | None = None,
 ) -> tuple[cohort_doctor_result, ...]:
     results: list[cohort_doctor_result] = []
-    for subject in subjects:
+    total = len(subjects)
+    for index, subject in enumerate(subjects, start=1):
         lease = None
         initial_running: bool | None = None
         started_by_acmm = False
         release_error = None
+        if progress is not None:
+            progress(index, total, subject, "begin")
         try:
             lease = discover_runtime_lease(
                 repo_root,
@@ -325,9 +329,22 @@ def doctor_cohort(
                 subject.infrastructure_subject,
             )
             initial_running = lease.initially_running
+            if progress is not None:
+                progress(
+                    index,
+                    total,
+                    subject,
+                    "runtime-running" if initial_running else "runtime-stopped",
+                )
             if start_if_needed and not initial_running:
+                if progress is not None:
+                    progress(index, total, subject, "starting")
                 lease.ensure_started(timeout_seconds=startup_timeout_seconds)
                 started_by_acmm = True
+                if progress is not None:
+                    progress(index, total, subject, "started")
+            if progress is not None:
+                progress(index, total, subject, "checking")
             doctor = doctor_deployed_subject(
                 repo_root,
                 runtime_root,
@@ -342,8 +359,12 @@ def doctor_cohort(
             )
         finally:
             if lease is not None and lease.started_by_acmm:
+                if progress is not None:
+                    progress(index, total, subject, "restoring")
                 try:
                     lease.release()
+                    if progress is not None:
+                        progress(index, total, subject, "restored")
                 except (
                     infrastructure_error,
                     profile_error,
@@ -352,22 +373,30 @@ def doctor_cohort(
                     ValueError,
                 ) as exc:
                     release_error = str(exc)
+                    if progress is not None:
+                        progress(index, total, subject, "restore-failed")
 
         state = deployed_experiment_state(
             repo_root,
             runtime_root,
             subject.infrastructure_subject,
         )
-        results.append(
-            cohort_doctor_result(
-                subject=subject,
-                doctor=doctor,
-                deployment_state=state,
-                initially_running=initial_running,
-                started_by_acmm=started_by_acmm,
-                release_error=release_error,
-            )
+        item = cohort_doctor_result(
+            subject=subject,
+            doctor=doctor,
+            deployment_state=state,
+            initially_running=initial_running,
+            started_by_acmm=started_by_acmm,
+            release_error=release_error,
         )
+        results.append(item)
+        if progress is not None:
+            progress(
+                index,
+                total,
+                subject,
+                "complete-ready" if item.is_ready else "complete-not-ready",
+            )
     return tuple(results)
 
 

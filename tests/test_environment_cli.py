@@ -66,3 +66,96 @@ def test_acmm_infra_root_accepts_only_subject_backends() -> None:
     for backend in ("hermes", "open-webui", "agent-zero"):
         args = parser.parse_args([backend, "status"])
         assert args.command == backend
+
+
+def test_environment_doctor_reports_subject_progress(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    from acmm import environment_cli
+    from acmm_infra.cohort import (
+        cohort_doctor_result,
+        cohort_subject,
+        cohort_subject_status,
+        experiment_cohort,
+    )
+    from acmm_infra.common import doctor_check, doctor_report
+    from acmm_infra.readiness import deployed_subject_doctor_result
+
+    subject = cohort_subject("hermes_nemotron30b", "hermes")
+    monkeypatch.setattr(
+        environment_cli,
+        "resolve_baseline_cohort",
+        lambda selected: experiment_cohort(None, None, (subject,)),
+    )
+    monkeypatch.setattr(
+        environment_cli,
+        "inspect_cohort",
+        lambda *args, **kwargs: (
+            cohort_subject_status(
+                subject_id=subject.subject_id,
+                infrastructure_subject=subject.infrastructure_subject,
+                running=False,
+                experiment_id=EXPERIMENT,
+                application_scope="experiment",
+                apparatus_state="match",
+                source_sha256="abc",
+            ),
+        ),
+    )
+
+    def fake_doctor_cohort(*args, progress=None, **kwargs):
+        assert progress is not None
+        for event in (
+            "begin",
+            "runtime-stopped",
+            "starting",
+            "started",
+            "checking",
+            "restoring",
+            "restored",
+            "complete-ready",
+        ):
+            progress(1, 1, subject, event)
+        return (
+            cohort_doctor_result(
+                subject=subject,
+                doctor=deployed_subject_doctor_result(
+                    infrastructure_subject="hermes",
+                    experiment_id=EXPERIMENT,
+                    report=doctor_report((doctor_check("ready", True, "ready"),)),
+                    error=None,
+                ),
+                deployment_state={
+                    "application_scope": "experiment",
+                    "source_sha256": "abc",
+                },
+                initially_running=False,
+                started_by_acmm=True,
+            ),
+        )
+
+    monkeypatch.setattr(environment_cli, "doctor_cohort", fake_doctor_cohort)
+
+    parser = build_acmm_parser()
+    args = parser.parse_args(
+        [
+            "env",
+            "doctor",
+            "--start-if-needed",
+            "--repo-root",
+            str(tmp_path),
+            "--runtime-root",
+            str(tmp_path / "runtime"),
+        ]
+    )
+    assert args.handler(args) == 0
+
+    output = capsys.readouterr().out
+    assert "ACMM environment doctor progress:" in output
+    assert "[1/1] hermes_nemotron30b" in output
+    assert "startup:        starting temporarily..." in output
+    assert "doctor:         running checks..." in output
+    assert "cleanup:        restoring stopped state..." in output
+    assert "result:         READY" in output

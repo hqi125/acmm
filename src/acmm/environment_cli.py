@@ -222,12 +222,43 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         include_running=False,
     )
     context = summarize_context(contexts)
+    def progress(index, total, subject, event) -> None:
+        if event == "begin":
+            print(f"[{index}/{total}] {subject.subject_id}")
+            print(f"  infrastructure: {subject.infrastructure_subject}")
+        elif event == "runtime-running":
+            print("  runtime:        already running")
+        elif event == "runtime-stopped":
+            print("  runtime:        stopped")
+        elif event == "starting":
+            print("  startup:        starting temporarily...", flush=True)
+        elif event == "started":
+            print("  startup:        ready")
+        elif event == "checking":
+            print("  doctor:         running checks...", flush=True)
+        elif event == "restoring":
+            print("  cleanup:        restoring stopped state...", flush=True)
+        elif event == "restored":
+            print("  cleanup:        restored")
+        elif event == "restore-failed":
+            print("  cleanup:        failed")
+        elif event == "complete-ready":
+            print("  result:         READY")
+            print()
+        elif event == "complete-not-ready":
+            print("  result:         NOT READY")
+            print()
+
+    if not args.json:
+        print("ACMM environment doctor progress:")
+
     doctor_results = doctor_cohort(
         repo_root,
         runtime_root,
         cohort.subjects,
         start_if_needed=args.start_if_needed,
         startup_timeout_seconds=args.startup_timeout_seconds,
+        progress=None if args.json else progress,
     )
 
     subject_ready = all(item.is_ready for item in doctor_results)

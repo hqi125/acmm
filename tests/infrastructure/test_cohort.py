@@ -258,12 +258,16 @@ def test_doctor_cohort_temporarily_starts_subjects_sequentially(
         cohort_subject("subject_a", "hermes"),
         cohort_subject("subject_b", "open-webui"),
     )
+    progress_events: list[str] = []
     results = cohort_module.doctor_cohort(
         tmp_path,
         tmp_path / "runtime",
         subjects,
         start_if_needed=True,
         startup_timeout_seconds=45.0,
+        progress=lambda index, total, subject, event: progress_events.append(
+            f"{index}/{total}:{subject.infrastructure_subject}:{event}"
+        ),
     )
 
     assert all(item.is_ready for item in results)
@@ -275,6 +279,24 @@ def test_doctor_cohort_temporarily_starts_subjects_sequentially(
         "start:open-webui",
         "doctor:open-webui",
         "stop:open-webui",
+    ]
+    assert progress_events == [
+        "1/2:hermes:begin",
+        "1/2:hermes:runtime-stopped",
+        "1/2:hermes:starting",
+        "1/2:hermes:started",
+        "1/2:hermes:checking",
+        "1/2:hermes:restoring",
+        "1/2:hermes:restored",
+        "1/2:hermes:complete-ready",
+        "2/2:open-webui:begin",
+        "2/2:open-webui:runtime-stopped",
+        "2/2:open-webui:starting",
+        "2/2:open-webui:started",
+        "2/2:open-webui:checking",
+        "2/2:open-webui:restoring",
+        "2/2:open-webui:restored",
+        "2/2:open-webui:complete-ready",
     ]
 
 
