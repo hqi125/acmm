@@ -766,15 +766,20 @@ a time. The preferred experiment-wide environment path is:
 acmm env apply --experiment controlled_tool_use_multiscenario_v1
 acmm env status
 acmm env doctor
+acmm env stop
 ```
 
 `acmm env apply` resolves the experiment's canonical Contract and delegates to exactly the
 qualified subjects covered by that Contract. `acmm env status` discovers current deployment
-contexts without selecting an expected experiment, and `acmm env doctor` aggregates the same
-passive per-subject readiness checks used by the low-level infrastructure commands. Repeatable
-`--subject` filters allow targeted environment work during integration. `acmm-infra` remains
-strictly subject-facing: `acmm-infra hermes ...`, `open-webui ...`, and `agent-zero ...` are the
-detailed lifecycle and diagnostic escape hatches.
+contexts without selecting an expected experiment, and plain `acmm env doctor` aggregates the
+same passive per-subject readiness checks used by the low-level infrastructure commands.
+`acmm env doctor --start-if-needed` may temporarily start stopped subjects one at a time, run the
+doctor check, and restore each subject to its original stopped state before moving to the next.
+`acmm env stop` is a cleanup operation: it stops running qualified subject runtimes without
+changing experiment apparatus or deployment markers, even when experiment contexts are
+divergent. Repeatable `--subject` filters allow targeted environment work during integration.
+`acmm-infra` remains strictly subject-facing: `acmm-infra hermes ...`, `open-webui ...`, and
+`agent-zero ...` are the detailed lifecycle and diagnostic escape hatches.
 
 For Hermes:
 
@@ -885,14 +890,22 @@ scenario, and repetition breakdown without creating an execution directory or co
 subject runtimes. Preview also inspects the selected subjects' recorded deployment contexts;
 context mismatches are warnings in preview mode so planning remains available before deployment.
 
-Before a real acquisition, `acmm run` performs two preflight layers for exactly the selected
-subjects. The deployment-context layer requires the Contract experiment ID, full `experiment`
-application scope, and an apparatus SHA-256 matching the repository apparatus for that subject and
-experiment. After provenance passes, a live readiness layer runs the same passive doctor logic used
-by `acmm-infra <subject> doctor` and requires every selected subject to report `READY`. Either layer
-can abort before runtime adapter construction or execution-session creation. `--runtime-root` and
-`--repo-root` can override the roots used for these checks. `--preview` performs only the local
-deployment-context inspection and never contacts subject runtimes.
+Before a real acquisition, `acmm run` performs deployment-context and live-readiness checks for
+exactly the selected subjects. The deployment-context layer requires the Contract experiment ID,
+full `experiment` application scope, and an apparatus SHA-256 matching the repository apparatus
+for that subject and experiment. Plain `acmm run` then requires every selected subject to already
+report `READY` through the same passive doctor logic used by `acmm-infra <subject> doctor`.
+
+`acmm run --start-if-needed` grants a narrower lifecycle permission. Correctly deployed subjects
+that are stopped are marked deferred during initial live preflight and are started lazily when their
+first selected run is reached. ACMM runs the doctor check immediately after startup, keeps only the
+currently needed ACMM-owned runtime alive when selected runs move between subjects, and stops only
+runtimes that ACMM itself started. A subject that was already running is never stopped by this
+policy. Wrong experiment/apparatus state and an already-running but unhealthy subject remain hard
+errors; the option is not an automatic repair mechanism. `--startup-timeout-seconds` controls the
+startup allowance. `--runtime-root` and `--repo-root` can override the roots used for these checks.
+`--preview` performs only the local deployment-context inspection and never contacts or starts
+subject runtimes, even when `--start-if-needed` is present.
 
 When the Contract path is omitted, `acmm run` can infer a built-in experiment from deployed
 subject contexts and load that experiment's canonical Contract from the experiment catalog:

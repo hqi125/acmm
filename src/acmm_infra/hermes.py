@@ -17,7 +17,7 @@ from acmm_infra.deployment import (
     read_experiment_apparatus_state,
     write_experiment_apparatus_state,
 )
-from acmm_infra.docker import docker_client
+from acmm_infra.docker import docker_client, require_success
 from acmm_infra.profiles.experiments import (
     experiment_apparatus_sha256,
     registered_experiment_apparatus_ids,
@@ -86,6 +86,19 @@ class hermes_manager:
             "deployment_root": str(self.deployment_root),
             "data_root": str(self.data_root),
         }
+
+    def up(self, *, timeout_seconds: float = 60.0) -> None:
+        if timeout_seconds <= 0:
+            raise infrastructure_error(
+                "Hermes startup timeout must be greater than zero seconds."
+            )
+
+        self.initialize_deployment()
+        require_success(self.docker.compose_config(), "Docker Compose validation")
+        require_success(self.docker.up(), "Starting Hermes infrastructure")
+
+    def down(self) -> None:
+        require_success(self.docker.down(), "Stopping Hermes infrastructure")
 
     def apply(
         self,

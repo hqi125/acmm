@@ -49,7 +49,17 @@ from acmm.runtime.planner import (
 )
 from acmm.runtime.result_store import result_write_error
 from acmm.validation import validation_result
-from acmm_infra.profiles.common import default_repo_root, default_runtime_root
+from acmm_infra.common import infrastructure_error
+from acmm_infra.docker import docker_error
+from acmm_infra.profiles.common import (
+    default_repo_root,
+    default_runtime_root,
+    profile_error,
+)
+from acmm_infra.runtime_lifecycle import (
+    discover_runtime_lease,
+    subject_runtime_lease,
+)
 
 
 def _default_contract_schema_path() -> Path:
@@ -426,6 +436,117 @@ def _print_live_readiness_preflight(
             )
 
 
+def _discover_runtime_leases(
+    *,
+    repo_root: Path,
+    runtime_root: Path,
+    subject_bindings: dict[str, subject_execution_binding],
+) -> dict[str, subject_runtime_lease]:
+    return {
+        subject_id: discover_runtime_lease(
+            repo_root,
+            runtime_root,
+            binding.infrastructure_subject,
+        )
+        for subject_id, binding in subject_bindings.items()
+    }
+
+
+def _print_start_if_needed_preflight(
+    leases: dict[str, subject_runtime_lease],
+    running_readiness: live_readiness_preflight_result,
+) -> None:
+    by_subject = {item.subject_id: item for item in running_readiness.subjects}
+    print("Live readiness preflight:")
+    for subject_id, lease in leases.items():
+        print(f"  {subject_id}:")
+        if lease.initially_running:
+            subject = by_subject[subject_id]
+            readiness = "ready" if subject.is_ready else "not-ready"
+            _print_labeled_fields(
+                [("readiness", readiness), ("runtime", "already running")],
+                indent=4,
+            )
+            if subject.error is not None:
+                print(f"ERROR: {subject_id}: {subject.error}", file=sys.stderr)
+            for check in subject.failed_checks:
+                print(
+                    f"ERROR: {subject_id}: [{check.name}] {check.detail}",
+                    file=sys.stderr,
+                )
+        else:
+            _print_labeled_fields(
+                [
+                    ("readiness", "deferred"),
+                    ("runtime", "stopped; start permission granted"),
+                ],
+                indent=4,
+            )
+
+
+def _ensure_runtime_ready(
+    *,
+    subject_id: str,
+    lease: subject_runtime_lease,
+    binding: subject_execution_binding,
+    repo_root: Path,
+    runtime_root: Path,
+    startup_timeout_seconds: float,
+) -> None:
+    print("Runtime acquisition:")
+    print(f"  {subject_id}:")
+    if lease.is_running:
+        _print_labeled_fields([("action", "verifying running runtime")], indent=4)
+    else:
+        _print_labeled_fields([("action", "starting")], indent=4)
+        lease.ensure_started(timeout_seconds=startup_timeout_seconds)
+
+    readiness = inspect_live_readiness(
+        repo_root=repo_root,
+        runtime_root=runtime_root,
+        subject_bindings={subject_id: binding},
+    )
+    subject = readiness.subjects[0]
+    action = "started by ACMM" if lease.started_by_acmm else "already running"
+    _print_labeled_fields(
+        [
+            ("action", action),
+            ("readiness", "ready" if subject.is_ready else "not-ready"),
+        ],
+        indent=4,
+    )
+    if subject.is_ready:
+        return
+
+    if subject.error is not None:
+        print(f"ERROR: {subject_id}: {subject.error}", file=sys.stderr)
+    for check in subject.failed_checks:
+        print(
+            f"ERROR: {subject_id}: [{check.name}] {check.detail}",
+            file=sys.stderr,
+        )
+    raise infrastructure_error(
+        f"Subject '{subject_id}' did not become live-ready after startup."
+    )
+
+
+def _release_runtime_leases(
+    leases: dict[str, subject_runtime_lease],
+) -> tuple[str, ...]:
+    errors: list[str] = []
+    for subject_id, lease in leases.items():
+        if not lease.started_by_acmm:
+            continue
+        try:
+            lease.release()
+            print("Runtime release:")
+            print(f"  {subject_id}:")
+            _print_labeled_fields([("result", "stopped")], indent=4)
+        except (infrastructure_error, profile_error, docker_error, OSError, ValueError) as exc:
+            errors.append(f"{subject_id}: {exc}")
+    return tuple(errors)
+
+
 def _print_run_selection_preview(
     plan: experiment_plan,
     selected_runs: tuple[planned_run, ...],
@@ -669,20 +790,108 @@ def _run_experiment(args: argparse.Namespace) -> int:
         )
         return 2
 
-    live_readiness = inspect_live_readiness(
-        repo_root=Path(args.repo_root),
-        runtime_root=Path(args.runtime_root).expanduser(),
-        subject_bindings=subject_bindings,
-    )
-    _print_live_readiness_preflight(live_readiness)
+    repo_root = Path(args.repo_root).expanduser().resolve()
+    runtime_root = Path(args.runtime_root).expanduser().resolve()
+    runtime_leases: dict[str, subject_runtime_lease] = {}
+    ready_subject_ids: set[str] = set()
 
-    if not live_readiness.is_ready:
-        print(
-            "ERROR: Live readiness preflight failed; no execution session was "
-            "created.",
-            file=sys.stderr,
+    if args.start_if_needed:
+        try:
+            runtime_leases = _discover_runtime_leases(
+                repo_root=repo_root,
+                runtime_root=runtime_root,
+                subject_bindings=subject_bindings,
+            )
+        except (infrastructure_error, profile_error, docker_error, OSError, ValueError) as exc:
+            print(f"ERROR: Could not inspect selected subject runtimes: {exc}", file=sys.stderr)
+            return 2
+
+        running_bindings = {
+            subject_id: subject_bindings[subject_id]
+            for subject_id, lease in runtime_leases.items()
+            if lease.initially_running
+        }
+        live_readiness = inspect_live_readiness(
+            repo_root=repo_root,
+            runtime_root=runtime_root,
+            subject_bindings=running_bindings,
         )
-        return 2
+        _print_start_if_needed_preflight(runtime_leases, live_readiness)
+
+        if not live_readiness.is_ready:
+            print(
+                "ERROR: Live readiness preflight failed for an already-running "
+                "subject; no execution session was created.",
+                file=sys.stderr,
+            )
+            return 2
+        ready_subject_ids.update(
+            item.subject_id for item in live_readiness.subjects if item.is_ready
+        )
+    else:
+        live_readiness = inspect_live_readiness(
+            repo_root=repo_root,
+            runtime_root=runtime_root,
+            subject_bindings=subject_bindings,
+        )
+        _print_live_readiness_preflight(live_readiness)
+
+        if not live_readiness.is_ready:
+            print(
+                "ERROR: Live readiness preflight failed; no execution session was "
+                "created.",
+                file=sys.stderr,
+            )
+            return 2
+
+    active_subject_id: list[str | None] = [None]
+
+    def prepare_subject_runtime(subject_id: str) -> None:
+        if not args.start_if_needed:
+            return
+        if subject_id in ready_subject_ids and runtime_leases[subject_id].is_running:
+            active_subject_id[0] = subject_id
+            return
+
+        _ensure_runtime_ready(
+            subject_id=subject_id,
+            lease=runtime_leases[subject_id],
+            binding=subject_bindings[subject_id],
+            repo_root=repo_root,
+            runtime_root=runtime_root,
+            startup_timeout_seconds=args.startup_timeout_seconds,
+        )
+        ready_subject_ids.add(subject_id)
+        active_subject_id[0] = subject_id
+
+    def before_planned_run(planned: planned_run) -> None:
+        if not args.start_if_needed:
+            return
+        previous = active_subject_id[0]
+        if previous == planned.subject_id:
+            return
+        if previous is not None and runtime_leases[previous].started_by_acmm:
+            runtime_leases[previous].release()
+            print("Runtime release:")
+            print(f"  {previous}:")
+            _print_labeled_fields([("result", "stopped")], indent=4)
+            ready_subject_ids.discard(previous)
+        prepare_subject_runtime(planned.subject_id)
+
+    if args.start_if_needed:
+        try:
+            prepare_subject_runtime(selected_runs[0].subject_id)
+        except (infrastructure_error, profile_error, docker_error, OSError, ValueError) as exc:
+            cleanup_errors = _release_runtime_leases(runtime_leases)
+            for error in cleanup_errors:
+                print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
+            print(
+                f"ERROR: Could not acquire the first selected subject runtime: {exc}",
+                file=sys.stderr,
+            )
+            print("ERROR: No execution session was created.", file=sys.stderr)
+            return 2
+
 
     subject_adapters = {
         subject_id: subject_bindings[subject_id].adapter_builder()
@@ -736,6 +945,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
             f"{inter_run_delay:g}s between selected planned runs."
         )
 
+    cleanup_errors: tuple[str, ...] = ()
     try:
         result = execute_experiment(
             contract=contract,
@@ -746,8 +956,10 @@ def _run_experiment(args: argparse.Namespace) -> int:
             max_attempts_per_run=args.max_attempts_per_run,
             run_indices=selected_indices,
             progress=lambda message: print(message, flush=True),
+            before_run=before_planned_run if args.start_if_needed else None,
         )
     except experiment_execution_interrupted as exc:
+        cleanup_errors = _release_runtime_leases(runtime_leases)
         result = exc.result
         _validate_persisted_execution(result, contract)
 
@@ -761,10 +973,23 @@ def _run_experiment(args: argparse.Namespace) -> int:
             )
 
         _print_execution_interruption(result, summary_path)
+        for error in cleanup_errors:
+            print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
         return 130
-    except (OSError, ValueError) as exc:
+    except (
+        infrastructure_error,
+        profile_error,
+        docker_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        cleanup_errors = _release_runtime_leases(runtime_leases)
         print(f"ERROR: Experiment execution failed: {exc}", file=sys.stderr)
+        for error in cleanup_errors:
+            print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
         return 2
+
+    cleanup_errors = _release_runtime_leases(runtime_leases)
 
     validation_status = _validate_persisted_execution(
         result,
@@ -784,6 +1009,11 @@ def _run_experiment(args: argparse.Namespace) -> int:
         )
 
     _print_execution_completion(result, summary_path)
+
+    if cleanup_errors:
+        for error in cleanup_errors:
+            print(f"ERROR: Runtime cleanup failed: {error}", file=sys.stderr)
+        return 2
 
     if result.unresolved_run_indices:
         print(
@@ -1338,6 +1568,21 @@ def _build_parser() -> argparse.ArgumentParser:
             "Validate and print the resolved run selection without creating an "
             "execution session or contacting subject runtimes."
         ),
+    )
+    run_parser.add_argument(
+        "--start-if-needed",
+        action="store_true",
+        help=(
+            "For real execution, permit ACMM to start selected subjects that "
+            "are correctly deployed but currently stopped. ACMM stops only "
+            "runtimes it started itself."
+        ),
+    )
+    run_parser.add_argument(
+        "--startup-timeout-seconds",
+        type=float,
+        default=120.0,
+        help="Maximum startup wait for a subject started by ACMM.",
     )
     run_parser.add_argument(
         "--repo-root",

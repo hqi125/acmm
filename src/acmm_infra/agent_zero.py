@@ -109,6 +109,9 @@ class agent_zero_manager:
         require_success(self.docker.up(), "Starting Agent Zero infrastructure")
         self._wait_until_ready(timeout_seconds)
 
+    def down(self) -> None:
+        require_success(self.docker.down(), "Stopping Agent Zero infrastructure")
+
     def apply(
         self,
         *,

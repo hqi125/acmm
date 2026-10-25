@@ -254,13 +254,24 @@ preview remains usable before infrastructure preparation. Omit both selector typ
 entire Contract plan.
 
 A real execution first requires every selected subject deployment to record the Contract experiment
-ID, full `experiment` application scope, and the exact repository apparatus SHA-256. After that
-local provenance check succeeds, `acmm run` executes the same passive doctor logic used by
-`acmm-infra <subject> doctor` and requires every selected runtime to be live and `READY`. Both gates
-run before adapter construction and before an execution directory is created. Use `--runtime-root`
-when mutable deployments are not under the default ACMM runtime root and `--repo-root` when
-apparatus/readiness verification should use a different repository checkout. `--preview` stops
-after the local context inspection and does not contact agent runtimes.
+ID, full `experiment` application scope, and the exact repository apparatus SHA-256. Plain
+`acmm run` then executes the same passive doctor logic used by `acmm-infra <subject> doctor` and
+requires every selected runtime to be live and `READY` before adapter construction or execution
+session creation.
+
+`--start-if-needed` changes only the stopped-runtime case. After provenance succeeds, already
+running subjects are still doctor-checked immediately; a running-but-unhealthy subject remains a
+hard preflight failure. Stopped subjects are deferred and acquired lazily in selected run order.
+ACMM starts the subject, doctor-checks it before use, and records lifecycle ownership in a runtime
+lease. When execution moves to another subject, an ACMM-started runtime may be stopped before the
+next one is acquired. Runtimes that were already running before the command are never stopped by
+this policy. Any ACMM-owned runtime is released on normal completion, interruption, or handled
+execution failure. `--startup-timeout-seconds` controls the startup allowance.
+
+Use `--runtime-root` when mutable deployments are not under the default ACMM runtime root and
+`--repo-root` when apparatus/readiness verification should use a different repository checkout.
+`--preview` stops after local context inspection and does not contact or start agent runtimes, even
+when `--start-if-needed` is supplied.
 
 The Contract path is optional for built-in experiments. With bare `acmm run`, deployment contexts are
 read first, one converged experiment ID is inferred, and the canonical Contract path registered in

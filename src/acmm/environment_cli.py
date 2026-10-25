@@ -13,6 +13,7 @@ from acmm_infra.cohort import (
     inspect_cohort,
     resolve_baseline_cohort,
     resolve_experiment_cohort,
+    stop_cohort,
     summarize_context,
 )
 from acmm_infra.common import infrastructure_error
@@ -88,8 +89,31 @@ def _register_environment_subcommands(
     )
     _add_environment_root_arguments(doctor_parser)
     _add_subject_arguments(doctor_parser)
+    doctor_parser.add_argument(
+        "--start-if-needed",
+        action="store_true",
+        help=(
+            "Temporarily start stopped subjects one at a time for doctor checks, "
+            "then restore their original stopped state."
+        ),
+    )
+    doctor_parser.add_argument(
+        "--startup-timeout-seconds",
+        type=float,
+        default=120.0,
+        help="Maximum startup wait for a temporarily started subject.",
+    )
     doctor_parser.add_argument("--json", action="store_true")
     doctor_parser.set_defaults(handler=_safe_environment_handler(run_environment_doctor))
+
+    stop_parser = subparsers.add_parser(
+        "stop",
+        help="Stop running qualified ACMM subject runtimes without changing apparatus.",
+    )
+    _add_environment_root_arguments(stop_parser)
+    _add_subject_arguments(stop_parser)
+    stop_parser.add_argument("--json", action="store_true")
+    stop_parser.set_defaults(handler=_safe_environment_handler(run_environment_stop))
 
 
 def run_environment_apply(args: argparse.Namespace) -> int:
@@ -198,9 +222,15 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         include_running=False,
     )
     context = summarize_context(contexts)
-    doctor_results = doctor_cohort(repo_root, runtime_root, cohort.subjects)
+    doctor_results = doctor_cohort(
+        repo_root,
+        runtime_root,
+        cohort.subjects,
+        start_if_needed=args.start_if_needed,
+        startup_timeout_seconds=args.startup_timeout_seconds,
+    )
 
-    subject_ready = all(result.is_ready for _, result, _ in doctor_results)
+    subject_ready = all(item.is_ready for item in doctor_results)
     context_ready = (
         context.state == "converged"
         and all(item.application_scope == "experiment" for item in contexts)
@@ -214,14 +244,19 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
             "context": asdict(context),
             "subjects": [],
         }
-        for subject, result, state in doctor_results:
+        for item in doctor_results:
+            result = item.doctor
+            state = item.deployment_state
             payload["subjects"].append(
                 {
-                    "subject_id": subject.subject_id,
-                    "infrastructure_subject": subject.infrastructure_subject,
+                    "subject_id": item.subject.subject_id,
+                    "infrastructure_subject": item.subject.infrastructure_subject,
                     "experiment_id": result.experiment_id,
-                    "ready": result.is_ready,
+                    "ready": item.is_ready,
                     "error": result.error,
+                    "initially_running": item.initially_running,
+                    "started_by_acmm": item.started_by_acmm,
+                    "release_error": item.release_error,
                     "application_scope": (
                         state.get("application_scope")
                         if isinstance(state, dict)
@@ -242,25 +277,33 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
     print(f"    state:      {context.state}")
     print(f"    experiment: {context.experiment_id or 'none'}")
     print("  subjects:")
-    for subject, result, state in doctor_results:
+    for item in doctor_results:
+        subject = item.subject
+        result = item.doctor
+        state = item.deployment_state
         print(f"    {subject.subject_id}:")
-        print(f"      infrastructure: {subject.infrastructure_subject}")
-        print(f"      readiness:      {'READY' if result.is_ready else 'NOT READY'}")
-        print(f"      experiment:     {result.experiment_id or 'none'}")
+        print(f"      infrastructure:    {subject.infrastructure_subject}")
+        print(f"      readiness:         {'READY' if item.is_ready else 'NOT READY'}")
+        print(f"      experiment:        {result.experiment_id or 'none'}")
+        if item.initially_running is not None:
+            print(f"      initially running: {item.initially_running}")
+        if item.started_by_acmm:
+            print("      temporary startup: started and restored")
         if isinstance(state, dict):
             print(
                 "      application scope: "
                 f"{state.get('application_scope', 'unknown')}"
             )
         if result.error is not None:
-            print(f"      error:          {result.error}")
-            continue
-        assert result.report is not None
-        failures = tuple(check for check in result.report.checks if not check.ok)
-        if failures:
-            print("      failed checks:")
-            for check in failures:
-                print(f"        {check.name}: {check.detail}")
+            print(f"      error:             {result.error}")
+        elif result.report is not None:
+            failures = tuple(check for check in result.report.checks if not check.ok)
+            if failures:
+                print("      failed checks:")
+                for check in failures:
+                    print(f"        {check.name}: {check.detail}")
+        if item.release_error is not None:
+            print(f"      cleanup error:     {item.release_error}")
 
     print()
     if not context_ready:
@@ -270,6 +313,37 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         )
     print("READY" if ready else "NOT READY")
     return 0 if ready else 1
+
+
+def run_environment_stop(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root).expanduser().resolve()
+    runtime_root = Path(args.runtime_root).expanduser().resolve()
+    cohort = resolve_baseline_cohort(tuple(args.subjects or ()))
+    results = stop_cohort(repo_root, runtime_root, cohort.subjects)
+    failed = any(item.error is not None for item in results)
+
+    if args.json:
+        payload = {
+            "stopped": not failed,
+            "subjects": [asdict(item) for item in results],
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 1 if failed else 0
+
+    print("ACMM environment stop:")
+    print("  subjects:")
+    for item in results:
+        print(f"    {item.subject_id}:")
+        print(f"      infrastructure: {item.infrastructure_subject}")
+        print(f"      initial state:  {'running' if item.initial_running else 'stopped'}")
+        if item.error is not None:
+            print("      result:         failed")
+            print(f"      error:          {item.error}")
+        elif item.stopped:
+            print("      result:         stopped")
+        else:
+            print("      result:         unchanged")
+    return 1 if failed else 0
 
 
 def _add_environment_root_arguments(parser: argparse.ArgumentParser) -> None:

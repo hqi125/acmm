@@ -196,3 +196,123 @@ def test_apply_cohort_reports_partial_failure_without_rollback(monkeypatch, tmp_
         )
 
     assert first.applied is True
+
+
+def test_doctor_cohort_temporarily_starts_subjects_sequentially(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from acmm_infra.common import doctor_check, doctor_report
+    from acmm_infra.readiness import deployed_subject_doctor_result
+
+    events: list[str] = []
+
+    class fake_lease:
+        def __init__(self, subject: str) -> None:
+            self.subject = subject
+            self.initially_running = False
+            self.started_by_acmm = False
+
+        def ensure_started(self, *, timeout_seconds: float = 120.0) -> bool:
+            assert timeout_seconds == 45.0
+            events.append(f"start:{self.subject}")
+            self.started_by_acmm = True
+            return True
+
+        def release(self) -> bool:
+            events.append(f"stop:{self.subject}")
+            self.started_by_acmm = False
+            return True
+
+    monkeypatch.setattr(
+        cohort_module,
+        "discover_runtime_lease",
+        lambda repo_root, runtime_root, infrastructure_subject: fake_lease(
+            infrastructure_subject
+        ),
+    )
+
+    def fake_doctor(repo_root, runtime_root, infrastructure_subject):
+        del repo_root, runtime_root
+        events.append(f"doctor:{infrastructure_subject}")
+        return deployed_subject_doctor_result(
+            infrastructure_subject=infrastructure_subject,
+            experiment_id="example_v1",
+            report=doctor_report(
+                checks=(doctor_check("ready", True, "ready"),)
+            ),
+            error=None,
+        )
+
+    monkeypatch.setattr(cohort_module, "doctor_deployed_subject", fake_doctor)
+    monkeypatch.setattr(
+        cohort_module,
+        "deployed_experiment_state",
+        lambda *args, **kwargs: {
+            "application_scope": "experiment",
+            "source_sha256": "abc",
+        },
+    )
+
+    subjects = (
+        cohort_subject("subject_a", "hermes"),
+        cohort_subject("subject_b", "open-webui"),
+    )
+    results = cohort_module.doctor_cohort(
+        tmp_path,
+        tmp_path / "runtime",
+        subjects,
+        start_if_needed=True,
+        startup_timeout_seconds=45.0,
+    )
+
+    assert all(item.is_ready for item in results)
+    assert all(item.started_by_acmm for item in results)
+    assert events == [
+        "start:hermes",
+        "doctor:hermes",
+        "stop:hermes",
+        "start:open-webui",
+        "doctor:open-webui",
+        "stop:open-webui",
+    ]
+
+
+def test_stop_cohort_ignores_experiment_convergence(monkeypatch, tmp_path: Path) -> None:
+    class fake_manager:
+        def __init__(self) -> None:
+            self.down_calls = 0
+
+        def down(self) -> None:
+            self.down_calls += 1
+
+    class fake_lease:
+        def __init__(self, running: bool) -> None:
+            self.initially_running = running
+            self.context = type("context", (), {"manager": fake_manager()})()
+
+    leases = {
+        "hermes": fake_lease(True),
+        "open-webui": fake_lease(False),
+    }
+    monkeypatch.setattr(
+        cohort_module,
+        "discover_runtime_lease",
+        lambda repo_root, runtime_root, infrastructure_subject: leases[
+            infrastructure_subject
+        ],
+    )
+
+    results = cohort_module.stop_cohort(
+        tmp_path,
+        tmp_path / "runtime",
+        (
+            cohort_subject("subject_a", "hermes"),
+            cohort_subject("subject_b", "open-webui"),
+        ),
+    )
+
+    assert results[0].stopped is True
+    assert results[1].stopped is False
+    assert leases["hermes"].context.manager.down_calls == 1
+    assert leases["open-webui"].context.manager.down_calls == 0

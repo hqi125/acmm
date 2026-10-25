@@ -33,6 +33,12 @@ class infrastructure_manager(Protocol):
     def doctor(self):
         ...
 
+    def up(self, *, timeout_seconds: float = 120.0) -> None:
+        ...
+
+    def down(self) -> None:
+        ...
+
 
 @dataclass(frozen=True)
 class subject_manager_context:

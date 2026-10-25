@@ -15,7 +15,11 @@ from acmm_infra.deployment import read_experiment_apparatus_state
 from acmm_infra.docker import docker_error
 from acmm_infra.profiles.common import profile_error
 from acmm_infra.profiles.experiments import experiment_apparatus_sha256
-from acmm_infra.readiness import doctor_deployed_subject
+from acmm_infra.readiness import (
+    deployed_subject_doctor_result,
+    doctor_deployed_subject,
+)
+from acmm_infra.runtime_lifecycle import discover_runtime_lease
 from acmm_infra.subject_managers import (
     build_deployed_subject_manager,
     build_subject_manager,
@@ -52,6 +56,29 @@ class cohort_subject_status:
 class cohort_context_summary:
     state: str
     experiment_id: str | None
+
+
+@dataclass(frozen=True)
+class cohort_stop_result:
+    subject_id: str
+    infrastructure_subject: str
+    initial_running: bool
+    stopped: bool
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class cohort_doctor_result:
+    subject: cohort_subject
+    doctor: deployed_subject_doctor_result
+    deployment_state: dict[str, object] | None
+    initially_running: bool | None
+    started_by_acmm: bool
+    release_error: str | None = None
+
+    @property
+    def is_ready(self) -> bool:
+        return self.doctor.is_ready and self.release_error is None
 
 
 def resolve_experiment_cohort(
@@ -240,27 +267,108 @@ def summarize_context(
     return cohort_context_summary(state="converged", experiment_id=experiment_id)
 
 
+def stop_cohort(
+    repo_root: str | Path,
+    runtime_root: str | Path,
+    subjects: tuple[cohort_subject, ...],
+) -> tuple[cohort_stop_result, ...]:
+    results: list[cohort_stop_result] = []
+    for subject in subjects:
+        try:
+            lease = discover_runtime_lease(
+                repo_root,
+                runtime_root,
+                subject.infrastructure_subject,
+            )
+            initial_running = lease.initially_running
+            if initial_running:
+                lease.context.manager.down()
+            results.append(
+                cohort_stop_result(
+                    subject_id=subject.subject_id,
+                    infrastructure_subject=subject.infrastructure_subject,
+                    initial_running=initial_running,
+                    stopped=initial_running,
+                )
+            )
+        except (infrastructure_error, profile_error, docker_error, OSError, ValueError) as exc:
+            results.append(
+                cohort_stop_result(
+                    subject_id=subject.subject_id,
+                    infrastructure_subject=subject.infrastructure_subject,
+                    initial_running=False,
+                    stopped=False,
+                    error=str(exc),
+                )
+            )
+    return tuple(results)
+
+
 def doctor_cohort(
     repo_root: str | Path,
     runtime_root: str | Path,
     subjects: tuple[cohort_subject, ...],
-):
-    return tuple(
-        (
-            subject,
-            doctor_deployed_subject(
+    *,
+    start_if_needed: bool = False,
+    startup_timeout_seconds: float = 120.0,
+) -> tuple[cohort_doctor_result, ...]:
+    results: list[cohort_doctor_result] = []
+    for subject in subjects:
+        lease = None
+        initial_running: bool | None = None
+        started_by_acmm = False
+        release_error = None
+        try:
+            lease = discover_runtime_lease(
                 repo_root,
                 runtime_root,
                 subject.infrastructure_subject,
-            ),
-            deployed_experiment_state(
+            )
+            initial_running = lease.initially_running
+            if start_if_needed and not initial_running:
+                lease.ensure_started(timeout_seconds=startup_timeout_seconds)
+                started_by_acmm = True
+            doctor = doctor_deployed_subject(
                 repo_root,
                 runtime_root,
                 subject.infrastructure_subject,
-            ),
+            )
+        except (infrastructure_error, profile_error, docker_error, OSError, ValueError) as exc:
+            doctor = deployed_subject_doctor_result(
+                infrastructure_subject=subject.infrastructure_subject,
+                experiment_id=None,
+                report=None,
+                error=str(exc),
+            )
+        finally:
+            if lease is not None and lease.started_by_acmm:
+                try:
+                    lease.release()
+                except (
+                    infrastructure_error,
+                    profile_error,
+                    docker_error,
+                    OSError,
+                    ValueError,
+                ) as exc:
+                    release_error = str(exc)
+
+        state = deployed_experiment_state(
+            repo_root,
+            runtime_root,
+            subject.infrastructure_subject,
         )
-        for subject in subjects
-    )
+        results.append(
+            cohort_doctor_result(
+                subject=subject,
+                doctor=doctor,
+                deployment_state=state,
+                initially_running=initial_running,
+                started_by_acmm=started_by_acmm,
+                release_error=release_error,
+            )
+        )
+    return tuple(results)
 
 
 def _resolve_subjects(

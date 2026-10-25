@@ -89,6 +89,9 @@ class open_webui_manager:
         require_success(self.docker.up(), "Starting Open WebUI infrastructure")
         self._wait_until_ready(timeout_seconds)
 
+    def down(self) -> None:
+        require_success(self.docker.down(), "Stopping Open WebUI infrastructure")
+
     def apply(
         self,
         *,

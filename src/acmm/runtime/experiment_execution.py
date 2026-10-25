@@ -126,6 +126,8 @@ def execute_experiment(
     execution_id_factory: Callable[[], str] | None = None,
     run_id_factory: Callable[[], str] | None = None,
     sleep: Callable[[float], None] | None = None,
+    before_run: Callable[[planned_run], None] | None = None,
+    after_run: Callable[[planned_run], None] | None = None,
 ) -> experiment_execution_result:
     """
     Execute every selected planned slot in one experiment execution session.
@@ -162,6 +164,8 @@ def execute_experiment(
     )
     make_run_id = run_id_factory if run_id_factory is not None else _new_run_id
     wait = sleep if sleep is not None else time.sleep
+    prepare_run = before_run if before_run is not None else lambda planned: None
+    finish_run = after_run if after_run is not None else lambda planned: None
     inter_run_delay_seconds = _inter_run_delay_seconds(contract)
 
     source_path = Path(contract_path)
@@ -220,6 +224,8 @@ def execute_experiment(
             active_attempts = []
             active_selected_run_id = None
             active_attempt_number = None
+
+            prepare_run(planned)
 
             for attempt_number in range(1, max_attempts_per_run + 1):
                 active_attempt_number = attempt_number
@@ -281,6 +287,8 @@ def execute_experiment(
             active_attempts = []
             active_selected_run_id = None
             active_attempt_number = None
+
+            finish_run(planned)
 
             has_next_selected_run = selected_position + 1 < len(selected_runs)
 

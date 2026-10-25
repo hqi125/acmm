@@ -251,3 +251,171 @@ def test_preview_does_not_run_live_readiness(
     captured = capsys.readouterr()
     assert "    context:           ready" in captured.out
     assert "Live readiness preflight" not in captured.out
+
+
+def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from acmm.live_preflight import (
+        live_readiness_preflight_result,
+        subject_live_readiness,
+    )
+    from acmm.runtime.planner import planned_run
+    from acmm_infra.common import doctor_check
+
+    runtime_root = tmp_path / "runtime"
+    for infrastructure_subject in ("hermes", "open-webui"):
+        write_experiment_apparatus_state(
+            runtime_root / infrastructure_subject,
+            experiment_id=EXPERIMENT_ID,
+            source_sha256=experiment_apparatus_sha256(
+                ROOT,
+                infrastructure_subject,
+                EXPERIMENT_ID,
+            ),
+            application_scope="experiment",
+            resources=[],
+        )
+
+    events: list[str] = []
+
+    class fake_lease:
+        def __init__(self, subject_id: str) -> None:
+            self.subject_id = subject_id
+            self.initially_running = False
+            self.running = False
+            self.started_by_acmm = False
+
+        @property
+        def is_running(self) -> bool:
+            return self.running
+
+        def ensure_started(self, *, timeout_seconds: float = 120.0) -> bool:
+            assert timeout_seconds == 30.0
+            events.append(f"start:{self.subject_id}")
+            self.running = True
+            self.started_by_acmm = True
+            return True
+
+        def release(self) -> bool:
+            events.append(f"stop:{self.subject_id}")
+            self.running = False
+            self.started_by_acmm = False
+            return True
+
+    leases = {
+        "hermes_nemotron30b": fake_lease("hermes_nemotron30b"),
+        "open_webui_nemotron30b": fake_lease("open_webui_nemotron30b"),
+    }
+    monkeypatch.setattr(
+        "acmm.cli._discover_runtime_leases",
+        lambda **kwargs: leases,
+    )
+
+    def ready_live_preflight(**kwargs):
+        return live_readiness_preflight_result(
+            subjects=tuple(
+                subject_live_readiness(
+                    subject_id=subject_id,
+                    infrastructure_subject=binding.infrastructure_subject,
+                    experiment_id=EXPERIMENT_ID,
+                    checks=(doctor_check("ready", True, "ready"),),
+                    error=None,
+                )
+                for subject_id, binding in kwargs["subject_bindings"].items()
+            )
+        )
+
+    monkeypatch.setattr("acmm.cli.inspect_live_readiness", ready_live_preflight)
+
+    def fake_execute(**kwargs):
+        before_run = kwargs["before_run"]
+        assert before_run is not None
+        before_run(
+            planned_run(
+                run_index=0,
+                subject_id="hermes_nemotron30b",
+                scenario_id="single_addition_success",
+                repetition=1,
+            )
+        )
+        before_run(
+            planned_run(
+                run_index=20,
+                subject_id="open_webui_nemotron30b",
+                scenario_id="single_addition_success",
+                repetition=1,
+            )
+        )
+        raise ValueError("synthetic stop after lifecycle exercise")
+
+    monkeypatch.setattr("acmm.cli.execute_experiment", fake_execute)
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            str(CONTRACT),
+            "--run-index",
+            "0",
+            "--run-index",
+            "20",
+            "--start-if-needed",
+            "--startup-timeout-seconds",
+            "30",
+            "--runtime-root",
+            str(runtime_root),
+            "--results-root",
+            str(tmp_path / "results"),
+        ]
+    )
+
+    assert args.handler(args) == 2
+    assert events == [
+        "start:hermes_nemotron30b",
+        "stop:hermes_nemotron30b",
+        "start:open_webui_nemotron30b",
+        "stop:open_webui_nemotron30b",
+    ]
+
+
+def test_preview_start_if_needed_remains_non_contacting(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    write_experiment_apparatus_state(
+        runtime_root / "hermes",
+        experiment_id=EXPERIMENT_ID,
+        source_sha256=experiment_apparatus_sha256(
+            ROOT,
+            "hermes",
+            EXPERIMENT_ID,
+        ),
+        application_scope="experiment",
+        resources=[],
+    )
+
+    monkeypatch.setattr(
+        "acmm.cli._discover_runtime_leases",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("preview must not inspect live runtime leases")
+        ),
+    )
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            str(CONTRACT),
+            "--run-index",
+            "0",
+            "--preview",
+            "--start-if-needed",
+            "--runtime-root",
+            str(runtime_root),
+        ]
+    )
+
+    assert args.handler(args) == 0
