@@ -19,6 +19,7 @@ from acmm.deployment_preflight import (
     inspect_deployment_contexts,
 )
 from acmm.experiments.catalog import lookup_experiment_execution_binding
+from acmm.environment_cli import register_environment_commands
 from acmm.live_preflight import (
     inspect_live_readiness,
     live_readiness_preflight_result,
@@ -1270,6 +1271,8 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="command",
         required=True,
     )
+
+    register_environment_commands(subparsers)
 
     validate_parser = subparsers.add_parser(
         "validate",

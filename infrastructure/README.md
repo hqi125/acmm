@@ -47,9 +47,45 @@ own deployable bytes even when a later experiment starts from similar tools.
 
 ## Infrastructure CLI architecture
 
-`acmm-infra` exposes the common lifecycle `init`, `up`, `down`, `apply`, `apply-tools`,
-`status`, `doctor`, and `reset`. `apply-experiment <experiment-id>` remains a compatibility
-alias for `apply --experiment <experiment-id>` during the CLI transition.
+The public CLI boundary is intentionally split by operator intent:
+
+```text
+acmm env ...
+    Experiment-facing environment orchestration across qualified Contract subjects.
+
+acmm-infra <subject> ...
+    Subject/backend-facing provisioning, lifecycle control, diagnosis, and maintenance.
+```
+
+The experiment-facing environment commands are:
+
+```text
+acmm env apply --experiment <experiment-id>
+    Resolve the experiment's canonical Contract and reconcile every covered subject.
+
+acmm env apply
+    Reconcile experiment-independent baselines for all qualified subjects. This fallback emits a
+    warning and removes active experiment apparatus.
+
+acmm env status
+    Passively discover each qualified subject's deployed experiment context and summarize
+    environment convergence.
+
+acmm env doctor
+    Run each subject's existing passive doctor and report aggregate experiment-environment
+    readiness.
+```
+
+Repeatable `--subject <qualified-subject-id>` filters can narrow any `acmm env` command.
+Environment apply verifies that every selected runtime is stopped before mutating the first
+subject. It is fail-fast but not transactional: if a later subject fails after earlier subjects
+were applied, the error reports the partial state and no automatic rollback is attempted.
+
+`acmm-infra` now has one strict root shape: the first positional command is always `hermes`,
+`open-webui`, or `agent-zero`. Those subject commands expose the common lifecycle `init`, `up`,
+`down`, `apply`, `apply-tools`, `status`, `doctor`, and `reset`.
+`apply-experiment <experiment-id>` remains a compatibility alias for subject-level
+`apply --experiment <experiment-id>` during the CLI transition.
 
 The two reconciliation layers are:
 
@@ -85,6 +121,7 @@ The product-specific mechanics still differ: Hermes uses a one-off provisioning 
 Open WebUI uses its supported application APIs, and Agent Zero uses its supported APIs plus
 container-owned writes under `/a0/usr`.
 
-The root CLI only integrates agent CLI adapters. Each adapter owns command-specific arguments,
-orchestration, and presentation while the agent manager remains focused on infrastructure
-state and operations.
+`acmm env` owns only thin experiment-environment orchestration and command routing.
+Product-specific deployment mechanics remain in the subject managers; environment operations
+resolve canonical Contract subjects, delegate to those managers, and aggregate context/readiness
+results. `acmm-infra` does not expose a competing all-subject command layer.

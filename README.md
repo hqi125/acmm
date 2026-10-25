@@ -759,8 +759,22 @@ API, and normalizes Agent Zero Tool logs into the existing ACMM evidence channel
 
 ## Infrastructure management
 
-`acmm-infra` separates the repository's installation definitions from mutable deployed
-agent state.
+`acmm` owns experiment-facing workflow, while `acmm-infra` owns one infrastructure backend at
+a time. The preferred experiment-wide environment path is:
+
+```text
+acmm env apply --experiment controlled_tool_use_multiscenario_v1
+acmm env status
+acmm env doctor
+```
+
+`acmm env apply` resolves the experiment's canonical Contract and delegates to exactly the
+qualified subjects covered by that Contract. `acmm env status` discovers current deployment
+contexts without selecting an expected experiment, and `acmm env doctor` aggregates the same
+passive per-subject readiness checks used by the low-level infrastructure commands. Repeatable
+`--subject` filters allow targeted environment work during integration. `acmm-infra` remains
+strictly subject-facing: `acmm-infra hermes ...`, `open-webui ...`, and `agent-zero ...` are the
+detailed lifecycle and diagnostic escape hatches.
 
 For Hermes:
 
