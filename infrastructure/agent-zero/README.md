@@ -172,7 +172,9 @@ Experiment 1, `/a0/usr/plugins/acmm_tools/`). Experiment 1's plugin contains the
 `get_magic_number` and `add_numbers` Tools plus agent-facing prompt fragments. Its
 `default_config.yaml` defines controlled baseline state. The runtime adapter writes per-run
 values through Agent Zero's supported plugin API and restores the experiment baseline
-afterward.
+afterward. Agent Zero may persist runtime-owned plugin state such as `config.json`, activation
+markers, or plugin-local `data/`; readiness compares repository-owned plugin source exactly
+while excluding those runtime-owned files from source-drift checks.
 
 A later experiment may duplicate and change this plugin without mutating Experiment 1's
 frozen apparatus. Full baseline `apply` removes the active experiment plugin and restores an

@@ -224,7 +224,7 @@ class agent_zero_adapter:
                 try:
                     self._client.update_plugin_config(
                         self._config.plugin_name,
-                        _baseline_tool_config(),
+                        _baseline_tool_config(environment),
                     )
                 except Exception:
                     pass
@@ -358,8 +358,6 @@ def _normalize_log_items(
             continue
 
         name = _normalize_tool_name(raw_name, plugin_name)
-        if name not in {"get_magic_number", "add_numbers"}:
-            continue
 
         call_id = item.get("id")
         if not isinstance(call_id, str) or not call_id:
@@ -452,6 +450,14 @@ def _runtime_tool_config(environment: Any) -> dict[str, Any]:
             "Agent Zero controlled-tool execution requires a fixture environment mapping."
         )
 
+    generic_config = environment.get("ACMM_TOOL_CONFIG_JSON")
+
+    if generic_config is not None:
+        return _json_object_configuration(
+            generic_config,
+            "ACMM_TOOL_CONFIG_JSON",
+        )
+
     try:
         magic_number = int(environment["ACMM_MAGIC_NUMBER"])
         retrieval_mode = str(environment["ACMM_RETRIEVAL_MODE"])
@@ -477,12 +483,38 @@ def _runtime_tool_config(environment: Any) -> dict[str, Any]:
     }
 
 
-def _baseline_tool_config() -> dict[str, Any]:
+def _baseline_tool_config(environment: Any) -> dict[str, Any]:
+    if isinstance(environment, dict):
+        generic_baseline = environment.get("ACMM_TOOL_BASELINE_JSON")
+
+        if generic_baseline is not None:
+            return _json_object_configuration(
+                generic_baseline,
+                "ACMM_TOOL_BASELINE_JSON",
+            )
+
     return {
         "magic_number": 87,
         "retrieval_mode": "success",
         "addition_mode": "success",
     }
+
+
+def _json_object_configuration(value: Any, name: str) -> dict[str, Any]:
+    if not isinstance(value, str):
+        raise agent_zero_adapter_error(f"{name} must be a JSON object string.")
+
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise agent_zero_adapter_error(
+            f"{name} must contain valid JSON."
+        ) from exc
+
+    if not isinstance(parsed, dict):
+        raise agent_zero_adapter_error(f"{name} must contain a JSON object.")
+
+    return parsed
 
 
 def _adapter_timeout(termination: dict[str, Any]) -> float:

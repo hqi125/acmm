@@ -42,10 +42,15 @@ def with_hermes_experiment(
         path = f"plugins.managed[{index}]"
         if not isinstance(plugin, dict):
             raise profile_error(f"{path} must be a mapping.")
+
+        name = _nonempty_string(plugin.get("name"), f"{path}.name")
+        source = _safe_relative_path(plugin.get("source"), f"{path}.source")
+        _validate_hermes_plugin_package(repo_root, source, name, path)
+
         plugins.append(
             managed_hermes_plugin(
-                name=_nonempty_string(plugin.get("name"), f"{path}.name"),
-                source=_safe_relative_path(plugin.get("source"), f"{path}.source"),
+                name=name,
+                source=source,
                 destination=_safe_relative_path(
                     plugin.get("destination"),
                     f"{path}.destination",
@@ -62,6 +67,48 @@ def with_hermes_experiment(
     _require_unique((plugin.name for plugin in plugins), "Hermes plugin name")
     return replace(profile, plugins=tuple(plugins))
 
+
+
+def _validate_hermes_plugin_package(
+    repo_root: str | Path,
+    source: Path,
+    expected_name: str,
+    field_path: str,
+) -> None:
+    root = (Path(repo_root).resolve() / source).resolve()
+    if not root.is_dir():
+        raise profile_error(f"{field_path}.source does not exist: '{root}'.")
+
+    entrypoint = root / "__init__.py"
+    if not entrypoint.is_file():
+        raise profile_error(
+            f"{field_path}.source is missing Hermes plugin entrypoint "
+            f"'{entrypoint.name}'."
+        )
+
+    manifest_path = root / "plugin.yaml"
+    try:
+        with manifest_path.open("r", encoding="utf-8") as file:
+            manifest = yaml.safe_load(file)
+    except OSError as exc:
+        raise profile_error(
+            f"{field_path}.source is missing readable Hermes plugin manifest "
+            f"'{manifest_path}': {exc}"
+        ) from exc
+    except yaml.YAMLError as exc:
+        raise profile_error(
+            f"Could not parse Hermes plugin manifest '{manifest_path}': {exc}"
+        ) from exc
+
+    if not isinstance(manifest, dict):
+        raise profile_error(
+            f"Hermes plugin manifest '{manifest_path}' must be a YAML mapping."
+        )
+    if manifest.get("name") != expected_name:
+        raise profile_error(
+            f"Hermes plugin manifest '{manifest_path}' name must be "
+            f"'{expected_name}'."
+        )
 
 def with_open_webui_experiment(
     repo_root: str | Path,

@@ -582,12 +582,12 @@ class agent_zero_manager:
                     f"managed_plugin:{name}",
                     plugin_state["exact"],
                     (
-                        "matches repository source"
+                        "source-owned files match repository source"
                         if plugin_state["exact"]
                         else (
                             "is missing"
                             if not plugin_state["present"]
-                            else "drifted from repository source"
+                            else "source-owned files drifted from repository source"
                         )
                     ),
                 )
@@ -1222,24 +1222,45 @@ class agent_zero_manager:
             return True, f"HTTP {status}"
         return False, f"HTTP {status}"
 
+_AGENT_ZERO_RUNTIME_PLUGIN_FILE_NAMES = frozenset(
+    {
+        "config.json",
+        ".toggle-0",
+        ".toggle-1",
+    }
+)
+_AGENT_ZERO_RUNTIME_PLUGIN_DIRECTORY_NAMES = frozenset({"data"})
+
+
 def _directories_equal(left: Path, right: Path) -> bool:
     if not left.is_dir() or not right.is_dir():
         return False
 
-    left_files = [
-        path.relative_to(left)
-        for path in iter_managed_source_files(left)
-    ]
-    right_files = [
-        path.relative_to(right)
-        for path in iter_managed_source_files(right)
-    ]
+    left_files = _plugin_source_relative_files(left)
+    right_files = _plugin_source_relative_files(right)
     if left_files != right_files:
         return False
 
     return all(
         (left / relative).read_bytes() == (right / relative).read_bytes()
         for relative in left_files
+    )
+
+
+def _plugin_source_relative_files(root: Path) -> list[Path]:
+    return [
+        path.relative_to(root)
+        for path in iter_managed_source_files(root)
+        if not _is_agent_zero_runtime_plugin_state(path.relative_to(root))
+    ]
+
+
+def _is_agent_zero_runtime_plugin_state(relative: Path) -> bool:
+    if len(relative.parts) == 1 and relative.name in _AGENT_ZERO_RUNTIME_PLUGIN_FILE_NAMES:
+        return True
+    return bool(
+        relative.parts
+        and relative.parts[0] in _AGENT_ZERO_RUNTIME_PLUGIN_DIRECTORY_NAMES
     )
 
 

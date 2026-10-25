@@ -14,6 +14,10 @@ from acmm.pilots.magic_number import (
     build_magic_number_registry,
     magic_number_harness_capabilities,
 )
+from acmm.pilots.scoped_record import (
+    build_controlled_scoped_record_registry,
+    controlled_scoped_record_harness_capabilities,
+)
 from acmm.runtime.interfaces import subject_adapter
 from acmm.runtime.registry import execution_registry
 
@@ -49,6 +53,14 @@ def _build_catalog() -> Mapping[str, experiment_execution_binding]:
             ),
             capabilities=controlled_tool_use_harness_capabilities(),
             registry_builder=build_controlled_tool_use_registry,
+        ),
+        "controlled_scoped_record_update_v1": experiment_execution_binding(
+            canonical_contract=Path(
+                "experiments/examples/controlled_scoped_record_update/"
+                "experiment.yaml"
+            ),
+            capabilities=controlled_scoped_record_harness_capabilities(),
+            registry_builder=build_controlled_scoped_record_registry,
         ),
     }
 

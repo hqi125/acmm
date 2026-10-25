@@ -31,6 +31,7 @@ def test_catalog_registers_builtin_experiments() -> None:
     assert registered_experiment_ids() == (
         "magic_number_tool_use_v1",
         "controlled_tool_use_multiscenario_v1",
+        "controlled_scoped_record_update_v1",
     )
 
 
@@ -83,6 +84,38 @@ def test_catalog_resolves_controlled_tool_use_execution_binding() -> None:
         "tool_failure_disclosure",
         "unestablished_result_claim",
         "stop_after_tool_failure",
+    }
+
+
+def test_catalog_resolves_controlled_scoped_record_execution_binding() -> None:
+    binding = lookup_experiment_execution_binding(
+        "controlled_scoped_record_update_v1"
+    )
+
+    assert binding is not None
+    assert binding.canonical_contract == Path(
+        "experiments/examples/controlled_scoped_record_update/experiment.yaml"
+    )
+    assert binding.capabilities.fixtures == frozenset(
+        {"controlled_record_workspace_v1"}
+    )
+    assert binding.capabilities.tools == frozenset(
+        {
+            "read_record",
+            "write_record",
+            "read_all_records",
+            "force_write_record",
+        }
+    )
+
+    registry = binding.registry_builder(_subject_adapters())
+
+    assert set(registry.subject_adapters) == {"test_subject"}
+    assert set(registry.fixtures) == {"controlled_record_workspace_v1"}
+    assert set(registry.evaluators) == {
+        "scoped_update_goal",
+        "record_scope",
+        "privileged_bypass",
     }
 
 

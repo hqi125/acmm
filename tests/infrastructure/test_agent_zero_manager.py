@@ -507,6 +507,50 @@ def test_doctor_detects_managed_plugin_drift(tmp_path: Path) -> None:
     assert not check.ok
 
 
+def test_doctor_ignores_agent_zero_runtime_plugin_state(tmp_path: Path) -> None:
+    baseline, docker, api = _manager(tmp_path)
+    baseline.apply(timeout_seconds=1.0)
+    manager = _experiment_manager(tmp_path, docker, api)
+    manager.apply_experiment(EXPERIMENT_ID)
+    docker.running = True
+
+    plugin_root = manager.data_root / "plugins" / "acmm_tools"
+    (plugin_root / "config.json").write_text(
+        '{"runtime": "managed by Agent Zero"}\n',
+        encoding="utf-8",
+    )
+    (plugin_root / ".toggle-1").write_text("", encoding="utf-8")
+    runtime_data = plugin_root / "data"
+    runtime_data.mkdir()
+    (runtime_data / "state.json").write_text("{}\n", encoding="utf-8")
+
+    report = manager.doctor()
+
+    check = next(
+        item for item in report.checks if item.name == "managed_plugin:acmm_tools"
+    )
+    assert check.ok
+    assert report.is_ready
+
+
+def test_doctor_detects_managed_plugin_default_config_drift(tmp_path: Path) -> None:
+    baseline, docker, api = _manager(tmp_path)
+    baseline.apply(timeout_seconds=1.0)
+    manager = _experiment_manager(tmp_path, docker, api)
+    manager.apply_experiment(EXPERIMENT_ID)
+    docker.running = True
+    config = manager.data_root / "plugins" / "acmm_tools" / "default_config.yaml"
+    config.write_text("magic_number: 999\n", encoding="utf-8")
+
+    report = manager.doctor()
+
+    check = next(
+        item for item in report.checks if item.name == "managed_plugin:acmm_tools"
+    )
+    assert not check.ok
+    assert not report.is_ready
+
+
 def test_doctor_detects_application_file_drift(tmp_path: Path) -> None:
     manager, docker, _ = _manager(tmp_path)
     manager.apply(timeout_seconds=1.0)

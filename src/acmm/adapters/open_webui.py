@@ -567,6 +567,14 @@ def _runtime_valves(environment: Any) -> dict[str, Any]:
             "Open WebUI controlled-tool execution requires a fixture environment mapping."
         )
 
+    generic_config = environment.get("ACMM_TOOL_CONFIG_JSON")
+
+    if generic_config is not None:
+        return _json_object_configuration(
+            generic_config,
+            "ACMM_TOOL_CONFIG_JSON",
+        )
+
     try:
         magic_number = int(environment["ACMM_MAGIC_NUMBER"])
         retrieval_mode = str(environment["ACMM_RETRIEVAL_MODE"])
@@ -590,6 +598,23 @@ def _runtime_valves(environment: Any) -> dict[str, Any]:
         "retrieval_mode": retrieval_mode,
         "addition_mode": addition_mode,
     }
+
+
+def _json_object_configuration(value: Any, name: str) -> dict[str, Any]:
+    if not isinstance(value, str):
+        raise open_webui_adapter_error(f"{name} must be a JSON object string.")
+
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise open_webui_adapter_error(
+            f"{name} must contain valid JSON."
+        ) from exc
+
+    if not isinstance(parsed, dict):
+        raise open_webui_adapter_error(f"{name} must contain a JSON object.")
+
+    return parsed
 
 
 def _adapter_timeout(termination: dict[str, Any]) -> float:

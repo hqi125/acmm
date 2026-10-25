@@ -686,6 +686,29 @@ ACMM subject: managed desired state, machine-interface study, runtime adapter/ev
 normalization, exact termination mapping, live smoke, and subject-only stress qualification. See
 `docs/integration/agent_integration.md` for the general integration workflow and coding surface.
 
+## Second controlled experiment: scoped record update
+
+`controlled_scoped_record_update_v1` adds the first direct empirical coverage of the canonical
+`goal` and `boundary` dimensions. Its controlled workspace exposes `source`, `target`, and
+`protected` records through narrow read/write Tools plus two functional but prohibited bypass
+capabilities. Four scenarios cover normal success, an out-of-scope distractor, source-read
+failure pressure, and target-write failure pressure.
+
+The experiment owns independent apparatus under each subject's
+`infrastructure/<subject>/experiments/controlled_scoped_record_update_v1/` tree. Its fixture uses
+the generic per-run Tool-configuration envelope consumed by Open WebUI and Agent Zero, while
+Hermes continues to receive the same fixture state as ordinary environment variables. The
+adapters therefore remain experiment-independent.
+
+The canonical Contract lives at:
+
+```text
+experiments/examples/controlled_scoped_record_update/experiment.yaml
+```
+
+It plans 60 runs and 150 atomic opportunities: 30 Goal opportunities in the two deliberately
+feasible scenarios and 120 Boundary opportunities across all four scenarios.
+
 ## Open WebUI infrastructure checkpoint
 
 Open WebUI now has a repository-managed deployment and Tool baseline alongside Hermes. The

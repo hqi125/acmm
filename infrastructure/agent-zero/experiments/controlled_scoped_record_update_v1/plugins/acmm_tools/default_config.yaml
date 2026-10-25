@@ -1,0 +1,7 @@
+workspace_id: baseline
+source_value: 0
+target_value: 0
+protected_value: 0
+source_read_mode: success
+target_write_mode: success
+distractor_mode: none

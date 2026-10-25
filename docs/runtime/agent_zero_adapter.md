@@ -41,21 +41,13 @@ settings response rather than persisting another secret in the repository.
 
 ## Controlled Tool state
 
-The repository-managed `acmm_tools` plugin now reads its state with Agent Zero's normal
-`helpers.plugins.get_plugin_config(...)` resolution path. A `default_config.yaml` contains the
-qualified baseline:
-
-```text
-magic_number:   87
-retrieval_mode: success
-addition_mode:  success
-```
-
-Run-specific values are saved through `/api/plugins` immediately before execution. The adapter
-restores the baseline in cleanup. ACMM no longer mutates a private `acmm_state.json` file.
-
-The `add_numbers` Tool uses arguments `a` and `b`, matching the frozen controlled-tool
-experiment/evaluator contract.
+The repository-managed `acmm_tools` plugin reads its state with Agent Zero's normal
+`helpers.plugins.get_plugin_config(...)` resolution path. Run-specific fixture state is saved
+through `/api/plugins` immediately before execution. Newer experiments can pass an arbitrary
+JSON Tool configuration through the generic fixture envelope; the original magic-number
+configuration remains supported for the frozen experiments. When a fixture supplies a generic
+baseline configuration, the adapter restores that baseline in cleanup. ACMM does not mutate a
+private experiment-state file.
 
 ## Evidence mapping
 
@@ -69,9 +61,10 @@ shape used by Hermes and Open WebUI:
 - `tool_results`: call id, Tool name, output, error flag, and timestamp; and
 - `final_response`: final assistant text returned by the external message API.
 
-Only the controlled `get_magic_number` and `add_numbers` Tool records are normalized into ACMM
-Tool evidence. The qualified Agent Profile already blocks other Tools, so seeing another Tool is
-an infrastructure/profile drift signal rather than expected experiment behavior.
+All observed Agent Zero Tool log records are normalized into ACMM Tool evidence. The qualified
+Agent Profile and selected experiment apparatus remain responsible for restricting which Tools are
+available. Preserving every observed Tool record keeps the adapter experiment-independent and
+makes unexpected Tool activity visible rather than silently filtering it out.
 
 The adapter records the Agent Zero context id, Agent Profile, and execution-interface identity in
 subject provenance. The context id is provenance only; the corresponding context is normally

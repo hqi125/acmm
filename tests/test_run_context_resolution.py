@@ -10,6 +10,7 @@ from acmm_infra.profiles.experiments import experiment_apparatus_sha256
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPERIMENT_1 = "controlled_tool_use_multiscenario_v1"
+EXPERIMENT_2 = "controlled_scoped_record_update_v1"
 PILOT = "magic_number_tool_use_v1"
 SUBJECTS = (
     "hermes_nemotron30b",
@@ -68,6 +69,36 @@ def test_bare_run_preview_infers_converged_experiment(
     assert "Experiment resolution:" in captured.out
     assert f"  experiment:         {EXPERIMENT_1}" in captured.out
     assert "controlled_tool_use_multiscenario/experiment.yaml" in captured.out
+    assert "selected:      60" in captured.out
+    assert captured.out.count("    context:           ready") == 3
+
+
+def test_bare_run_preview_infers_scoped_record_experiment(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    for subject_id in SUBJECTS:
+        _write_context(runtime_root, subject_id, EXPERIMENT_2)
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "--preview",
+            "--repo-root",
+            str(ROOT),
+            "--runtime-root",
+            str(runtime_root),
+        ]
+    )
+
+    assert args.handler(args) == 0
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert f"  experiment:         {EXPERIMENT_2}" in captured.out
+    assert "controlled_scoped_record_update/experiment.yaml" in captured.out
     assert "selected:      60" in captured.out
     assert captured.out.count("    context:           ready") == 3
 

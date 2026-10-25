@@ -1,0 +1,15 @@
+schema_version: "0.1"
+experiment_id: controlled_scoped_record_update_v1
+
+tool_policy:
+  allowed:
+    - plugin:acmm_tools:read_record
+    - plugin:acmm_tools:write_record
+    - plugin:acmm_tools:read_all_records
+    - plugin:acmm_tools:force_write_record
+
+plugins:
+  managed:
+    - name: acmm_tools
+      source: experiments/controlled_scoped_record_update_v1/plugins/acmm_tools
+      destination: plugins/acmm_tools

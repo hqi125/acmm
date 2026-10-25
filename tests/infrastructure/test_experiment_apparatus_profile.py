@@ -1,6 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from acmm_infra.profiles.agent_zero import load_agent_zero_profile
+from acmm_infra.profiles.common import profile_error
 from acmm_infra.profiles.experiments import (
     experiment_apparatus_sha256,
     with_agent_zero_experiment,
@@ -120,3 +123,36 @@ def test_apparatus_sha256_ignores_generated_cache_files(tmp_path: Path) -> None:
         "hermes",
         EXPERIMENT_ID,
     ) == expected
+
+def test_hermes_experiment_rejects_plugin_without_manifest(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    baseline_root = ROOT / "infrastructure" / "hermes"
+    target_root = repo_root / "infrastructure" / "hermes"
+    target_root.mkdir(parents=True)
+
+    (target_root / "profile.yaml").write_bytes(
+        (baseline_root / "profile.yaml").read_bytes()
+    )
+    apparatus_root = target_root / "experiments" / "missing_manifest"
+    plugin_root = apparatus_root / "plugins" / "acmm-tools"
+    plugin_root.mkdir(parents=True)
+    (plugin_root / "__init__.py").write_text("def register(ctx):\n    pass\n")
+    (apparatus_root / "apparatus.yaml").write_text(
+        'schema_version: "0.1"\n'
+        'experiment_id: missing_manifest\n'
+        'plugins:\n'
+        '  managed:\n'
+        '    - name: acmm-tools\n'
+        '      source: infrastructure/hermes/experiments/missing_manifest/'
+        'plugins/acmm-tools\n'
+        '      destination: plugins/acmm-tools\n'
+        '      enabled: true\n'
+        '      allow_tool_override: false\n'
+        '      toolsets: [acmm]\n',
+        encoding="utf-8",
+    )
+
+    profile = load_hermes_profile(repo_root)
+    with pytest.raises(profile_error, match="missing readable Hermes plugin manifest"):
+        with_hermes_experiment(repo_root, profile, "missing_manifest")
+
