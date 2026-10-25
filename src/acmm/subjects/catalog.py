@@ -26,6 +26,7 @@ class subject_execution_binding:
 
     adapter_builder: Callable[[], subject_adapter]
     runtime_description: str
+    infrastructure_subject: str
     termination_support: subject_termination_support
 
 
@@ -53,6 +54,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
             runtime_description=(
                 "Hermes container: acmm-hermes; toolset overlay: acmm."
             ),
+            infrastructure_subject="hermes",
             termination_support=subject_termination_support(
                 max_steps=True,
                 timeout_seconds=True,
@@ -64,6 +66,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
                 "Open WebUI API: http://127.0.0.1:3000; experiment Tool apparatus "
                 "selected separately."
             ),
+            infrastructure_subject="open-webui",
             termination_support=subject_termination_support(
                 max_steps=False,
                 timeout_seconds=True,
@@ -75,6 +78,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
                 "Agent Zero API: http://127.0.0.1:50080; profile: acmm; "
                 "experiment plugin apparatus selected separately."
             ),
+            infrastructure_subject="agent-zero",
             termination_support=subject_termination_support(
                 max_steps=False,
                 timeout_seconds=True,

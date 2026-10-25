@@ -8,6 +8,8 @@ import subprocess
 import yaml
 
 from acmm.cli import _build_parser
+from acmm_infra.deployment import write_experiment_apparatus_state
+from acmm_infra.profiles.experiments import experiment_apparatus_sha256
 from acmm.runtime.experiment_execution import (
     experiment_execution_interrupted,
     experiment_interruption_result,
@@ -22,6 +24,26 @@ CONTRACT_PATH = (
     / "magic_number"
     / "experiment.yaml"
 )
+
+
+def _prepare_hermes_experiment_context(
+    tmp_path: Path,
+    experiment_id: str,
+) -> Path:
+    runtime_root = tmp_path / "runtime"
+    deployment_root = runtime_root / "hermes"
+    write_experiment_apparatus_state(
+        deployment_root,
+        experiment_id=experiment_id,
+        source_sha256=experiment_apparatus_sha256(
+            ROOT,
+            "hermes",
+            experiment_id,
+        ),
+        application_scope="experiment",
+        resources=[],
+    )
+    return runtime_root
 
 
 def _session_export() -> str:
@@ -104,6 +126,10 @@ def test_run_command_executes_one_magic_number_slot(
     monkeypatch,
     capsys,
 ) -> None:
+    runtime_root = _prepare_hermes_experiment_context(
+        tmp_path,
+        "magic_number_tool_use_v1",
+    )
     captured_commands: list[list[str]] = []
 
     def runner(command, **kwargs):
@@ -173,6 +199,8 @@ def test_run_command_executes_one_magic_number_slot(
             str(CONTRACT_PATH),
             "--run-index",
             "0",
+            "--runtime-root",
+            str(runtime_root),
             "--results-root",
             str(tmp_path),
         ]
@@ -268,6 +296,10 @@ def test_run_command_reports_graceful_ctrl_c_interruption(
     monkeypatch,
     capsys,
 ) -> None:
+    runtime_root = _prepare_hermes_experiment_context(
+        tmp_path,
+        "magic_number_tool_use_v1",
+    )
     session_dir = (
         tmp_path
         / "magic_number_tool_use_v1"
@@ -305,6 +337,8 @@ def test_run_command_reports_graceful_ctrl_c_interruption(
             str(CONTRACT_PATH),
             "--run-index",
             "0",
+            "--runtime-root",
+            str(runtime_root),
             "--results-root",
             str(tmp_path),
         ]

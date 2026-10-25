@@ -77,3 +77,46 @@ def test_existing_experiments_have_independent_apparatus_copies() -> None:
         assert experiment_apparatus_sha256(ROOT, subject, pilot) != (
             experiment_apparatus_sha256(ROOT, subject, canonical)
         )
+
+
+def test_apparatus_sha256_ignores_generated_cache_files(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    apparatus_root = (
+        repo_root
+        / "infrastructure"
+        / "hermes"
+        / "experiments"
+        / EXPERIMENT_ID
+    )
+    plugin_root = apparatus_root / "plugins" / "acmm-tools"
+    plugin_root.mkdir(parents=True)
+    (apparatus_root / "apparatus.yaml").write_text(
+        "schema_version: \"0.1\"\n",
+        encoding="utf-8",
+    )
+    (plugin_root / "__init__.py").write_text(
+        "VALUE = 1\n",
+        encoding="utf-8",
+    )
+
+    expected = experiment_apparatus_sha256(
+        repo_root,
+        "hermes",
+        EXPERIMENT_ID,
+    )
+
+    cache_root = plugin_root / "__pycache__"
+    cache_root.mkdir()
+    (cache_root / "__init__.cpython-313.pyc").write_bytes(b"generated cache")
+    (plugin_root / ".pytest_cache" / "state").parent.mkdir()
+    (plugin_root / ".pytest_cache" / "state").write_text(
+        "generated",
+        encoding="utf-8",
+    )
+    (plugin_root / ".DS_Store").write_bytes(b"generated metadata")
+
+    assert experiment_apparatus_sha256(
+        repo_root,
+        "hermes",
+        EXPERIMENT_ID,
+    ) == expected

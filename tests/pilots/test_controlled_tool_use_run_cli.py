@@ -7,6 +7,8 @@ import subprocess
 import yaml
 
 from acmm.cli import _build_parser
+from acmm_infra.deployment import write_experiment_apparatus_state
+from acmm_infra.profiles.experiments import experiment_apparatus_sha256
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +19,26 @@ CONTRACT_PATH = (
     / "controlled_tool_use_multiscenario"
     / "experiment.yaml"
 )
+
+
+def _prepare_hermes_experiment_context(
+    tmp_path: Path,
+    experiment_id: str,
+) -> Path:
+    runtime_root = tmp_path / "runtime"
+    deployment_root = runtime_root / "hermes"
+    write_experiment_apparatus_state(
+        deployment_root,
+        experiment_id=experiment_id,
+        source_sha256=experiment_apparatus_sha256(
+            ROOT,
+            "hermes",
+            experiment_id,
+        ),
+        application_scope="experiment",
+        resources=[],
+    )
+    return runtime_root
 
 
 def _contract() -> dict:
@@ -118,6 +140,10 @@ def test_run_command_executes_controlled_addition_failure_slot(
     monkeypatch,
     capsys,
 ) -> None:
+    runtime_root = _prepare_hermes_experiment_context(
+        tmp_path,
+        "controlled_tool_use_multiscenario_v1",
+    )
     captured_commands: list[list[str]] = []
 
     def runner(command, **kwargs):
@@ -157,6 +183,8 @@ def test_run_command_executes_controlled_addition_failure_slot(
             str(CONTRACT_PATH),
             "--run-index",
             "15",
+            "--runtime-root",
+            str(runtime_root),
             "--results-root",
             str(tmp_path),
         ]
@@ -225,6 +253,8 @@ def test_run_command_previews_subject_range_without_execution(
             "--subject",
             "open_webui_nemotron30b",
             "--preview",
+            "--runtime-root",
+            str(tmp_path / "runtime"),
             "--results-root",
             str(tmp_path),
         ]
@@ -233,8 +263,12 @@ def test_run_command_previews_subject_range_without_execution(
     assert args.handler(args) == 0
     assert list(tmp_path.iterdir()) == []
 
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out
     assert "Run selection preview" in output
+    assert "Deployment context preflight:" in output
+    assert "open_webui_nemotron30b" in captured.err
+    assert "no active experiment deployment context" in captured.err
     assert "selected:      20" in output
     assert "subjects:      open_webui_nemotron30b" in output
     assert "run indices:   20-39" in output

@@ -868,7 +868,15 @@ acmm run experiments/examples/controlled_tool_use_multiscenario/experiment.yaml 
 
 Use `--preview` with the same selectors to validate and print the resolved run-index, subject,
 scenario, and repetition breakdown without creating an execution directory or contacting the
-subject runtimes.
+subject runtimes. Preview also inspects the selected subjects' recorded deployment contexts;
+context mismatches are warnings in preview mode so planning remains available before deployment.
+
+Before a real acquisition, `acmm run` now performs a deployment-context preflight for exactly the
+selected subjects. Each subject must record the Contract experiment ID with full `experiment`
+application scope and an apparatus SHA-256 matching the repository apparatus for that subject and
+experiment. A missing, stale, Tool-only, or different-experiment context aborts before runtime
+adapter construction or execution-session creation. `--runtime-root` and `--repo-root` can override
+the roots used for this verification.
 
 The command validates the Contract and harness compatibility, resolves each Contract subject
 through the qualified subject execution catalog, invokes the running `acmm-hermes` container

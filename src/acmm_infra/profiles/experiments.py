@@ -24,10 +24,10 @@ from acmm_infra.profiles.open_webui import (
     managed_open_webui_tool,
     open_webui_profile,
 )
+from acmm_infra.source_tree import iter_managed_source_files
 
 
 _EXPERIMENT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
-
 
 def with_hermes_experiment(
     repo_root: str | Path,
@@ -171,7 +171,7 @@ def experiment_apparatus_sha256(
         )
 
     digest = hashlib.sha256()
-    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+    for path in iter_managed_source_files(root):
         relative = path.relative_to(root).as_posix().encode("utf-8")
         payload = path.read_bytes()
         digest.update(len(relative).to_bytes(8, "big"))

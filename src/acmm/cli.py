@@ -13,6 +13,10 @@ from acmm.analysis.export import analysis_export_error, export_execution
 from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import load_schema, validate_contract
+from acmm.deployment_preflight import (
+    deployment_preflight_result,
+    inspect_deployment_contexts,
+)
 from acmm.experiments.catalog import lookup_experiment_execution_binding
 from acmm.subjects.catalog import (
     lookup_subject_execution_binding,
@@ -37,6 +41,7 @@ from acmm.runtime.planner import (
 )
 from acmm.runtime.result_store import result_write_error
 from acmm.validation import validation_result
+from acmm_infra.profiles.common import default_repo_root, default_runtime_root
 
 
 def _default_contract_schema_path() -> Path:
@@ -323,6 +328,42 @@ def _compact_integer_ranges(values: tuple[int, ...] | list[int]) -> str:
     return ", ".join(groups)
 
 
+def _print_deployment_preflight(
+    result: deployment_preflight_result,
+    *,
+    warning_only: bool,
+) -> None:
+    print("Deployment context preflight:")
+
+    for subject in result.subjects:
+        experiment = subject.experiment_id or "none"
+        scope = subject.application_scope or "none"
+        if subject.expected_apparatus_sha256 is None:
+            apparatus = "unavailable"
+        elif subject.observed_apparatus_sha256 is None:
+            apparatus = "none"
+        elif (
+            subject.observed_apparatus_sha256
+            == subject.expected_apparatus_sha256
+        ):
+            apparatus = "match"
+        else:
+            apparatus = "mismatch"
+
+        context = "ready" if subject.is_ready else "not-ready"
+        print(
+            f"  {subject.subject_id}: context={context}; "
+            f"experiment={experiment}; scope={scope}; apparatus={apparatus}"
+        )
+
+        if subject.is_ready:
+            continue
+
+        severity = "WARNING" if warning_only else "ERROR"
+        for issue in subject.issues:
+            print(f"{severity}: {subject.subject_id}: {issue}", file=sys.stderr)
+
+
 def _print_run_selection_preview(
     plan: experiment_plan,
     selected_runs: tuple[planned_run, ...],
@@ -454,6 +495,18 @@ def _run_experiment(args: argparse.Namespace) -> int:
             (subject_id, subject_binding.runtime_description)
         )
 
+    deployment_preflight = inspect_deployment_contexts(
+        repo_root=Path(args.repo_root),
+        runtime_root=Path(args.runtime_root).expanduser(),
+        experiment_id=experiment_id,
+        subject_bindings=subject_bindings,
+    )
+
+    _print_deployment_preflight(
+        deployment_preflight,
+        warning_only=args.preview,
+    )
+
     if args.preview:
         _print_run_selection_preview(
             plan,
@@ -461,6 +514,14 @@ def _run_experiment(args: argparse.Namespace) -> int:
             subject_runtime_descriptions,
         )
         return 0
+
+    if not deployment_preflight.is_ready:
+        print(
+            "ERROR: Deployment context preflight failed; no execution session "
+            "was created.",
+            file=sys.stderr,
+        )
+        return 2
 
     subject_adapters = {
         subject_id: subject_bindings[subject_id].adapter_builder()
@@ -1094,6 +1155,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Validate and print the resolved run selection without creating an "
             "execution session or contacting subject runtimes."
+        ),
+    )
+    run_parser.add_argument(
+        "--repo-root",
+        default=str(default_repo_root()),
+        help=(
+            "ACMM repository root used for experiment-apparatus verification. "
+            "Defaults to the installed/editable repository root."
+        ),
+    )
+    run_parser.add_argument(
+        "--runtime-root",
+        default=str(default_runtime_root()),
+        help=(
+            "Mutable ACMM runtime root used to discover deployed experiment "
+            "contexts. Defaults to ACMM_RUNTIME_ROOT or ~/acmm_runtime."
         ),
     )
     run_parser.add_argument(

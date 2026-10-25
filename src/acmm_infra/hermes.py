@@ -24,6 +24,10 @@ from acmm_infra.profiles.experiments import (
     with_hermes_experiment,
 )
 from acmm_infra.profiles.hermes import hermes_profile, managed_hermes_plugin
+from acmm_infra.source_tree import (
+    copytree_ignore_generated,
+    iter_managed_source_files,
+)
 from acmm_infra.hermes_client import hermes_client, managed_overlay_toolsets
 
 
@@ -1212,7 +1216,11 @@ class hermes_manager:
         backup = destination.parent / f".{plugin.name}.backup"
 
         try:
-            shutil.copytree(source, staged)
+            shutil.copytree(
+                source,
+                staged,
+                ignore=copytree_ignore_generated,
+            )
 
             if backup.exists():
                 shutil.rmtree(backup)
@@ -1264,10 +1272,7 @@ def _file_sha256(path: Path) -> str:
 def _tree_sha256(path: Path) -> str:
     digest = hashlib.sha256()
 
-    for item in sorted(path.rglob("*")):
-        if not item.is_file():
-            continue
-
+    for item in iter_managed_source_files(path):
         relative = item.relative_to(path).as_posix().encode("utf-8")
         digest.update(len(relative).to_bytes(8, "big"))
         digest.update(relative)

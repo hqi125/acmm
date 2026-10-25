@@ -248,8 +248,18 @@ present, their results are intersected. The final execution order always follows
 Contract plan order, not command-line selector order.
 
 `--preview` resolves the same filters and prints a compact subject/scenario/repetition breakdown
-without constructing runtime adapters or creating result artifacts. Omit both selector types to
-execute the entire Contract plan.
+without constructing runtime adapters or creating result artifacts. It also inspects recorded
+experiment deployment contexts for the selected subjects, but reports mismatches as warnings so
+preview remains usable before infrastructure preparation. Omit both selector types to execute the
+entire Contract plan.
+
+A real execution requires every selected subject deployment to record the Contract experiment ID,
+full `experiment` application scope, and the exact repository apparatus SHA-256. This local
+preflight runs before adapter construction and before an execution directory is created. Use
+`--runtime-root` when mutable deployments are not under the default ACMM runtime root and
+`--repo-root` when apparatus verification should use a different repository checkout. Live
+runtime readiness remains the responsibility of `acmm-infra <subject> doctor`; this phase verifies
+experiment identity/provenance rather than contacting the agent runtime.
 
 Ctrl+C exits with status 130 after persisting an interruption manifest and a human-readable
 summary when an execution session has already started. No completion manifest is written.

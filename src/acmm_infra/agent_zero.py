@@ -30,6 +30,10 @@ from acmm_infra.profiles.experiments import (
     registered_experiment_apparatus_ids,
     with_agent_zero_experiment,
 )
+from acmm_infra.source_tree import (
+    copytree_ignore_generated,
+    iter_managed_source_files,
+)
 
 
 _RETIRED_ENV_KEYS = (
@@ -752,7 +756,11 @@ class agent_zero_manager:
             else:
                 shutil.rmtree(destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, destination)
+        shutil.copytree(
+            source,
+            destination,
+            ignore=copytree_ignore_generated,
+        )
 
     def _plugin_status(self, plugin: managed_agent_zero_plugin) -> dict[str, Any]:
         source = (self.agent_zero_root / plugin.source).resolve()
@@ -963,8 +971,7 @@ class agent_zero_manager:
 
             files = {
                 str(path.relative_to(source)).replace("\\", "/"): path.read_bytes()
-                for path in source.rglob("*")
-                if path.is_file()
+                for path in iter_managed_source_files(source)
             }
             destination = f"/a0/usr/{plugin.destination.as_posix()}"
             require_success(
@@ -1216,16 +1223,14 @@ def _directories_equal(left: Path, right: Path) -> bool:
     if not left.is_dir() or not right.is_dir():
         return False
 
-    left_files = sorted(
+    left_files = [
         path.relative_to(left)
-        for path in left.rglob("*")
-        if path.is_file()
-    )
-    right_files = sorted(
+        for path in iter_managed_source_files(left)
+    ]
+    right_files = [
         path.relative_to(right)
-        for path in right.rglob("*")
-        if path.is_file()
-    )
+        for path in iter_managed_source_files(right)
+    ]
     if left_files != right_files:
         return False
 
