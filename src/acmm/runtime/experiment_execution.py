@@ -128,6 +128,7 @@ def execute_experiment(
     sleep: Callable[[float], None] | None = None,
     before_run: Callable[[planned_run], None] | None = None,
     after_run: Callable[[planned_run], None] | None = None,
+    session_ready: Callable[[Path], None] | None = None,
 ) -> experiment_execution_result:
     """
     Execute every selected planned slot in one experiment execution session.
@@ -145,7 +146,8 @@ def execute_experiment(
     A completion manifest is published only after the selected plan has been
     traversed. Ctrl+C writes a separate interruption manifest containing only
     already persisted evidence and then raises ``experiment_execution_interrupted``.
-    No completion manifest is created for an interrupted session.
+    No completion manifest is created for an interrupted session. ``session_ready``
+    is called after the result directory and Contract snapshot have been created.
     """
 
     if (
@@ -166,6 +168,7 @@ def execute_experiment(
     wait = sleep if sleep is not None else time.sleep
     prepare_run = before_run if before_run is not None else lambda planned: None
     finish_run = after_run if after_run is not None else lambda planned: None
+    publish_session = session_ready if session_ready is not None else lambda path: None
     inter_run_delay_seconds = _inter_run_delay_seconds(contract)
 
     source_path = Path(contract_path)
@@ -206,6 +209,7 @@ def execute_experiment(
         raise
 
     started_at = clock()
+    publish_session(session_dir)
 
     report(
         f"Execution {execution_id}: selected {len(selected_runs)} of "

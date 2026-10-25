@@ -201,6 +201,12 @@ def test_execute_experiment_snapshots_contract_and_completes_plan(
     contract = load_contract(CONTRACT_PATH)
     adapter = sequence_adapter()
 
+    ready_sessions: list[Path] = []
+
+    def session_ready(path: Path) -> None:
+        assert (path / "contract.yaml").is_file()
+        ready_sessions.append(path)
+
     result = execute_experiment(
         contract=contract,
         contract_path=CONTRACT_PATH,
@@ -212,8 +218,10 @@ def test_execute_experiment_snapshots_contract_and_completes_plan(
         now=_clock(),
         execution_id_factory=lambda: EXECUTION_ID,
         run_id_factory=_run_id_factory(),
+        session_ready=session_ready,
     )
 
+    assert ready_sessions == [result.session_dir]
     assert result.unresolved_run_indices == ()
     assert len(result.slots) == 5
     assert adapter.call_count == 5

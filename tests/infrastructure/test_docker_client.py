@@ -74,6 +74,37 @@ def test_compose_uses_structural_deployment_attributes(
     )
 
 
+
+def test_container_logs_requests_timestamped_bounded_merged_output(
+    tmp_path: Path,
+) -> None:
+    attributes = test_deployment_attributes()
+    runner = recording_runner()
+    client = docker_client(
+        repo_root=tmp_path / "repo",
+        runtime_root=tmp_path,
+        attributes=attributes,
+        runner=runner,
+    )
+
+    result = client.container_logs(
+        since="2026-10-25T15:00:00.000000Z",
+    )
+
+    assert result.succeeded
+    call = runner.calls[-1]
+    assert call["args"] == (
+        "docker",
+        "logs",
+        "--timestamps",
+        "--since",
+        "2026-10-25T15:00:00.000000Z",
+        "acmm-agent",
+    )
+    assert call["timeout_seconds"] == 30.0
+    assert call["live_output"] is False
+    assert call["line_handler"] is not None
+
 def test_write_container_files_updates_without_replacing_tree(
     tmp_path: Path,
 ) -> None:

@@ -273,6 +273,14 @@ Use `--runtime-root` when mutable deployments are not under the default ACMM run
 `--preview` stops after local context inspection and does not contact or start agent runtimes, even
 when `--start-if-needed` is supplied.
 
+`--capture-runtime-logs` is an opt-in diagnostic channel. For each subject lease used by the
+execution, ACMM requests timestamped Docker logs bounded by the lease/acquisition start and captures
+them immediately before subject release or execution cleanup. The first segment is stored at
+`diagnostics/<subject_id>/container.log` inside the execution directory; additional leases for the
+same subject use numbered files. Runtime logs remain outside the Run Record evidence model and are
+ignored by compliance evaluation and analysis export. Capture is best-effort, so a Docker-log or
+file-write failure is reported as a warning without changing execution validity.
+
 The Contract path is optional for built-in experiments. With bare `acmm run`, deployment contexts are
 read first, one converged experiment ID is inferred, and the canonical Contract path registered in
 `acmm.experiments.catalog` is loaded. Zero candidates or multiple distinct candidates are resolution

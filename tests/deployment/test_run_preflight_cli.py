@@ -413,6 +413,7 @@ def test_preview_start_if_needed_remains_non_contacting(
             "0",
             "--preview",
             "--start-if-needed",
+            "--capture-runtime-logs",
             "--runtime-root",
             str(runtime_root),
         ]

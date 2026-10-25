@@ -185,6 +185,7 @@ def test_run_command_accepts_repeated_run_indices() -> None:
     assert args.run_index == ["0", "5", "20"]
     assert args.subject is None
     assert args.preview is False
+    assert args.capture_runtime_logs is False
 
 
 def test_run_command_parses_ranges_subjects_and_preview() -> None:
@@ -204,12 +205,14 @@ def test_run_command_parses_ranges_subjects_and_preview() -> None:
             "--subject",
             "open_webui_nemotron30b",
             "--preview",
+            "--capture-runtime-logs",
         ]
     )
 
     assert args.run_index == ["20-39"]
     assert args.subject == ["open_webui_nemotron30b"]
     assert args.preview is True
+    assert args.capture_runtime_logs is True
 
 
 def test_run_selection_intersects_ranges_and_subjects() -> None:

@@ -930,6 +930,15 @@ startup allowance. `--runtime-root` and `--repo-root` can override the roots use
 `--preview` performs only the local deployment-context inspection and never contacts or starts
 subject runtimes, even when `--start-if-needed` is present.
 
+`--capture-runtime-logs` enables best-effort diagnostic capture for real executions. Each subject
+runtime window is bounded from ACMM's acquisition point through the point immediately before that
+subject is released or the execution exits. Timestamped Docker output is written under the execution
+result as `diagnostics/<subject_id>/container.log`; a later lease for the same subject uses
+`container_2.log`, and so on. These files are operational diagnostics only: they are not Run Record
+evidence, do not participate in compliance adjudication, and do not affect Contract or apparatus
+hashes. A log-capture failure produces a warning but does not invalidate the experiment. Preview
+mode never creates diagnostic files.
+
 When the Contract path is omitted, `acmm run` can infer a built-in experiment from deployed
 subject contexts and load that experiment's canonical Contract from the experiment catalog:
 

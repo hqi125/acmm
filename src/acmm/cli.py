@@ -36,6 +36,10 @@ from acmm.record.validator import (
     sha256_file,
     validate_run_record,
 )
+from acmm.runtime.diagnostics import (
+    capture_subject_runtime_log,
+    runtime_log_capture_error,
+)
 from acmm.runtime.experiment_execution import (
     execute_experiment,
     experiment_execution_interrupted,
@@ -844,11 +848,70 @@ def _run_experiment(args: argparse.Namespace) -> int:
             )
             return 2
 
+    if args.capture_runtime_logs and not args.start_if_needed:
+        for subject_id, subject_binding in subject_bindings.items():
+            try:
+                runtime_leases[subject_id] = discover_runtime_lease(
+                    repo_root,
+                    runtime_root,
+                    subject_binding.infrastructure_subject,
+                )
+            except (
+                infrastructure_error,
+                profile_error,
+                docker_error,
+                OSError,
+                ValueError,
+            ) as exc:
+                print(
+                    "WARNING: Could not prepare runtime log capture for "
+                    f"{subject_id}: {exc}",
+                    file=sys.stderr,
+                )
+
     active_subject_id: list[str | None] = [None]
+    runtime_log_since: dict[str, datetime] = {}
+    runtime_log_session_dir: list[Path | None] = [None]
+
+    def begin_runtime_log_window(subject_id: str) -> None:
+        if not args.capture_runtime_logs or subject_id not in runtime_leases:
+            return
+        runtime_log_since[subject_id] = datetime.now(timezone.utc)
+
+    def capture_runtime_log(subject_id: str | None) -> None:
+        if subject_id is None or not args.capture_runtime_logs:
+            return
+        since = runtime_log_since.pop(subject_id, None)
+        session_dir = runtime_log_session_dir[0]
+        lease = runtime_leases.get(subject_id)
+        if since is None or session_dir is None or lease is None:
+            return
+
+        try:
+            log_path = capture_subject_runtime_log(
+                lease=lease,
+                subject_id=subject_id,
+                since=since,
+                session_dir=session_dir,
+            )
+        except (runtime_log_capture_error, OSError, ValueError) as exc:
+            print(
+                f"WARNING: Runtime log capture failed for {subject_id}: {exc}",
+                file=sys.stderr,
+            )
+            return
+
+        print("Runtime diagnostics:")
+        print(f"  {subject_id}:")
+        _print_labeled_fields(
+            [("container log", log_path.relative_to(session_dir).as_posix())],
+            indent=4,
+        )
 
     def prepare_subject_runtime(subject_id: str) -> None:
         if not args.start_if_needed:
             return
+        begin_runtime_log_window(subject_id)
         if subject_id in ready_subject_ids and runtime_leases[subject_id].is_running:
             active_subject_id[0] = subject_id
             return
@@ -865,18 +928,30 @@ def _run_experiment(args: argparse.Namespace) -> int:
         active_subject_id[0] = subject_id
 
     def before_planned_run(planned: planned_run) -> None:
-        if not args.start_if_needed:
-            return
         previous = active_subject_id[0]
         if previous == planned.subject_id:
             return
-        if previous is not None and runtime_leases[previous].started_by_acmm:
+
+        if previous is not None:
+            capture_runtime_log(previous)
+
+        if (
+            args.start_if_needed
+            and previous is not None
+            and runtime_leases[previous].started_by_acmm
+        ):
             runtime_leases[previous].release()
             print("Runtime release:")
             print(f"  {previous}:")
             _print_labeled_fields([("result", "stopped")], indent=4)
             ready_subject_ids.discard(previous)
-        prepare_subject_runtime(planned.subject_id)
+
+        if args.start_if_needed:
+            prepare_subject_runtime(planned.subject_id)
+            return
+
+        begin_runtime_log_window(planned.subject_id)
+        active_subject_id[0] = planned.subject_id
 
     if args.start_if_needed:
         try:
@@ -945,6 +1020,9 @@ def _run_experiment(args: argparse.Namespace) -> int:
             f"{inter_run_delay:g}s between selected planned runs."
         )
 
+    def session_ready(session_dir: Path) -> None:
+        runtime_log_session_dir[0] = session_dir
+
     cleanup_errors: tuple[str, ...] = ()
     try:
         result = execute_experiment(
@@ -956,9 +1034,15 @@ def _run_experiment(args: argparse.Namespace) -> int:
             max_attempts_per_run=args.max_attempts_per_run,
             run_indices=selected_indices,
             progress=lambda message: print(message, flush=True),
-            before_run=before_planned_run if args.start_if_needed else None,
+            before_run=(
+                before_planned_run
+                if args.start_if_needed or args.capture_runtime_logs
+                else None
+            ),
+            session_ready=session_ready if args.capture_runtime_logs else None,
         )
     except experiment_execution_interrupted as exc:
+        capture_runtime_log(active_subject_id[0])
         cleanup_errors = _release_runtime_leases(runtime_leases)
         result = exc.result
         _validate_persisted_execution(result, contract)
@@ -983,12 +1067,14 @@ def _run_experiment(args: argparse.Namespace) -> int:
         OSError,
         ValueError,
     ) as exc:
+        capture_runtime_log(active_subject_id[0])
         cleanup_errors = _release_runtime_leases(runtime_leases)
         print(f"ERROR: Experiment execution failed: {exc}", file=sys.stderr)
         for error in cleanup_errors:
             print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
         return 2
 
+    capture_runtime_log(active_subject_id[0])
     cleanup_errors = _release_runtime_leases(runtime_leases)
 
     validation_status = _validate_persisted_execution(
@@ -1576,6 +1662,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "For real execution, permit ACMM to start selected subjects that "
             "are correctly deployed but currently stopped. ACMM stops only "
             "runtimes it started itself."
+        ),
+    )
+    run_parser.add_argument(
+        "--capture-runtime-logs",
+        action="store_true",
+        help=(
+            "Capture timestamped per-subject container logs into the execution "
+            "result directory. Diagnostic capture is best-effort and is not "
+            "used for compliance adjudication."
         ),
     )
     run_parser.add_argument(

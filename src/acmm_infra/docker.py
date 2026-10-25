@@ -80,6 +80,24 @@ class docker_client:
         _, image = self.container_info()
         return image
 
+    def container_logs(
+        self,
+        *,
+        since: str,
+        timeout_seconds: float = 30.0,
+    ) -> command_result:
+        return self._runner.run(
+            [
+                "docker",
+                "logs",
+                "--timestamps",
+                "--since",
+                since,
+                self._attributes.container_name,
+            ],
+            timeout_seconds=timeout_seconds,
+            line_handler=lambda line: None,
+        )
 
     def exec(
         self,
