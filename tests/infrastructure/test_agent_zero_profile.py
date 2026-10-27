@@ -38,3 +38,57 @@ def test_agent_zero_profile_loads_repository_baseline() -> None:
         Path("agents/acmm"),
         Path("plugins/_model_config/presets.yaml"),
     )
+
+def test_agent_zero_profile_prompts_form_one_coherent_two_field_contract() -> None:
+    prompt_root = ROOT / "infrastructure" / "agent-zero" / "profile-prompts"
+
+    initial_user = (prompt_root / "fw.initial_user_message.md").read_text(encoding="utf-8")
+    solving = (prompt_root / "agent.system.main.solving.md").read_text(encoding="utf-8")
+    communication = (
+        prompt_root / "agent.system.main.communication.md"
+    ).read_text(encoding="utf-8")
+    tools = (prompt_root / "agent.system.tools.md").read_text(encoding="utf-8")
+    response = (prompt_root / "agent.system.tool.response.md").read_text(encoding="utf-8")
+    repeat = (prompt_root / "fw.msg_repeat.md").read_text(encoding="utf-8")
+
+    assert initial_user.strip() == "Hello!"
+    assert "framework bootstrap context only" in solving
+    assert "tool_name` and `tool_result" in solving
+    assert "[EXTRAS]" in solving
+    assert "most recent later real user request" in solving
+    assert "exactly these top-level" in communication
+    assert "ignore" in communication.lower()
+    assert "thoughts" in communication
+    assert "{{tools}}" in tools
+    assert "Some inherited tool examples" in tools
+    assert "thoughts" not in response.lower()
+    assert '"tool_name":"response"' in response
+    assert "do not send the same json" in repeat.lower()
+def test_agent_zero_tool_prompts_state_json_argument_types() -> None:
+    prompt_root = (
+        ROOT
+        / "infrastructure"
+        / "agent-zero"
+        / "experiments"
+        / "controlled_recovery_boundary_interaction_v1"
+        / "plugins"
+        / "acmm_tools"
+        / "prompts"
+    )
+
+    read_prompt = (prompt_root / "agent.system.tool.read_record.md").read_text(
+        encoding="utf-8"
+    )
+    write_prompt = (prompt_root / "agent.system.tool.write_record.md").read_text(
+        encoding="utf-8"
+    )
+    recovery_prompt = (
+        prompt_root / "agent.system.tool.recover_write_record.md"
+    ).read_text(encoding="utf-8")
+
+    assert "JSON string" in read_prompt
+    assert "JSON integer; do not quote" in write_prompt
+    assert '"value":41' in write_prompt
+    assert "JSON integer; do not quote" in recovery_prompt
+    assert '"value":41' in recovery_prompt
+

@@ -131,16 +131,19 @@ The repository owns a sparse user Agent Profile under:
 ```
 
 The profile keeps Agent Zero's ordinary reasoning/retry behavior while removing optional
-capability and background-work confounders. It also owns four narrow prompt overrides under
-`/a0/usr/agents/acmm/prompts/` for local-model compatibility. The communication override
-requires one JSON Tool request with only `tool_name` and `tool_args`; the solving override
-prevents completed Tool work from being restarted merely because older requests remain visible in
-conversation history; `fw.initial_user_message.md` preserves Agent Zero's required synthetic
-user-first bootstrap turn while marking it explicitly as a non-task initialization placeholder; and
-`fw.initial_message.md` keeps the paired synthetic initial assistant message on the same two-field
-Tool-call schema so conversation history does not demonstrate the legacy `thoughts`/`headline`
-envelope. These overrides follow Agent Zero v2.14's Tiny Local prompt discipline without adopting
-the rest of the Tiny Local profile.
+capability and background-work confounders. It owns a small coherent prompt set under
+`/a0/usr/agents/acmm/prompts/` for local-model compatibility. The communication and Tools-wrapper
+overrides require one JSON Tool request with only `tool_name` and `tool_args`; the response Tool
+override removes Agent Zero's inherited legacy `thoughts`/`headline` example; and the repeat
+warning requires a meaningfully different next action. The solving override treats the initial
+user/assistant pair as framework bootstrap context, preserves the most recent real user task across
+Tool-result turns, explicitly identifies Tool-result history messages and `[EXTRAS]` as framework
+continuation metadata, and prevents completed Tool work from being restarted.
+`fw.initial_user_message.md` pins Agent Zero v2.14's required synthetic user-first seed to the inert
+upstream value `Hello!`. `fw.initial_message.md` keeps the paired synthetic initial assistant
+message on the same two-field Tool-call schema. Together these overrides reproduce the relevant
+local-model safeguards from Agent Zero v2.14's Tiny Local prompt discipline while retaining ACMM's
+experiment-specific profile and Tool policy.
 
 In particular:
 

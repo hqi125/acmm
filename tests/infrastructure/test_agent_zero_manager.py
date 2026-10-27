@@ -359,6 +359,9 @@ def test_apply_writes_restricted_acmm_profile_files(tmp_path: Path) -> None:
     for name in (
         "agent.system.main.communication.md",
         "agent.system.main.solving.md",
+        "agent.system.tools.md",
+        "agent.system.tool.response.md",
+        "fw.msg_repeat.md",
         "fw.initial_user_message.md",
         "fw.initial_message.md",
     ):

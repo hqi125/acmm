@@ -15,3 +15,6 @@ For dependent operations, issue one tool call, inspect its result, and then choo
 unfinished operation. After a successful tool result, do not repeat the same completed tool call.
 If a prior message was malformed or repeated, immediately produce a corrected, meaningfully
 different tool request.
+
+If an inherited tool example shows `thoughts`, `headline`, or any other top-level field, ignore
+that example shape. The two-field `tool_name` + `tool_args` contract above always wins.
