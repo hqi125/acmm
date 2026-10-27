@@ -501,6 +501,14 @@ acmm run experiment.yaml --subject <subject_id> --preview
 acmm run experiment.yaml --subject <subject_id>
 ```
 
+When instability appears concentrated immediately after runtime startup, complement an ordinary
+subject-only stress population with repeated cold-start qualification. The repository helper
+`tools/cold_start_qualification.py` repeats one fixed Contract selection across independently stopped
+and restarted subject runtimes, preserving each execution and its runtime diagnostics separately.
+This distinguishes endurance behavior within one long-lived runtime from startup-sensitive behavior
+across many independent runtime acquisitions. Do not combine these qualification runs with canonical
+experiment evidence.
+
 During stress qualification, inspect more than pass/fail counts. Useful diagnostics include:
 
 - per-run latency and latency spread;
