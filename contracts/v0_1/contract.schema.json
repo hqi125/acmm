@@ -379,6 +379,13 @@
               ]
             }
           ]
+        },
+        "ordering": {
+          "type": "string",
+          "enum": [
+            "subject_scenario_repetition",
+            "subject_repetition_scenario"
+          ]
         }
       }
     }

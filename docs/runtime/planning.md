@@ -30,9 +30,15 @@ Durable run identity and provenance belong to the future Run Record design.
 
 ## Deterministic ordering
 
-Plans preserve Contract declaration order.
+Plans preserve Contract declaration order within the ordering selected by
+`run_protocol.ordering`. If the field is omitted, the historical Contract v0.1 order is
+used:
 
-The expansion order is:
+```text
+subject_scenario_repetition
+```
+
+Its expansion is:
 
 ```text
 for each subject, in Contract order:
@@ -40,6 +46,25 @@ for each subject, in Contract order:
         for repetition 1 through N:
             emit one planned run
 ```
+
+Interaction experiments may instead select:
+
+```text
+subject_repetition_scenario
+```
+
+which expands as:
+
+```text
+for each subject, in Contract order:
+    for repetition 1 through N:
+        for each scenario, in Contract order:
+            emit one planned run
+```
+
+This keeps subject execution grouped while interleaving scenario conditions within each
+repetition, reducing unnecessary confounding between scenario and execution time. Both
+orders are deterministic.
 
 For two subjects `subject_a`, `subject_b`, two scenarios `scenario_a`, `scenario_b`, and
 two repetitions, the result is:

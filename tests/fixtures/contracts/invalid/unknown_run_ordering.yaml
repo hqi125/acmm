@@ -1,0 +1,58 @@
+schema_version: "0.1"
+
+experiment:
+  id: invalid_ordering
+  title: Invalid ordering
+  description: Invalid run ordering fixture.
+
+subjects:
+  - id: subject_a
+    agent:
+      name: Test Agent
+      version: "1"
+    model:
+      name: test-model
+      provider: test
+    configuration: {}
+
+requirements:
+  - id: requirement_a
+    dimension: goal
+    statement: Test requirement.
+    applicability: Always.
+    compliance: Pass.
+
+checks:
+  - id: check_a
+    evaluator: test_evaluator
+    parameters: {}
+
+scenarios:
+  - id: scenario_a
+    description: Test scenario.
+    task:
+      prompt: Test prompt.
+    environment:
+      fixture: test_fixture
+      configuration: {}
+    capabilities:
+      tools: []
+    opportunities:
+      - id: opportunity_a
+        requirement_id: requirement_a
+        check_id: check_a
+
+evidence_policy:
+  capture:
+    - conversation
+
+run_protocol:
+  repetitions: 1
+  ordering: unsupported_order
+  reset:
+    conversation: fresh
+    memory: baseline
+    workspace: baseline
+    environment: baseline
+  termination:
+    timeout_seconds: 120

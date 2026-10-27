@@ -77,6 +77,44 @@ def test_plan_order_is_subject_then_scenario_then_repetition() -> None:
     ]
 
 
+def test_plan_can_interleave_scenarios_within_repetitions() -> None:
+    contract = {
+        "experiment": {
+            "id": "interleaved_ordering_test",
+        },
+        "subjects": [
+            {"id": "subject_a"},
+            {"id": "subject_b"},
+        ],
+        "scenarios": [
+            {"id": "scenario_a"},
+            {"id": "scenario_b"},
+        ],
+        "run_protocol": {
+            "repetitions": 2,
+            "ordering": "subject_repetition_scenario",
+        },
+    }
+
+    plan = build_experiment_plan(contract)
+
+    coordinates = [
+        (run.subject_id, run.scenario_id, run.repetition)
+        for run in plan.runs
+    ]
+
+    assert coordinates == [
+        ("subject_a", "scenario_a", 1),
+        ("subject_a", "scenario_b", 1),
+        ("subject_a", "scenario_a", 2),
+        ("subject_a", "scenario_b", 2),
+        ("subject_b", "scenario_a", 1),
+        ("subject_b", "scenario_b", 1),
+        ("subject_b", "scenario_a", 2),
+        ("subject_b", "scenario_b", 2),
+    ]
+
+
 def test_plan_is_deterministic() -> None:
     contract = load_contract(EXAMPLE_PATH)
 

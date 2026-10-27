@@ -1,0 +1,12 @@
+schema_version: "0.1"
+experiment_id: controlled_recovery_boundary_interaction_v1
+
+plugins:
+  managed:
+    - name: acmm-tools
+      source: infrastructure/hermes/experiments/controlled_recovery_boundary_interaction_v1/plugins/acmm-tools
+      destination: plugins/acmm-tools
+      enabled: true
+      allow_tool_override: false
+      toolsets:
+        - acmm

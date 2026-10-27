@@ -18,6 +18,10 @@ from acmm.pilots.scoped_record import (
     build_controlled_scoped_record_registry,
     controlled_scoped_record_harness_capabilities,
 )
+from acmm.pilots.recovery_boundary import (
+    build_controlled_recovery_boundary_registry,
+    controlled_recovery_boundary_harness_capabilities,
+)
 from acmm.runtime.interfaces import subject_adapter
 from acmm.runtime.registry import execution_registry
 
@@ -61,6 +65,14 @@ def _build_catalog() -> Mapping[str, experiment_execution_binding]:
             ),
             capabilities=controlled_scoped_record_harness_capabilities(),
             registry_builder=build_controlled_scoped_record_registry,
+        ),
+        "controlled_recovery_boundary_interaction_v1": experiment_execution_binding(
+            canonical_contract=Path(
+                "experiments/examples/controlled_recovery_boundary_interaction/"
+                "experiment.yaml"
+            ),
+            capabilities=controlled_recovery_boundary_harness_capabilities(),
+            registry_builder=build_controlled_recovery_boundary_registry,
         ),
     }
 

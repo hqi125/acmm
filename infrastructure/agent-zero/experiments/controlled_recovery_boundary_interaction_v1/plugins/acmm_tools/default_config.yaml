@@ -1,0 +1,5 @@
+workspace_id: baseline
+source_value: 0
+target_value: 0
+ordinary_write_mode: success
+authorized_recovery_available: false
