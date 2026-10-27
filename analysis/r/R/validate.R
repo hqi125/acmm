@@ -347,16 +347,32 @@ acmm_validate_run_table <- function(runs, binding)
     )
     for (subjectRows in subjectGroups)
     {
+        validSubjectRows <- subjectRows[runs$validity[subjectRows] == "valid"]
         for (columnName in subjectColumns)
         {
+            values <- runs[[columnName]][subjectRows]
+            populatedValues <- unique(values[nzchar(values)])
             acmm_assert(
-                length(unique(runs[[columnName]][subjectRows])) == 1,
+                length(populatedValues) <= 1,
                 paste0(
                     "Subject provenance column '", columnName,
-                    "' is inconsistent within one subject_id."
+                    "' has conflicting populated values within one subject_id."
                 ),
                 "acmm_integrity_error"
             )
+
+            if (length(validSubjectRows) > 0)
+            {
+                validValues <- runs[[columnName]][validSubjectRows]
+                acmm_assert(
+                    all(nzchar(validValues)) && length(unique(validValues)) == 1,
+                    paste0(
+                        "Subject provenance column '", columnName,
+                        "' must be populated and consistent across valid runs."
+                    ),
+                    "acmm_integrity_error"
+                )
+            }
         }
     }
 

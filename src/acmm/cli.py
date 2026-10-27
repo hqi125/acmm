@@ -440,6 +440,48 @@ def _print_live_readiness_preflight(
             )
 
 
+
+def _print_experiment_execution_selection(
+    *,
+    plan: experiment_plan,
+    selected_runs: tuple[planned_run, ...],
+    selected_indices: tuple[int, ...],
+) -> None:
+    if len(selected_runs) == plan.run_count:
+        print("Experiment execution:")
+        _print_labeled_fields(
+            [
+                ("experiment", plan.experiment_id),
+                ("selection", f"all {plan.run_count} planned runs"),
+            ],
+            indent=2,
+        )
+    elif len(selected_runs) == 1:
+        planned = selected_runs[0]
+        print("Experiment execution:")
+        _print_labeled_fields(
+            [
+                ("run", f"{planned.run_index}/{plan.run_count - 1}"),
+                ("subject", planned.subject_id),
+                ("scenario", planned.scenario_id),
+                ("repetition", planned.repetition),
+            ],
+            indent=2,
+        )
+    else:
+        print("Experiment execution:")
+        _print_labeled_fields(
+            [
+                ("experiment", plan.experiment_id),
+                (
+                    "selection",
+                    f"{len(selected_runs)} of {plan.run_count} planned runs",
+                ),
+                ("run indices", _compact_integer_ranges(selected_indices)),
+            ],
+            indent=2,
+        )
+
 def _discover_runtime_leases(
     *,
     repo_root: Path,
@@ -953,6 +995,13 @@ def _run_experiment(args: argparse.Namespace) -> int:
         begin_runtime_log_window(planned.subject_id)
         active_subject_id[0] = planned.subject_id
 
+    _print_experiment_execution_selection(
+        plan=plan,
+        selected_runs=selected_runs,
+        selected_indices=selected_indices,
+    )
+    _print_subject_runtime_details(subject_runtime_details)
+
     if args.start_if_needed:
         try:
             prepare_subject_runtime(selected_runs[0].subject_id)
@@ -967,49 +1016,11 @@ def _run_experiment(args: argparse.Namespace) -> int:
             print("ERROR: No execution session was created.", file=sys.stderr)
             return 2
 
-
     subject_adapters = {
         subject_id: subject_bindings[subject_id].adapter_builder()
         for subject_id in selected_subject_ids
     }
     registry = binding.registry_builder(subject_adapters)
-
-    if len(selected_runs) == plan.run_count:
-        print("Experiment execution:")
-        _print_labeled_fields(
-            [
-                ("experiment", plan.experiment_id),
-                ("selection", f"all {plan.run_count} planned runs"),
-            ],
-            indent=2,
-        )
-    elif len(selected_runs) == 1:
-        planned = selected_runs[0]
-        print("Experiment execution:")
-        _print_labeled_fields(
-            [
-                ("run", f"{planned.run_index}/{plan.run_count - 1}"),
-                ("subject", planned.subject_id),
-                ("scenario", planned.scenario_id),
-                ("repetition", planned.repetition),
-            ],
-            indent=2,
-        )
-    else:
-        print("Experiment execution:")
-        _print_labeled_fields(
-            [
-                ("experiment", plan.experiment_id),
-                (
-                    "selection",
-                    f"{len(selected_runs)} of {plan.run_count} planned runs",
-                ),
-                ("run indices", _compact_integer_ranges(selected_indices)),
-            ],
-            indent=2,
-        )
-
-    _print_subject_runtime_details(subject_runtime_details)
 
     pacing = contract["run_protocol"].get("pacing", {})
     inter_run_delay = pacing.get("inter_run_delay_seconds", 0)

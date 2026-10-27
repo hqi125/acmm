@@ -136,24 +136,63 @@ def test_workflow_exports_then_runs_all_analysis_stages(
         "analyze_dimensions.R",
         "analyze_dimension_uncertainty.R",
     ]
-    assert analysis_commands[1][0][-4:-1] == ["2000", "12345", "0.95"]
-    assert analysis_commands[3][0][-4:-1] == ["2000", "12345", "0.95"]
+    assert analysis_commands[1][0][-5:-2] == ["2000", "12345", "0.95"]
+    assert analysis_commands[3][0][-5:-2] == ["2000", "12345", "0.95"]
     assert [path.name for _, path in analysis_commands] == [
         "point_estimates.txt",
         "hierarchical_intervals.txt",
         "dimension_scores.txt",
         "dimension_intervals.txt",
     ]
-    assert [Path(command[-1]).name for command, _ in analysis_commands] == [
+    assert [Path(command[-2]).name for command, _ in analysis_commands] == [
         "requirement_estimates.csv",
         "requirement_intervals.csv",
         "dimension_scores.csv",
         "dimension_intervals.csv",
     ]
+    assert all(
+        command[-1] == "--population-policy=strict"
+        for command, _ in analysis_commands
+    )
     assert workbook_calls == [(
         export_dir,
         export_dir / "analysis_output" / "analysis_report.xlsx",
     )]
+
+
+def test_available_valid_policy_is_forwarded_to_all_r_stages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, execution_dir, export_dir = _prepare_repo(tmp_path, monkeypatch)
+
+    def run_command(command: Sequence[str]) -> int:
+        _write_export(export_dir)
+        return 0
+
+    analysis_commands: list[list[str]] = []
+
+    def run_and_save(command: Sequence[str], output_path: Path) -> int:
+        del output_path
+        analysis_commands.append(list(command))
+        return 0
+
+    monkeypatch.setattr(analyze_execution, "_run_command", run_command)
+    monkeypatch.setattr(analyze_execution, "_run_and_save", run_and_save)
+
+    assert (
+        analyze_execution.run_analysis_workflow(
+            execution_dir,
+            population_policy="available-valid",
+        )
+        == 0
+    )
+    assert len(analysis_commands) == 4
+    assert all(
+        command[-1] == "--population-policy=available-valid"
+        for command in analysis_commands
+    )
+
 
 
 def test_existing_matching_export_is_reused(

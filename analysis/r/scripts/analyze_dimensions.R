@@ -11,7 +11,11 @@ analysisRoot <- dirname(dirname(normalizePath(scriptPath, winslash = "/", mustWo
 source(file.path(analysisRoot, "R", "bootstrap.R"))
 source_acmm_analysis(analysisRoot)
 
-arguments <- commandArgs(trailingOnly = TRUE)
+parsedArguments <- acmm_extract_population_policy_argument(
+    commandArgs(trailingOnly = TRUE)
+)
+arguments <- parsedArguments$arguments
+populationPolicy <- parsedArguments$policy
 if (!(length(arguments) %in% c(1, 2)))
 {
     stop(
@@ -22,8 +26,14 @@ if (!(length(arguments) %in% c(1, 2)))
     )
 }
 
-exportData <- load_acmm_export(arguments[[1]])
-population <- build_acmm_population(exportData)
+exportData <- load_acmm_export(
+    arguments[[1]],
+    populationPolicy = populationPolicy
+)
+population <- build_acmm_population(
+    exportData,
+    populationPolicy = populationPolicy
+)
 scores <- estimate_acmm_dimension_scores(population)
 
 if (length(arguments) == 2)
@@ -34,6 +44,7 @@ if (length(arguments) == 2)
 cat("ACMM dimension-score input validated successfully.\n")
 cat("Execution:", exportData$binding$execution_id, "\n")
 cat("Experiment:", exportData$binding$experiment_id, "\n")
+print_acmm_population_summary(population)
 cat("Weighting: equal\n")
 cat("Methods:", paste(acmmDimensionMethods, collapse = ", "), "\n\n")
 

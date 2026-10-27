@@ -15,6 +15,24 @@ raw Runs/Judgments sheets, and workbook metadata. The workbook is derived from t
 not replace them as analysis artifacts. The wrapper keeps report tables out of the console; terminal
 output is limited to workflow progress, output paths, warnings, and errors.
 
+The default analysis population policy is `strict`: every selected planned run must resolve before
+statistics are computed. For diagnostic or sensitivity work on a completed-but-imperfect execution,
+use `--population-policy available-valid`. That mode analyzes only selected scientifically valid runs;
+it never converts invalid harness attempts into compliance failures. It also writes
+`population_summary.csv`, `population_cell_coverage.csv`, and `population_missing_runs.csv` so the
+planned design and missing slots remain explicit in both CSV and Excel outputs.
+
+```text
+python tools/analyze_execution.py \
+    results/<experiment_id>/execution_<execution_id> \
+    --population-policy available-valid
+```
+
+Available-valid intervals are conditional on the observed valid population. They do not model the
+unknown outcomes of missing planned runs. If missingness is condition- or subject-dependent, inspect
+the population coverage tables and use an explicit sensitivity analysis rather than treating the
+missing observations as random by default.
+
 ## `cold_start_qualification.py`
 
 Repeats one fixed Contract run selection across independent runtime cold starts. The tool is intended

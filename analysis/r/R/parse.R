@@ -227,3 +227,42 @@ acmm_sha256_file <- function(path)
     acmm_require_namespace("digest")
     digest::digest(file = path, algo = "sha256", serialize = FALSE)
 }
+
+
+acmm_validate_population_policy <- function(policy)
+{
+    acmm_assert(
+        is.character(policy) && length(policy) == 1 &&
+            !is.na(policy) && policy %in% acmmPopulationPolicies,
+        paste0(
+            "population policy must be one of: ",
+            paste(acmmPopulationPolicies, collapse = ", "),
+            "."
+        ),
+        "acmm_analysis_api_error"
+    )
+    policy
+}
+
+acmm_extract_population_policy_argument <- function(arguments)
+{
+    prefix <- "--population-policy="
+    matches <- startsWith(arguments, prefix)
+    acmm_assert(
+        sum(matches) <= 1,
+        "At most one --population-policy argument may be supplied.",
+        "acmm_input_error"
+    )
+
+    policy <- "strict"
+    if (any(matches))
+    {
+        policy <- substring(arguments[matches][[1]], nchar(prefix) + 1)
+        policy <- acmm_validate_population_policy(policy)
+    }
+
+    list(
+        arguments = arguments[!matches],
+        policy = policy
+    )
+}

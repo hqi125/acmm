@@ -11,7 +11,11 @@ analysisRoot <- dirname(dirname(normalizePath(scriptPath, winslash = "/", mustWo
 source(file.path(analysisRoot, "R", "bootstrap.R"))
 source_acmm_analysis(analysisRoot)
 
-arguments <- commandArgs(trailingOnly = TRUE)
+parsedArguments <- acmm_extract_population_policy_argument(
+    commandArgs(trailingOnly = TRUE)
+)
+arguments <- parsedArguments$arguments
+populationPolicy <- parsedArguments$policy
 if (!(length(arguments) %in% c(3, 4, 5)))
 {
     stop(
@@ -34,12 +38,19 @@ confidenceLevel <- if (length(arguments) >= 4) {
     0.95
 }
 
-exportData <- load_acmm_export(arguments[[1]])
-population <- build_acmm_population(exportData)
+exportData <- load_acmm_export(
+    arguments[[1]],
+    populationPolicy = populationPolicy
+)
+population <- build_acmm_population(
+    exportData,
+    populationPolicy = populationPolicy
+)
 
 cat("ACMM uncertainty input validated successfully.\n")
 cat("Execution:", exportData$binding$execution_id, "\n")
 cat("Experiment:", exportData$binding$experiment_id, "\n")
+print_acmm_population_summary(population)
 cat("Bootstrap replicates:", bootstrapReplicates, "\n")
 cat("Seed:", seed, "\n")
 cat("Confidence level:", confidenceLevel, "\n")

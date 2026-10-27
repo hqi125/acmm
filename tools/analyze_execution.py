@@ -21,6 +21,7 @@ BOOTSTRAP_REPLICATES = 2000
 BOOTSTRAP_SEED = 12345
 CONFIDENCE_LEVEL = 0.95
 TOTAL_STAGES = 6
+POPULATION_POLICIES = ("strict", "available-valid")
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _EXPORT_ROOT = _REPO_ROOT / "exports"
@@ -261,7 +262,18 @@ def _run_and_save(command: Sequence[str], output_path: Path) -> int:
     return return_code
 
 
-def run_analysis_workflow(execution: str | Path) -> int:
+def run_analysis_workflow(
+    execution: str | Path,
+    *,
+    population_policy: str = "strict",
+) -> int:
+    if population_policy not in POPULATION_POLICIES:
+        raise analysis_workflow_error(
+            "population_policy must be one of: "
+            + ", ".join(POPULATION_POLICIES)
+            + "."
+        )
+
     execution_dir = Path(execution).expanduser().resolve()
 
     if not execution_dir.is_dir():
@@ -319,6 +331,7 @@ def run_analysis_workflow(execution: str | Path) -> int:
             str(export_dir),
             *arguments,
             str(csv_output_path),
+            f"--population-policy={population_policy}",
         )
 
         print(f"[{stage_index}/{TOTAL_STAGES}] Running {label.lower()}...")
@@ -367,6 +380,7 @@ def run_analysis_workflow(execution: str | Path) -> int:
     print("\nAnalysis workflow completed successfully.")
     print(f"  execution:       {execution_id}")
     print(f"  experiment:      {experiment_id}")
+    print(f"  population:      {population_policy}")
     print(f"  export:          {export_dir}")
     print(f"  analysis output: {analysis_output_dir}")
     print(f"  Excel report:    {workbook_path}")
@@ -380,10 +394,23 @@ def main() -> int:
         )
     )
     parser.add_argument("execution", help="Path to a completed execution_<id> directory.")
+    parser.add_argument(
+        "--population-policy",
+        choices=POPULATION_POLICIES,
+        default="strict",
+        help=(
+            "Analysis population policy. 'strict' requires every selected planned "
+            "run to resolve; 'available-valid' analyzes selected scientifically valid "
+            "runs and reports missing planned slots explicitly."
+        ),
+    )
     args = parser.parse_args()
 
     try:
-        return run_analysis_workflow(args.execution)
+        return run_analysis_workflow(
+            args.execution,
+            population_policy=args.population_policy,
+        )
     except KeyboardInterrupt:
         print("\nAnalysis interrupted by user.", file=sys.stderr)
         return 130

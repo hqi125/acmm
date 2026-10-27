@@ -13,6 +13,9 @@ import yaml
 WORKBOOK_NAME = "analysis_report.xlsx"
 
 _TABLE_SPECS = (
+    ("Population Summary", "population_summary.csv", "PopulationSummaryTable"),
+    ("Cell Coverage", "population_cell_coverage.csv", "CellCoverageTable"),
+    ("Missing Runs", "population_missing_runs.csv", "MissingRunsTable"),
     ("Requirement Estimates", "requirement_estimates.csv", "RequirementEstimatesTable"),
     ("Requirement Intervals", "requirement_intervals.csv", "RequirementIntervalsTable"),
     ("Dimension Scores", "dimension_scores.csv", "DimensionScoresTable"),
@@ -32,6 +35,7 @@ _PERCENT_COLUMNS = {
     "s_d",
     "s_d_lower",
     "s_d_upper",
+    "availability_fraction",
 }
 
 _INTEGER_COLUMNS = {
@@ -65,13 +69,20 @@ _INTEGER_COLUMNS = {
     "estimable_requirements",
     "missing_requirements",
     "s_d_bootstrap_replicates",
+    "selected_planned_runs",
+    "available_valid_runs",
+    "missing_planned_runs",
+    "excluded_attempt_rows",
+    "planned_runs",
+    "missing_runs",
+    "attempts",
 }
 
 _FLOAT_COLUMNS = {
     "inter_run_delay_seconds",
 }
 
-_BOOLEAN_COLUMNS: set[str] = set()
+_BOOLEAN_COLUMNS: set[str] = {"complete_selection"}
 
 _TIMESTAMP_COLUMNS = {
     "started_at",
@@ -216,7 +227,7 @@ def build_analysis_workbook(
 
     return analysis_workbook_result(
         output_path=target_path,
-        sheet_count=8,
+        sheet_count=11,
     )
 
 
@@ -625,6 +636,8 @@ def _write_metadata_sheet(
     table_meta = manifest.get("tables") if isinstance(manifest.get("tables"), dict) else {}
     requirement_intervals = tables["Requirement Intervals"]
     first_interval = requirement_intervals.rows[0] if requirement_intervals.rows else {}
+    population_summary = tables["Population Summary"]
+    population = population_summary.rows[0] if population_summary.rows else {}
 
     rows = [
         ("generated_at_utc", datetime.now(timezone.utc).isoformat()),
@@ -637,6 +650,11 @@ def _write_metadata_sheet(
         ("runs_sha256", str(_nested_value(table_meta, "runs", "sha256"))),
         ("judgments_rows", str(_nested_value(table_meta, "judgments", "rows"))),
         ("judgments_sha256", str(_nested_value(table_meta, "judgments", "sha256"))),
+        ("population_policy", population.get("population_policy", "")),
+        ("complete_selection", population.get("complete_selection", "")),
+        ("selected_planned_runs", population.get("selected_planned_runs", "")),
+        ("available_valid_runs", population.get("available_valid_runs", "")),
+        ("missing_planned_runs", population.get("missing_planned_runs", "")),
         ("confidence_level", first_interval.get("confidence_level", "")),
         ("interval_method", first_interval.get("interval_method", "")),
         (
@@ -694,10 +712,18 @@ def _write_overview_sheet(
     experiment_id = str(source.get("experiment_id", ""))
     contract_sha = str(source.get("contract_sha256", ""))
 
+    population_summary = tables["Population Summary"]
+    population = population_summary.rows[0] if population_summary.rows else {}
     metadata_rows = (
         ("Execution", execution_id),
         ("Experiment", experiment_id),
         ("Contract SHA-256", contract_sha),
+        ("Population policy", population.get("population_policy", "")),
+        (
+            "Available population",
+            f"{population.get('available_valid_runs', '')} / "
+            f"{population.get('selected_planned_runs', '')} planned",
+        ),
         ("Generated (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")),
     )
 
@@ -705,9 +731,9 @@ def _write_overview_sheet(
         worksheet.write(offset, 0, label, formats["label"])
         worksheet.merge_range(offset, 1, offset, 7, value, formats["value"])
 
-    worksheet.merge_range("A9:B9", "Execution / Judgment Summary", formats["section"])
+    worksheet.merge_range("A11:B11", "Execution / Judgment Summary", formats["section"])
     summary_specs = (
-        ("Selected runs", '=COUNTIF(RunsTable[selected],"true")', _selected_run_count(tables["Runs"]), "kpi"),
+        ("Resolved valid runs", '=COUNTIF(RunsTable[selected],"true")', _selected_run_count(tables["Runs"]), "kpi"),
         ("Completed runs", '=COUNTIF(RunsTable[termination],"agent_completed")', _run_value_count(tables["Runs"], "termination", "agent_completed"), "kpi"),
         ("Timeouts", '=COUNTIF(RunsTable[termination],"timeout")', _run_value_count(tables["Runs"], "termination", "timeout"), "kpi"),
         ("Valid attempts", '=COUNTIF(RunsTable[validity],"valid")', _run_value_count(tables["Runs"], "validity", "valid"), "kpi"),
@@ -717,15 +743,15 @@ def _write_overview_sheet(
         ("Not applicable", '=COUNTIF(JudgmentsTable[outcome],"not_applicable")', _judgment_value_count(tables["Judgments"], "not_applicable"), "kpi"),
     )
 
-    for offset, (label, formula, cached, format_name) in enumerate(summary_specs, start=9):
+    for offset, (label, formula, cached, format_name) in enumerate(summary_specs, start=11):
         worksheet.write(offset, 0, label, formats["label"])
         worksheet.write_formula(offset, 1, formula, formats[format_name], cached)
 
     subjects = _unique_values(tables["Runs"], "subject_id")
-    worksheet.merge_range("A19:B19", "Mean Run Duration by Subject", formats["section"])
-    worksheet.write_row(19, 0, ["subject_id", "mean_seconds"], formats["header"])
+    worksheet.merge_range("A21:B21", "Mean Run Duration by Subject", formats["section"])
+    worksheet.write_row(21, 0, ["subject_id", "mean_seconds"], formats["header"])
 
-    for index, subject in enumerate(subjects, start=20):
+    for index, subject in enumerate(subjects, start=22):
         worksheet.write_string(index, 0, subject)
         formula = (
             f'=SUMIF(RunsTable[subject_id],A{index + 1},RunsTable[duration_seconds])/'
@@ -735,19 +761,19 @@ def _write_overview_sheet(
         worksheet.write_formula(index, 1, formula, formats["duration"], cached)
 
     dimensions = _unique_values(tables["Dimension Scores"], "dimension")
-    worksheet.merge_range("D9:H9", "Opportunity-Weighted Arithmetic Dimension Scores", formats["section"])
-    worksheet.write(9, 3, "subject_id", formats["header"])
+    worksheet.merge_range("D11:H11", "Opportunity-Weighted Arithmetic Dimension Scores", formats["section"])
+    worksheet.write(11, 3, "subject_id", formats["header"])
 
     for column, dimension in enumerate(dimensions, start=4):
-        worksheet.write(9, column, dimension, formats["header"])
+        worksheet.write(11, column, dimension, formats["header"])
 
-    for row_offset, subject in enumerate(subjects, start=10):
+    for row_offset, subject in enumerate(subjects, start=12):
         worksheet.write_string(row_offset, 3, subject)
 
         for column, dimension in enumerate(dimensions, start=4):
             column_letter = _column_letter(column + 1)
             subject_ref = f"$D{row_offset + 1}"
-            dimension_ref = f"{column_letter}$10"
+            dimension_ref = f"{column_letter}$12"
             formula = (
                 '=SUMIFS(DimensionScoresTable[s_d],'
                 'DimensionScoresTable[estimand],"opportunity",'
@@ -772,8 +798,8 @@ def _write_overview_sheet(
     duration_chart.add_series(
         {
             "name": "Mean run duration (seconds)",
-            "categories": ["Overview", 20, 0, 19 + len(subjects), 0],
-            "values": ["Overview", 20, 1, 19 + len(subjects), 1],
+            "categories": ["Overview", 22, 0, 21 + len(subjects), 0],
+            "values": ["Overview", 22, 1, 21 + len(subjects), 1],
             "fill": {"color": "#5B9BD5"},
             "border": {"none": True},
         }
@@ -786,11 +812,11 @@ def _write_overview_sheet(
 
     score_chart = workbook.add_chart({"type": "column"})
 
-    for row_offset, subject in enumerate(subjects, start=10):
+    for row_offset, subject in enumerate(subjects, start=12):
         score_chart.add_series(
             {
                 "name": ["Overview", row_offset, 3],
-                "categories": ["Overview", 9, 4, 9, 3 + len(dimensions)],
+                "categories": ["Overview", 11, 4, 11, 3 + len(dimensions)],
                 "values": ["Overview", row_offset, 4, row_offset, 3 + len(dimensions)],
             }
         )
@@ -809,7 +835,7 @@ def _write_overview_sheet(
     score_chart.set_style(10)
     worksheet.insert_chart("J20", score_chart, {"x_scale": 1.1, "y_scale": 1.05})
 
-    note_start = max(25, 21 + len(subjects))
+    note_start = max(27, 23 + len(subjects))
     worksheet.merge_range(
         note_start,
         0,
@@ -819,6 +845,8 @@ def _write_overview_sheet(
         formats["section"],
     )
     notes = (
+        "Population policy controls whether incomplete selected plans are rejected (strict) or analyzed using available scientifically valid runs (available-valid). Missing planned runs are missing observations, never automatic violations or compliant outcomes.",
+        "Available-valid estimates describe the observed valid population. When missingness is related to subject behavior or condition, interpret pooled estimates cautiously and inspect Cell Coverage / Missing Runs explicitly.",
         "Read compliance estimates together with coverage; perfect compliance can coexist with incomplete adjudication coverage.",
         "A percentile bootstrap interval of [1, 1] at the empirical boundary means no failures appeared in the observed resamples; it is not proof of literal certainty.",
         "Dimension intervals recompute requirement estimates and S_D inside every hierarchical scenario-to-run bootstrap replicate, preserving dependence among requirements.",

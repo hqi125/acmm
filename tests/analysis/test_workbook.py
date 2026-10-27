@@ -98,6 +98,74 @@ def _write_analysis_fixture(export_dir: Path) -> None:
         ],
     )
     _write_csv(
+        analysis_dir / "population_summary.csv",
+        [
+            "population_policy",
+            "complete_selection",
+            "selected_planned_runs",
+            "available_valid_runs",
+            "missing_planned_runs",
+            "availability_fraction",
+            "excluded_attempt_rows",
+        ],
+        [
+            {
+                "population_policy": "available-valid",
+                "complete_selection": "false",
+                "selected_planned_runs": 2,
+                "available_valid_runs": 2,
+                "missing_planned_runs": 0,
+                "availability_fraction": 1.0,
+                "excluded_attempt_rows": 0,
+            }
+        ],
+    )
+    _write_csv(
+        analysis_dir / "population_cell_coverage.csv",
+        [
+            "subject_id",
+            "scenario_id",
+            "planned_runs",
+            "available_valid_runs",
+            "missing_runs",
+            "availability_fraction",
+        ],
+        [
+            {
+                "subject_id": "subject_a",
+                "scenario_id": "scenario_a",
+                "planned_runs": 1,
+                "available_valid_runs": 1,
+                "missing_runs": 0,
+                "availability_fraction": 1.0,
+            },
+            {
+                "subject_id": "subject_b",
+                "scenario_id": "scenario_a",
+                "planned_runs": 1,
+                "available_valid_runs": 1,
+                "missing_runs": 0,
+                "availability_fraction": 1.0,
+            },
+        ],
+    )
+    _write_csv(
+        analysis_dir / "population_missing_runs.csv",
+        [
+            "run_index",
+            "subject_id",
+            "scenario_id",
+            "repetition",
+            "attempts",
+            "final_termination",
+            "final_validity",
+            "failure_kind",
+            "failure_message",
+        ],
+        [],
+    )
+
+    _write_csv(
         analysis_dir / "requirement_estimates.csv",
         ["estimand", "subject_id", "requirement_id", "dimension", "p_hat", "coverage"],
         [
@@ -211,7 +279,7 @@ def test_build_analysis_workbook_creates_expected_sheets(tmp_path: Path) -> None
     result = build_analysis_workbook(export_dir, output_path)
 
     assert result.output_path == output_path
-    assert result.sheet_count == 8
+    assert result.sheet_count == 11
     assert output_path.is_file()
     assert output_path.stat().st_size > 10_000
 
@@ -228,6 +296,9 @@ def test_build_analysis_workbook_creates_expected_sheets(tmp_path: Path) -> None
 
     assert names == [
         "Overview",
+        "Population Summary",
+        "Cell Coverage",
+        "Missing Runs",
         "Requirement Estimates",
         "Requirement Intervals",
         "Dimension Scores",

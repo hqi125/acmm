@@ -72,3 +72,61 @@ write_acmm_analysis_csv <- function(tables, outputPath)
     )
     invisible(outputPath)
 }
+
+write_acmm_population_tables <- function(population, outputDir)
+{
+    acmm_validate_population(population)
+    acmm_assert(
+        is.character(outputDir) && length(outputDir) == 1 &&
+            !is.na(outputDir) && nzchar(outputDir),
+        "outputDir must be one non-empty string.",
+        "acmm_analysis_api_error"
+    )
+
+    if (!dir.exists(outputDir))
+    {
+        dir.create(outputDir, recursive = TRUE, showWarnings = FALSE)
+    }
+
+    utils::write.csv(
+        population$summary,
+        file = file.path(outputDir, "population_summary.csv"),
+        row.names = FALSE,
+        na = ""
+    )
+    utils::write.csv(
+        population$cell_coverage,
+        file = file.path(outputDir, "population_cell_coverage.csv"),
+        row.names = FALSE,
+        na = ""
+    )
+    utils::write.csv(
+        population$missing_runs,
+        file = file.path(outputDir, "population_missing_runs.csv"),
+        row.names = FALSE,
+        na = ""
+    )
+    invisible(outputDir)
+}
+
+print_acmm_population_summary <- function(population)
+{
+    acmm_validate_population(population)
+    summary <- population$summary[1, , drop = FALSE]
+    cat("Population policy:", summary$population_policy, "\n")
+    cat(
+        "Available valid runs:", summary$available_valid_runs,
+        "of", summary$selected_planned_runs, "selected planned runs\n"
+    )
+    cat("Missing planned runs:", summary$missing_planned_runs, "\n")
+
+    if (summary$missing_planned_runs > 0)
+    {
+        cat(
+            "NOTE: Missing planned runs are treated as missing observations, not as ",
+            "violations or compliant outcomes.\n",
+            sep = ""
+        )
+    }
+    invisible(population)
+}

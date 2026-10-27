@@ -256,6 +256,7 @@ def test_preview_does_not_run_live_readiness(
 def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
     tmp_path: Path,
     monkeypatch,
+    capsys,
 ) -> None:
     from acmm.live_preflight import (
         live_readiness_preflight_result,
@@ -378,6 +379,14 @@ def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
         "start:open_webui_nemotron30b",
         "stop:open_webui_nemotron30b",
     ]
+
+    output = capsys.readouterr().out
+    assert output.index("Live readiness preflight:") < output.index(
+        "Experiment execution:"
+    )
+    assert output.index("Experiment execution:") < output.index(
+        "Runtime acquisition:"
+    )
 
 
 def test_preview_start_if_needed_remains_non_contacting(

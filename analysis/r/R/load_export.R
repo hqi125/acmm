@@ -1,4 +1,8 @@
-load_acmm_export <- function(exportDir, requireCompleteSelection = TRUE)
+load_acmm_export <- function(
+    exportDir,
+    requireCompleteSelection = TRUE,
+    populationPolicy = NULL
+)
 {
     acmm_require_namespace("yaml")
     acmm_require_namespace("digest")
@@ -15,12 +19,21 @@ load_acmm_export <- function(exportDir, requireCompleteSelection = TRUE)
         "acmm_input_error"
     )
     exportDir <- normalizePath(exportDir, winslash = "/", mustWork = TRUE)
-    acmm_assert(
-        is.logical(requireCompleteSelection) && length(requireCompleteSelection) == 1 &&
-            !is.na(requireCompleteSelection),
-        "requireCompleteSelection must be one non-missing logical value.",
-        "acmm_analysis_api_error"
-    )
+    if (!is.null(populationPolicy))
+    {
+        populationPolicy <- acmm_validate_population_policy(populationPolicy)
+        requireCompleteSelection <- populationPolicy == "strict"
+    }
+    else
+    {
+        acmm_assert(
+            is.logical(requireCompleteSelection) && length(requireCompleteSelection) == 1 &&
+                !is.na(requireCompleteSelection),
+            "requireCompleteSelection must be one non-missing logical value.",
+            "acmm_analysis_api_error"
+        )
+        populationPolicy <- if (requireCompleteSelection) "strict" else "available-valid"
+    }
 
     manifestPath <- file.path(exportDir, "export_manifest.yaml")
     manifest <- acmm_read_yaml_mapping(manifestPath, "export manifest")
@@ -76,7 +89,8 @@ load_acmm_export <- function(exportDir, requireCompleteSelection = TRUE)
             binding = binding,
             runs = runs,
             judgments = judgments,
-            complete_selection = selectedCount == resolvedCount
+            complete_selection = selectedCount == resolvedCount,
+            population_policy = populationPolicy
         ),
         class = "acmm_export"
     )

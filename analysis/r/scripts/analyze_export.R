@@ -11,7 +11,11 @@ analysisRoot <- dirname(dirname(normalizePath(scriptPath, winslash = "/", mustWo
 source(file.path(analysisRoot, "R", "bootstrap.R"))
 source_acmm_analysis(analysisRoot)
 
-arguments <- commandArgs(trailingOnly = TRUE)
+parsedArguments <- acmm_extract_population_policy_argument(
+    commandArgs(trailingOnly = TRUE)
+)
+arguments <- parsedArguments$arguments
+populationPolicy <- parsedArguments$policy
 if (!(length(arguments) %in% c(1, 2)))
 {
     stop(
@@ -22,20 +26,27 @@ if (!(length(arguments) %in% c(1, 2)))
     )
 }
 
-exportData <- load_acmm_export(arguments[[1]])
-population <- build_acmm_population(exportData)
+exportData <- load_acmm_export(
+    arguments[[1]],
+    populationPolicy = populationPolicy
+)
+population <- build_acmm_population(
+    exportData,
+    populationPolicy = populationPolicy
+)
 estimates <- estimate_acmm_compliance(population)
 
 if (length(arguments) == 2)
 {
     write_acmm_analysis_csv(estimates, arguments[[2]])
+    write_acmm_population_tables(population, dirname(arguments[[2]]))
 }
 
 cat("ACMM analysis input validated successfully.\n")
 cat("Execution:", exportData$binding$execution_id, "\n")
 cat("Experiment:", exportData$binding$experiment_id, "\n")
-cat("Selected valid runs:", nrow(population$runs), "\n")
-cat("Excluded attempts:", nrow(population$excluded_attempts), "\n\n")
+print_acmm_population_summary(population)
+cat("Excluded attempt rows:", nrow(population$excluded_attempts), "\n\n")
 
 cat("Opportunity-weighted requirement estimates:\n")
 print(estimates$opportunity, row.names = FALSE)

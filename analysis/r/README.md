@@ -56,9 +56,19 @@ error.
 - judgment counts per realized attempt;
 - opportunity, requirement, dimension, check, and evaluator consistency.
 
-By default, analysis also refuses an execution whose selected plan is not fully resolved. Invalid retry
-attempts remain available in `population$excluded_attempts`; they are not silently deleted and they are
-not part of compliance estimation.
+By default, analysis uses the `strict` population policy and refuses an execution whose selected plan
+is not fully resolved. `available-valid` is an explicit alternative for postmortem and sensitivity
+analysis: it retains the original selected-plan denominator, analyzes only selected scientifically
+valid runs, and reports exact missing planned slots plus per-subject/scenario acquisition coverage.
+Invalid attempts remain available in `population$excluded_attempts`; they are never converted into
+compliance violations or silently deleted.
+
+Bootstrap intervals under `available-valid` are conditional on the observed valid population. They
+quantify sampling variation among available observations but do not model the unknown outcomes of
+missing planned runs. If missingness is related to subject behavior or experimental condition, pooled
+estimates may be biased; inspect `population_cell_coverage.csv` and
+`population_missing_runs.csv` and use an explicit sensitivity analysis rather than assuming the
+missing observations are random.
 
 ## Compliance semantics
 
@@ -262,6 +272,14 @@ orchestration tool:
 ```text
 python tools/analyze_execution.py \
     results/<experiment_id>/execution_<execution_id>
+```
+
+For an incomplete execution that should remain analyzable as an observed valid population:
+
+```text
+python tools/analyze_execution.py \
+    results/<experiment_id>/execution_<execution_id> \
+    --population-policy available-valid
 ```
 
 The wrapper does not implement statistics and is not part of the `acmm` CLI. It follows repository

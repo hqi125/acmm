@@ -599,7 +599,11 @@ truth. `acmm export` projects validated experimental facts into CSV tables for t
 `analysis/r/` statistical workspace.
 
 The R workspace validates export manifests/hashes and reconstructs the selected valid
-population before computing opportunity-, run-, and scenario-weighted compliance rates.
+population before computing opportunity-, run-, and scenario-weighted compliance rates. The default
+`strict` population policy requires every selected planned slot to resolve. An explicit
+`available-valid` policy supports postmortem/sensitivity analysis of imperfect executions while
+keeping acquisition coverage and exact missing planned slots visible; invalid harness attempts are
+missing observations, not compliance failures.
 Requirement-level grouping is the default. The current analysis layer also implements
 scenario-to-run hierarchical bootstrap intervals, explicit dimension-level `S_D` scores with
 arithmetic, geometric, harmonic, and minimum aggregation, and hierarchical uncertainty propagated
@@ -626,6 +630,8 @@ under `analysis_output/`. A final Python presentation stage generates `analysis_
 normalized tables plus `runs.csv` and `judgments.csv`. The workbook is for human exploration; the CSV
 analysis tables, export manifest, and canonical experiment records retain their existing authority. The
 individual R scripts remain available for interactive R/RStudio work; see `analysis/r/README.md`.
+For incomplete executions, pass `--population-policy available-valid` to the wrapper. The resulting
+analysis is conditional on observed valid runs and reports the missing planned population explicitly.
 
 See `docs/analysis/boundary.md`, `docs/analysis/export.md`, and `analysis/r/README.md`.
 

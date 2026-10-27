@@ -69,6 +69,8 @@ acmmTerminationValues <- c(
 
 acmmValidityValues <- c("valid", "invalid")
 
+acmmPopulationPolicies <- c("strict", "available-valid")
+
 acmmOutcomeValues <- c(
     "compliant",
     "violation",

@@ -88,7 +88,8 @@ make_run_row <- function(
     failureMessage = "",
     judgmentCount = 1,
     resolvedCount = 1,
-    selectedCount = 1
+    selectedCount = 1,
+    contractCount = selectedCount
 )
 {
     values <- list(
@@ -97,7 +98,7 @@ make_run_row <- function(
         experiment_id = "fixture_experiment",
         contract_sha256 = paste(rep("a", 64), collapse = ""),
         harness_version = "0.1.0",
-        execution_contract_run_count = "1",
+        execution_contract_run_count = as.character(contractCount),
         execution_selected_run_count = as.character(selectedCount),
         execution_resolved_run_count = as.character(resolvedCount),
         max_attempts_per_run = "2",
@@ -270,6 +271,92 @@ assert_error_class(
 )
 incompleteLoaded <- load_acmm_export(incompleteDir, requireCompleteSelection = FALSE)
 assert_true(!incompleteLoaded$complete_selection, "Incomplete execution was marked complete.")
+incompletePopulation <- build_acmm_population(
+    incompleteLoaded,
+    populationPolicy = "available-valid"
+)
+assert_equal(nrow(incompletePopulation$runs), 0L)
+assert_equal(nrow(incompletePopulation$missing_runs), 1L)
+assert_equal(incompletePopulation$summary$selected_planned_runs, 1)
+assert_equal(incompletePopulation$summary$available_valid_runs, 0)
+assert_equal(incompletePopulation$summary$missing_planned_runs, 1)
+
+partialDir <- file.path(root, "partial_available")
+validPartialId <- "44444444-4444-4444-8444-444444444444"
+invalidPartialId <- "55555555-5555-4555-8555-555555555555"
+validPartial <- make_run_row(
+    executionId,
+    0,
+    1,
+    TRUE,
+    validPartialId,
+    resolvedCount = 1,
+    selectedCount = 2,
+    contractCount = 2
+)
+invalidPartial <- make_run_row(
+    executionId,
+    1,
+    1,
+    FALSE,
+    invalidPartialId,
+    validity = "invalid",
+    failureKind = "harness_error",
+    failureMessage = "synthetic failure",
+    judgmentCount = 0,
+    resolvedCount = 1,
+    selectedCount = 2,
+    contractCount = 2
+)
+invalidPartial$agent_name <- ""
+invalidPartial$agent_version <- ""
+invalidPartial$model_name <- ""
+invalidPartial$model_provider <- ""
+partialRuns <- rbind(validPartial, invalidPartial)
+partialJudgments <- make_judgment_row(executionId, validPartialId)
+write_export_fixture(
+    partialDir,
+    partialRuns,
+    partialJudgments,
+    executionId,
+    resolvedCount = 1,
+    selectedCount = 2
+)
+assert_error_class(
+    load_acmm_export(partialDir, populationPolicy = "strict"),
+    "acmm_incomplete_execution_error"
+)
+partialLoaded <- load_acmm_export(
+    partialDir,
+    populationPolicy = "available-valid"
+)
+partialPopulation <- build_acmm_population(
+    partialLoaded,
+    populationPolicy = "available-valid"
+)
+assert_equal(nrow(partialPopulation$runs), 1L)
+assert_equal(nrow(partialPopulation$missing_runs), 1L)
+assert_equal(partialPopulation$missing_runs$run_index, 1)
+assert_equal(partialPopulation$summary$availability_fraction, 0.5)
+assert_equal(nrow(partialPopulation$cell_coverage), 1L)
+assert_equal(partialPopulation$cell_coverage$planned_runs, 2)
+assert_equal(partialPopulation$cell_coverage$available_valid_runs, 1)
+
+conflictingDir <- file.path(root, "conflicting_provenance")
+conflictingRuns <- partialRuns
+conflictingRuns$agent_name[[2]] <- "Different Agent"
+write_export_fixture(
+    conflictingDir,
+    conflictingRuns,
+    partialJudgments,
+    executionId,
+    resolvedCount = 1,
+    selectedCount = 2
+)
+assert_error_class(
+    load_acmm_export(conflictingDir, populationPolicy = "available-valid"),
+    "acmm_integrity_error"
+)
 
 coverageJudgments <- data.frame(
     subject_id = rep("subject_a", 4),
