@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -8,6 +10,25 @@ from acmm_infra.runtime_lifecycle import subject_runtime_lease
 
 class runtime_log_capture_error(RuntimeError):
     """Raised when a requested runtime log cannot be captured."""
+
+
+_ANSI_ESCAPE_RE = re.compile(
+    r"""
+    \x1B
+    (?:
+        \][^\x07\x1B]*(?:\x07|\x1B\\)
+        |
+        [PX^_][^\x1B]*(?:\x1B\\)
+        |
+        \[[0-?]*[ -/]*[@-~]
+        |
+        [@-_]
+    )
+    """,
+    re.VERBOSE,
+)
+_OTHER_CONTROL_RE = re.compile(r"[\x00-\x07\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F]")
+_LOG_SANITIZER_ID = "acmm_plain_terminal_v1"
 
 
 def capture_subject_runtime_log(
@@ -30,8 +51,64 @@ def capture_subject_runtime_log(
 
     destination = _next_log_path(Path(session_dir), subject_id)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(result.stdout, encoding="utf-8", newline="")
+
+    sanitized, metadata = _sanitize_runtime_log(result.stdout)
+    destination.write_text(sanitized, encoding="utf-8", newline="")
+    _write_sanitization_metadata(destination, metadata)
     return destination
+
+
+def _sanitize_runtime_log(text: str) -> tuple[str, dict[str, object]]:
+    without_ansi, ansi_sequences_removed = _ANSI_ESCAPE_RE.subn("", text)
+
+    crlf_pairs = without_ansi.count("\r\n")
+    normalized = without_ansi.replace("\r\n", "\n")
+    bare_carriage_returns = normalized.count("\r")
+    normalized = normalized.replace("\r", "\n")
+
+    normalized, backspace_edits = _apply_backspaces(normalized)
+    sanitized, other_controls_removed = _OTHER_CONTROL_RE.subn("", normalized)
+
+    metadata: dict[str, object] = {
+        "schema_version": "0.1",
+        "sanitizer": _LOG_SANITIZER_ID,
+        "source": "docker_logs_stdout",
+        "input_utf8_bytes": len(text.encode("utf-8")),
+        "output_utf8_bytes": len(sanitized.encode("utf-8")),
+        "transformations": {
+            "ansi_escape_sequences_removed": ansi_sequences_removed,
+            "crlf_pairs_normalized": crlf_pairs,
+            "bare_carriage_returns_normalized": bare_carriage_returns,
+            "backspace_edits_applied": backspace_edits,
+            "other_control_characters_removed": other_controls_removed,
+        },
+    }
+    return sanitized, metadata
+
+
+def _apply_backspaces(text: str) -> tuple[str, int]:
+    output: list[str] = []
+    edits = 0
+
+    for character in text:
+        if character != "\b":
+            output.append(character)
+            continue
+
+        edits += 1
+        if output and output[-1] != "\n":
+            output.pop()
+
+    return "".join(output), edits
+
+
+def _write_sanitization_metadata(
+    destination: Path,
+    metadata: dict[str, object],
+) -> None:
+    metadata_path = destination.with_name(f"{destination.name}.meta.json")
+    serialized = json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+    metadata_path.write_text(serialized, encoding="utf-8", newline="")
 
 
 def _next_log_path(session_dir: Path, subject_id: str) -> Path:

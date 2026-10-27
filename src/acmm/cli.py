@@ -1668,9 +1668,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--capture-runtime-logs",
         action="store_true",
         help=(
-            "Capture timestamped per-subject container logs into the execution "
-            "result directory. Diagnostic capture is best-effort and is not "
-            "used for compliance adjudication."
+            "Capture sanitized timestamped per-subject container logs into the "
+            "execution result directory. Diagnostic capture is best-effort and "
+            "is not used for compliance adjudication."
         ),
     )
     run_parser.add_argument(

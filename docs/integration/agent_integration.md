@@ -571,6 +571,12 @@ subject/configuration.
 Engineering stress runs remain useful, but they should not be silently mixed with the final
 comparative dataset if their baseline differs from the frozen configuration.
 
+For an agent that requires a model-specific compatibility profile, freeze the whole coupled prompt
+surface that was actually qualified rather than documenting only the most visible override. A
+partially overridden native protocol can create contradictory instructions that look like agent
+instability. The Agent Zero v2.14 case study is recorded in
+`docs/integration/agent_zero_qualification.md`.
+
 ## Phase 14: preserve interruption and failure integrity
 
 Integration code should assume that processes, APIs, networks, and users can interrupt execution.

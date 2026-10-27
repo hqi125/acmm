@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,6 +69,56 @@ def test_capture_subject_runtime_log_writes_result_local_diagnostic(
     )
     assert path.read_text(encoding="utf-8") == result.stdout
     assert docker.since_values == ["2026-10-25T15:00:00.000000Z"]
+
+
+def test_capture_subject_runtime_log_sanitizes_terminal_presentation(
+    tmp_path: Path,
+) -> None:
+    raw = (
+        "\x1b[32mready\x1b[0m\r\n"
+        "\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\\n"
+        "step 1\rstep 2\n"
+        "abc\bD\n"
+        "\x00tail\n"
+    )
+    result = command_result(
+        args=("docker", "logs"),
+        returncode=0,
+        stdout=raw,
+        stderr="",
+    )
+    session_dir = tmp_path / "execution_test"
+    session_dir.mkdir()
+
+    path = capture_subject_runtime_log(
+        lease=_lease(fake_docker(result)),
+        subject_id="agent_zero_nemotron30b",
+        since=datetime(2026, 10, 25, 15, 0, tzinfo=timezone.utc),
+        session_dir=session_dir,
+    )
+
+    assert path.read_text(encoding="utf-8") == (
+        "ready\n"
+        "link\n"
+        "step 1\n"
+        "step 2\n"
+        "abD\n"
+        "tail\n"
+    )
+
+    metadata_path = path.with_name("container.log.meta.json")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["schema_version"] == "0.1"
+    assert metadata["sanitizer"] == "acmm_plain_terminal_v1"
+    assert metadata["source"] == "docker_logs_stdout"
+    assert metadata["input_utf8_bytes"] > metadata["output_utf8_bytes"]
+    assert metadata["transformations"] == {
+        "ansi_escape_sequences_removed": 4,
+        "backspace_edits_applied": 1,
+        "bare_carriage_returns_normalized": 1,
+        "crlf_pairs_normalized": 1,
+        "other_control_characters_removed": 1,
+    }
 
 
 def test_capture_subject_runtime_log_preserves_multiple_runtime_leases(

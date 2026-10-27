@@ -44,3 +44,8 @@ seconds across a full 180-run execution.
 Before evidence collection, one repetition across all four conditions for all three
 subjects may be used as a 12-run engineering probe. Probe runs are apparatus validation
 only and must not be combined with the final evidence execution.
+
+Agent Zero additionally underwent a full 60-run subject-only stress qualification after its v2.14
+profile compatibility bundle was corrected and frozen. That qualification is also engineering
+evidence only and must remain separate from the final 180-run comparative execution. See
+`docs/integration/agent_zero_qualification.md`.

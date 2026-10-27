@@ -143,7 +143,12 @@ continuation metadata, and prevents completed Tool work from being restarted.
 upstream value `Hello!`. `fw.initial_message.md` keeps the paired synthetic initial assistant
 message on the same two-field Tool-call schema. Together these overrides reproduce the relevant
 local-model safeguards from Agent Zero v2.14's Tiny Local prompt discipline while retaining ACMM's
-experiment-specific profile and Tool policy.
+experiment-specific profile and Tool policy. The prompt set is treated as one versioned compatibility
+bundle rather than a collection of independently swappable snippets. A 60-run Agent Zero-only
+qualification across all Experiment 3 conditions completed with 0 timeouts, 60/60 intended Tool
+sequences, 0 malformed integer arguments, 0 restarted completed cycles, and no late-run bootstrap
+task loss. See `docs/integration/agent_zero_qualification.md` for the qualification record and
+version-upgrade policy.
 
 In particular:
 

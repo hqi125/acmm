@@ -70,12 +70,19 @@ The adapter records the Agent Zero context id, Agent Profile, and execution-inte
 subject provenance. The context id is provenance only; the corresponding context is normally
 terminated and its persisted chat removed after evidence capture.
 
-The qualified `acmm` profile also owns narrow communication, solving, and bootstrap-message
-prompt overrides for Nemotron/Agent Zero compatibility. They simplify visible assistant turns to
-one JSON Tool request, tell the model not to repeat completed Tool work, and preserve Agent Zero's
-required user-first bootstrap turn while making that synthetic user message explicitly non-task.
-This is profile behavior, not an adapter rewrite: the adapter continues to preserve whatever Tool
-calls and final response Agent Zero actually produces.
+The qualified `acmm` profile owns a coherent communication/continuation compatibility bundle for
+the pinned Agent Zero v2.14 + Nemotron subject. It uses a two-field visible JSON Tool envelope,
+preserves Agent Zero's required user-first bootstrap ordering with the inert upstream `Hello!`
+seed, identifies Tool-result and framework metadata as continuation context, removes conflicting
+legacy response examples, and prevents already-completed Tool work from being restarted. The
+bundle was frozen only after a 60-run subject-only stress qualification completed without timeout,
+malformed arguments, duplicate/restarted cycles, or late-run bootstrap task loss.
+
+This remains profile behavior, not an adapter rewrite: the adapter preserves whatever Tool calls
+and final response Agent Zero actually produces. The two-field shape is a qualified adaptation for
+this pinned v2.14 subject rather than a claim of universal Agent Zero compatibility. See
+`docs/integration/agent_zero_qualification.md` for the failure history, qualification evidence,
+and upgrade policy.
 
 ## Termination qualification
 

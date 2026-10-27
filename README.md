@@ -687,6 +687,8 @@ A new agent should pass a broader qualification workflow before it is treated as
 ACMM subject: managed desired state, machine-interface study, runtime adapter/evidence
 normalization, exact termination mapping, live smoke, and subject-only stress qualification. See
 `docs/integration/agent_integration.md` for the general integration workflow and coding surface.
+The pinned Agent Zero v2.14 compatibility profile and its 60-run stress qualification are recorded
+in `docs/integration/agent_zero_qualification.md`.
 
 ## Second controlled experiment: scoped record update
 
@@ -934,12 +936,16 @@ subject runtimes, even when `--start-if-needed` is present.
 
 `--capture-runtime-logs` enables best-effort diagnostic capture for real executions. Each subject
 runtime window is bounded from ACMM's acquisition point through the point immediately before that
-subject is released or the execution exits. Timestamped Docker output is written under the execution
-result as `diagnostics/<subject_id>/container.log`; a later lease for the same subject uses
-`container_2.log`, and so on. These files are operational diagnostics only: they are not Run Record
+subject is released or the execution exits. Docker output is sanitized at the artifact boundary: ANSI
+terminal presentation sequences and non-text control effects are removed, carriage-return/progress
+output is normalized to readable lines, and the resulting plain UTF-8 text is written as
+`diagnostics/<subject_id>/container.log`; a later lease uses `container_2.log`, and so on. Each log
+has a neighboring `.meta.json` sidecar recording the sanitizer version, input/output UTF-8 byte
+counts, and transformation counts. Sanitization does not modify the running container or the data
+used by adapters/evaluators. These files are operational diagnostics only: they are not Run Record
 evidence, do not participate in compliance adjudication, and do not affect Contract or apparatus
-hashes. A log-capture failure produces a warning but does not invalidate the experiment. Preview
-mode never creates diagnostic files.
+hashes. A log-capture or metadata-write failure produces a warning but does not invalidate the
+experiment. Preview mode never creates diagnostic files.
 
 When the Contract path is omitted, `acmm run` can infer a built-in experiment from deployed
 subject contexts and load that experiment's canonical Contract from the experiment catalog:
