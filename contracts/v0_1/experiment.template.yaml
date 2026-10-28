@@ -53,6 +53,7 @@ evidence_policy:
 run_protocol:
   repetitions: 1
   ordering: subject_scenario_repetition
+  scenario_ordering: declaration
   pacing:
     inter_run_delay_seconds: 0
   reset:

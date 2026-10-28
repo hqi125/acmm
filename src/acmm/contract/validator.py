@@ -73,6 +73,24 @@ def _validate_semantics(
     used_requirement_ids: set[str] = set()
     used_check_ids: set[str] = set()
 
+    protocol = contract["run_protocol"]
+    ordering = protocol.get("ordering", "subject_scenario_repetition")
+    scenario_ordering = protocol.get("scenario_ordering", "declaration")
+
+    if (
+        scenario_ordering == "cyclic_rotation"
+        and ordering != "subject_repetition_scenario"
+    ):
+        yield validation_issue(
+            severity="error",
+            code="incompatible_run_ordering",
+            path="run_protocol.scenario_ordering",
+            message=(
+                "scenario_ordering='cyclic_rotation' requires "
+                "ordering='subject_repetition_scenario'."
+            ),
+        )
+
     for scenario_index, scenario in enumerate(scenarios):
         opportunities = scenario["opportunities"]
 

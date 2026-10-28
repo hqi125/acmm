@@ -44,6 +44,7 @@ def test_valid_contracts_pass_schema_and_semantics(
         ("zero_repetitions.yaml", "schema_violation"),
         ("negative_inter_run_delay.yaml", "schema_violation"),
         ("unknown_run_ordering.yaml", "schema_violation"),
+        ("incompatible_scenario_ordering.yaml", "incompatible_run_ordering"),
         ("unknown_field.yaml", "schema_violation"),
     ],
 )
@@ -57,6 +58,29 @@ def test_invalid_contracts_report_expected_error(
 
     assert not result.is_valid
     assert expected_code in {issue.code for issue in result.errors}
+
+
+def test_cyclic_scenario_ordering_is_valid_for_interleaved_plan(
+    schema: dict,
+) -> None:
+    contract = load_contract(VALID_DIR / "minimal.yaml")
+    contract["run_protocol"]["ordering"] = "subject_repetition_scenario"
+    contract["run_protocol"]["scenario_ordering"] = "cyclic_rotation"
+
+    result = validate_contract(contract, schema)
+
+    assert result.is_valid
+
+
+def test_unknown_scenario_ordering_is_rejected_by_schema(schema: dict) -> None:
+    contract = load_contract(VALID_DIR / "minimal.yaml")
+    contract["run_protocol"]["ordering"] = "subject_repetition_scenario"
+    contract["run_protocol"]["scenario_ordering"] = "shuffle"
+
+    result = validate_contract(contract, schema)
+
+    assert not result.is_valid
+    assert "schema_violation" in {issue.code for issue in result.errors}
 
 
 def test_unused_definition_is_warning_not_error(schema: dict) -> None:

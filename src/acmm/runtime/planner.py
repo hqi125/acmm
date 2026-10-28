@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
 
 _DEFAULT_ORDERING = "subject_scenario_repetition"
 _INTERLEAVED_ORDERING = "subject_repetition_scenario"
+_DEFAULT_SCENARIO_ORDERING = "declaration"
+_CYCLIC_SCENARIO_ORDERING = "cyclic_rotation"
 
 
 @dataclass(frozen=True)
@@ -35,7 +37,8 @@ def build_experiment_plan(
     The default ordering preserves the historical Contract v0.1 expansion:
     subject, then scenario, then repetition. A Contract may instead request
     subject, then repetition, then scenario to interleave scenario conditions
-    within each subject.
+    within each subject. Interleaved plans may additionally rotate declaration
+    order across repetitions to counterbalance scenario position.
 
     The caller is responsible for validating the Contract before planning.
     """
@@ -43,8 +46,18 @@ def build_experiment_plan(
     protocol = contract["run_protocol"]
     repetitions = protocol["repetitions"]
     ordering = protocol.get("ordering", _DEFAULT_ORDERING)
+    scenario_ordering = protocol.get(
+        "scenario_ordering",
+        _DEFAULT_SCENARIO_ORDERING,
+    )
 
     if ordering == _DEFAULT_ORDERING:
+        if scenario_ordering != _DEFAULT_SCENARIO_ORDERING:
+            raise ValueError(
+                "run_protocol.scenario_ordering requires "
+                "ordering='subject_repetition_scenario'."
+            )
+
         coordinates = (
             (subject, scenario, repetition)
             for subject in contract["subjects"]
@@ -52,11 +65,11 @@ def build_experiment_plan(
             for repetition in range(1, repetitions + 1)
         )
     elif ordering == _INTERLEAVED_ORDERING:
-        coordinates = (
-            (subject, scenario, repetition)
-            for subject in contract["subjects"]
-            for repetition in range(1, repetitions + 1)
-            for scenario in contract["scenarios"]
+        coordinates = _build_interleaved_coordinates(
+            subjects=contract["subjects"],
+            scenarios=contract["scenarios"],
+            repetitions=repetitions,
+            scenario_ordering=scenario_ordering,
         )
     else:
         raise ValueError(f"Unsupported run ordering {ordering!r}.")
@@ -75,3 +88,32 @@ def build_experiment_plan(
         experiment_id=contract["experiment"]["id"],
         runs=runs,
     )
+
+
+def _build_interleaved_coordinates(
+    *,
+    subjects: list[dict[str, Any]],
+    scenarios: list[dict[str, Any]],
+    repetitions: int,
+    scenario_ordering: str,
+) -> Iterable[tuple[dict[str, Any], dict[str, Any], int]]:
+    if scenario_ordering == _DEFAULT_SCENARIO_ORDERING:
+        for subject in subjects:
+            for repetition in range(1, repetitions + 1):
+                for scenario in scenarios:
+                    yield subject, scenario, repetition
+        return
+
+    if scenario_ordering == _CYCLIC_SCENARIO_ORDERING:
+        scenario_count = len(scenarios)
+
+        for subject_index, subject in enumerate(subjects):
+            for repetition in range(1, repetitions + 1):
+                offset = (subject_index + repetition - 1) % scenario_count
+
+                for scenario_index in range(scenario_count):
+                    scenario = scenarios[(offset + scenario_index) % scenario_count]
+                    yield subject, scenario, repetition
+        return
+
+    raise ValueError(f"Unsupported scenario ordering {scenario_ordering!r}.")

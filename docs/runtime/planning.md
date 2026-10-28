@@ -66,6 +66,49 @@ This keeps subject execution grouped while interleaving scenario conditions with
 repetition, reducing unnecessary confounding between scenario and execution time. Both
 orders are deterministic.
 
+### Scenario position balancing
+
+An interleaved plan may additionally select:
+
+```text
+scenario_ordering: cyclic_rotation
+```
+
+The default is `declaration`, which preserves Contract scenario order in every repetition.
+`cyclic_rotation` advances the declaration order by one position per repetition and phases
+each subsequent subject by one starting position. For four scenarios `A`, `B`, `C`, `D`,
+the first subject expands as:
+
+```text
+repetition 1: A B C D
+repetition 2: B C D A
+repetition 3: C D A B
+repetition 4: D A B C
+```
+
+The second subject begins one phase later:
+
+```text
+repetition 1: B C D A
+repetition 2: C D A B
+repetition 3: D A B C
+repetition 4: A B C D
+```
+
+This is deterministic **scenario-position counterbalancing**. Across every complete cycle of
+`scenario_count` repetitions, each scenario occupies every within-repetition position once.
+When the repetition count is not a multiple of the scenario count, position counts differ by
+at most one. Phasing subjects also avoids assigning the same scenario to the first
+post-acquisition position for every subject.
+
+This strategy does **not** fully counterbalance carryover or transition effects: cyclic
+rotations preserve a restricted set of adjacent scenario transitions. Experiments that need
+transition-balanced designs should introduce a separate ordering strategy rather than
+interpreting `cyclic_rotation` as a Williams/complete counterbalancing design.
+
+`cyclic_rotation` is valid only with `ordering: subject_repetition_scenario`, because scenario
+order must be selected independently for each repetition.
+
 For two subjects `subject_a`, `subject_b`, two scenarios `scenario_a`, `scenario_b`, and
 two repetitions, the result is:
 

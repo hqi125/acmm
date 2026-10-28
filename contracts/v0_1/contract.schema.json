@@ -386,6 +386,13 @@
             "subject_scenario_repetition",
             "subject_repetition_scenario"
           ]
+        },
+        "scenario_ordering": {
+          "type": "string",
+          "enum": [
+            "declaration",
+            "cyclic_rotation"
+          ]
         }
       }
     }

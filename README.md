@@ -433,8 +433,11 @@ subjects x scenarios x repetitions
 By default, plan ordering follows subject declaration order, then scenario declaration
 order, then one-based repetition order. Contracts may set
 `run_protocol.ordering: subject_repetition_scenario` to interleave scenario conditions
-within each subject repetition while preserving deterministic run indices. Each planned
-run receives a zero-based `run_index` for its position in the plan.
+within each subject repetition while preserving deterministic run indices. Interleaved
+plans may additionally set `run_protocol.scenario_ordering: cyclic_rotation` to rotate
+scenario declaration order across repetitions and subject starting phases, providing
+deterministic scenario-position counterbalancing. Each planned run receives a zero-based
+`run_index` for its position in the plan.
 
 The planner assumes the Contract has already passed validation and intentionally does not
 repeat schema or semantic checks. See `docs/runtime/planning.md` for the runtime-planning

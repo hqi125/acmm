@@ -122,3 +122,102 @@ def test_plan_is_deterministic() -> None:
     second = build_experiment_plan(contract)
 
     assert first == second
+
+def test_plan_can_cyclically_rotate_scenarios_across_repetitions() -> None:
+    contract = {
+        "experiment": {
+            "id": "cyclic_scenario_ordering_test",
+        },
+        "subjects": [
+            {"id": "subject_a"},
+            {"id": "subject_b"},
+        ],
+        "scenarios": [
+            {"id": "scenario_a"},
+            {"id": "scenario_b"},
+            {"id": "scenario_c"},
+            {"id": "scenario_d"},
+        ],
+        "run_protocol": {
+            "repetitions": 4,
+            "ordering": "subject_repetition_scenario",
+            "scenario_ordering": "cyclic_rotation",
+        },
+    }
+
+    plan = build_experiment_plan(contract)
+
+    coordinates = [
+        (run.subject_id, run.scenario_id, run.repetition)
+        for run in plan.runs
+    ]
+
+    assert coordinates == [
+        ("subject_a", "scenario_a", 1),
+        ("subject_a", "scenario_b", 1),
+        ("subject_a", "scenario_c", 1),
+        ("subject_a", "scenario_d", 1),
+        ("subject_a", "scenario_b", 2),
+        ("subject_a", "scenario_c", 2),
+        ("subject_a", "scenario_d", 2),
+        ("subject_a", "scenario_a", 2),
+        ("subject_a", "scenario_c", 3),
+        ("subject_a", "scenario_d", 3),
+        ("subject_a", "scenario_a", 3),
+        ("subject_a", "scenario_b", 3),
+        ("subject_a", "scenario_d", 4),
+        ("subject_a", "scenario_a", 4),
+        ("subject_a", "scenario_b", 4),
+        ("subject_a", "scenario_c", 4),
+        ("subject_b", "scenario_b", 1),
+        ("subject_b", "scenario_c", 1),
+        ("subject_b", "scenario_d", 1),
+        ("subject_b", "scenario_a", 1),
+        ("subject_b", "scenario_c", 2),
+        ("subject_b", "scenario_d", 2),
+        ("subject_b", "scenario_a", 2),
+        ("subject_b", "scenario_b", 2),
+        ("subject_b", "scenario_d", 3),
+        ("subject_b", "scenario_a", 3),
+        ("subject_b", "scenario_b", 3),
+        ("subject_b", "scenario_c", 3),
+        ("subject_b", "scenario_a", 4),
+        ("subject_b", "scenario_b", 4),
+        ("subject_b", "scenario_c", 4),
+        ("subject_b", "scenario_d", 4),
+    ]
+
+
+def test_cyclic_scenario_ordering_resets_as_a_deterministic_subject_phase() -> None:
+    contract = {
+        "experiment": {
+            "id": "cyclic_partial_cycle_test",
+        },
+        "subjects": [
+            {"id": "subject_a"},
+            {"id": "subject_b"},
+            {"id": "subject_c"},
+        ],
+        "scenarios": [
+            {"id": "scenario_a"},
+            {"id": "scenario_b"},
+            {"id": "scenario_c"},
+            {"id": "scenario_d"},
+        ],
+        "run_protocol": {
+            "repetitions": 1,
+            "ordering": "subject_repetition_scenario",
+            "scenario_ordering": "cyclic_rotation",
+        },
+    }
+
+    plan = build_experiment_plan(contract)
+
+    starts = [
+        run.scenario_id
+        for run in plan.runs
+        if run.run_index % 4 == 0
+    ]
+
+    assert starts == ["scenario_a", "scenario_b", "scenario_c"]
+
