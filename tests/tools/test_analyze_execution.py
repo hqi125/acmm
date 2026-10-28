@@ -44,9 +44,18 @@ def _write_execution(execution_dir: Path) -> None:
     )
 
 
-def _write_export(export_dir: Path) -> None:
+def _write_export(
+    export_dir: Path,
+    *,
+    selected_count: int = 4,
+    resolved_count: int = 4,
+) -> None:
     export_dir.mkdir(parents=True)
-    (export_dir / "runs.csv").write_text("run_id\n", encoding="utf-8")
+    (export_dir / "runs.csv").write_text(
+        "execution_selected_run_count,execution_resolved_run_count\n"
+        f"{selected_count},{resolved_count}\n",
+        encoding="utf-8",
+    )
     (export_dir / "judgments.csv").write_text("outcome\n", encoding="utf-8")
     manifest = {
         "schema_version": "0.1",
@@ -91,6 +100,7 @@ def _prepare_repo(
         output_path.write_bytes(b"test workbook")
 
     monkeypatch.setattr(analyze_execution, "build_analysis_workbook", build_workbook)
+    monkeypatch.setattr(analyze_execution, "build_availability_workbook", build_workbook)
     return repo_root, execution_dir, export_dir
 
 
@@ -121,6 +131,7 @@ def test_workflow_exports_then_runs_all_analysis_stages(
     monkeypatch.setattr(analyze_execution, "_run_command", run_command)
     monkeypatch.setattr(analyze_execution, "_run_and_save", run_and_save)
     monkeypatch.setattr(analyze_execution, "build_analysis_workbook", build_workbook)
+    monkeypatch.setattr(analyze_execution, "build_availability_workbook", build_workbook)
 
     assert analyze_execution.run_analysis_workflow(execution_dir) == 0
     assert export_commands == [[
@@ -135,6 +146,7 @@ def test_workflow_exports_then_runs_all_analysis_stages(
         "analyze_uncertainty.R",
         "analyze_dimensions.R",
         "analyze_dimension_uncertainty.R",
+        "analyze_availability.R",
     ]
     assert analysis_commands[1][0][-5:-2] == ["2000", "12345", "0.95"]
     assert analysis_commands[3][0][-5:-2] == ["2000", "12345", "0.95"]
@@ -143,31 +155,54 @@ def test_workflow_exports_then_runs_all_analysis_stages(
         "hierarchical_intervals.txt",
         "dimension_scores.txt",
         "dimension_intervals.txt",
+        "availability_analysis.txt",
     ]
-    assert [Path(command[-2]).name for command, _ in analysis_commands] == [
+    assert all(
+        path.parent == export_dir / "analysis_output" / "logs" / "compliance"
+        for _, path in analysis_commands[:4]
+    )
+    assert (
+        analysis_commands[4][1].parent
+        == export_dir / "analysis_output" / "logs" / "availability"
+    )
+    assert [Path(command[-2]).name for command, _ in analysis_commands[:4]] == [
         "requirement_estimates.csv",
         "requirement_intervals.csv",
         "dimension_scores.csv",
         "dimension_intervals.csv",
     ]
     assert all(
+        Path(command[-2]).parent
+        == export_dir / "analysis_output" / "data" / "compliance"
+        for command, _ in analysis_commands[:4]
+    )
+    assert Path(analysis_commands[4][0][-2]).name == "analysis_output"
+    assert all(
         command[-1] == "--population-policy=strict"
         for command, _ in analysis_commands
     )
-    assert workbook_calls == [(
-        export_dir,
-        export_dir / "analysis_output" / "analysis_report.xlsx",
-    )]
+    assert workbook_calls == [
+        (
+            export_dir,
+            export_dir / "analysis_output" / "analysis_report.xlsx",
+        ),
+        (
+            export_dir,
+            export_dir / "analysis_output" / "availability_analysis.xlsx",
+        ),
+    ]
 
 
-def test_available_valid_policy_is_forwarded_to_all_r_stages(
+def test_incomplete_export_automatically_falls_back_to_available_valid(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     _, execution_dir, export_dir = _prepare_repo(tmp_path, monkeypatch)
 
     def run_command(command: Sequence[str]) -> int:
-        _write_export(export_dir)
+        del command
+        _write_export(export_dir, selected_count=4, resolved_count=3)
         return 0
 
     analysis_commands: list[list[str]] = []
@@ -180,18 +215,16 @@ def test_available_valid_policy_is_forwarded_to_all_r_stages(
     monkeypatch.setattr(analyze_execution, "_run_command", run_command)
     monkeypatch.setattr(analyze_execution, "_run_and_save", run_and_save)
 
-    assert (
-        analyze_execution.run_analysis_workflow(
-            execution_dir,
-            population_policy="available-valid",
-        )
-        == 0
-    )
-    assert len(analysis_commands) == 4
+    assert analyze_execution.run_analysis_workflow(execution_dir) == 0
+    captured = capsys.readouterr()
+
+    assert len(analysis_commands) == 5
     assert all(
         command[-1] == "--population-policy=available-valid"
         for command in analysis_commands
     )
+    assert "strict population is unavailable" in captured.err
+    assert "falling back automatically" in captured.err
 
 
 
@@ -272,7 +305,13 @@ def test_workbook_failure_is_reported_after_r_stages(
     monkeypatch.setattr(analyze_execution, "build_analysis_workbook", fail_workbook)
 
     assert analyze_execution.run_analysis_workflow(execution_dir) == 1
-    failed_path = export_dir / "analysis_output" / "analysis_report.failed.txt"
+    failed_path = (
+        export_dir
+        / "analysis_output"
+        / "logs"
+        / "compliance"
+        / "analysis_report.failed.txt"
+    )
     assert failed_path.read_text(encoding="utf-8") == "workbook failed\n"
 
 
@@ -309,6 +348,26 @@ def test_mismatched_existing_export_is_rejected(tmp_path: Path) -> None:
             EXPERIMENT_ID,
         )
 
+
+
+def test_clean_legacy_flat_analysis_outputs_preserves_readable_artifacts(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "analysis_output"
+    output_dir.mkdir()
+    (output_dir / "legacy.csv").write_text("x\n1\n", encoding="utf-8")
+    (output_dir / "legacy.txt").write_text("old\n", encoding="utf-8")
+    (output_dir / "analysis_report.xlsx").write_bytes(b"xlsx")
+    figures = output_dir / "figures"
+    figures.mkdir()
+    (figures / "figure.png").write_bytes(b"png")
+
+    analyze_execution._clean_legacy_flat_analysis_outputs(output_dir)
+
+    assert not (output_dir / "legacy.csv").exists()
+    assert not (output_dir / "legacy.txt").exists()
+    assert (output_dir / "analysis_report.xlsx").exists()
+    assert (figures / "figure.png").exists()
 
 def test_saved_command_publishes_success_output_without_echoing_stdout(
     tmp_path: Path,
@@ -363,6 +422,15 @@ def test_experiment_3_runs_registered_supplementary_interaction_analysis(
     script_root = repo_root / "analysis" / "r" / "scripts"
     execution_dir.mkdir(parents=True)
     script_root.mkdir(parents=True)
+    interaction_design = (
+        repo_root
+        / "experiments"
+        / "examples"
+        / "controlled_recovery_boundary_interaction"
+        / "interaction_analysis.yaml"
+    )
+    interaction_design.parent.mkdir(parents=True)
+    interaction_design.write_text("analysis_kind: interaction\n", encoding="utf-8")
 
     manifest = {
         "schema_version": "0.1",
@@ -385,7 +453,10 @@ def test_experiment_3_runs_registered_supplementary_interaction_analysis(
 
     def write_export() -> None:
         export_dir.mkdir(parents=True, exist_ok=True)
-        (export_dir / "runs.csv").write_text("run_id\n", encoding="utf-8")
+        (export_dir / "runs.csv").write_text(
+            "execution_selected_run_count,execution_resolved_run_count\n4,4\n",
+            encoding="utf-8",
+        )
         (export_dir / "judgments.csv").write_text("outcome\n", encoding="utf-8")
         export_manifest = {
             "schema_version": "0.1",
@@ -413,6 +484,7 @@ def test_experiment_3_runs_registered_supplementary_interaction_analysis(
         return 0
 
     base_workbooks: list[Path] = []
+    availability_workbooks: list[Path] = []
     interaction_workbooks: list[Path] = []
 
     def build_base(export_path: Path, output_path: Path) -> None:
@@ -420,14 +492,31 @@ def test_experiment_3_runs_registered_supplementary_interaction_analysis(
         base_workbooks.append(output_path)
         output_path.write_bytes(b"base")
 
-    def build_interaction(export_path: Path, output_path: Path) -> None:
+    def build_availability(export_path: Path, output_path: Path) -> None:
+        del export_path
+        availability_workbooks.append(output_path)
+        output_path.write_bytes(b"availability")
+
+    interaction_designs: list[Path] = []
+
+    def build_interaction(
+        export_path: Path,
+        output_path: Path,
+        design_path: Path,
+    ) -> None:
         del export_path
         interaction_workbooks.append(output_path)
+        interaction_designs.append(design_path)
         output_path.write_bytes(b"interaction")
 
     monkeypatch.setattr(analyze_execution, "_run_command", run_command)
     monkeypatch.setattr(analyze_execution, "_run_and_save", run_and_save)
     monkeypatch.setattr(analyze_execution, "build_analysis_workbook", build_base)
+    monkeypatch.setattr(
+        analyze_execution,
+        "build_availability_workbook",
+        build_availability,
+    )
     monkeypatch.setattr(
         analyze_execution,
         "build_interaction_workbook",
@@ -440,11 +529,19 @@ def test_experiment_3_runs_registered_supplementary_interaction_analysis(
         "analyze_uncertainty.R",
         "analyze_dimensions.R",
         "analyze_dimension_uncertainty.R",
+        "analyze_availability.R",
         "analyze_interactions.R",
     ]
     assert analysis_commands[-1][-1] == "--population-policy=strict"
-    assert analysis_commands[-1][-2] == experiment_id
+    assert (
+        Path(analysis_commands[-1][1]).name == "analyze_interactions.R"
+    )
+    assert Path(analysis_commands[-1][-2]) == interaction_design
     assert base_workbooks == [export_dir / "analysis_output" / "analysis_report.xlsx"]
+    assert availability_workbooks == [
+        export_dir / "analysis_output" / "availability_analysis.xlsx"
+    ]
     assert interaction_workbooks == [
         export_dir / "analysis_output" / "interaction_analysis.xlsx"
     ]
+    assert interaction_designs == [interaction_design]

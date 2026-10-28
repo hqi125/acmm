@@ -148,3 +148,35 @@ geometric, harmonic, or minimum. The initial implementation uses equal requireme
 refuses to renormalize over missing requirement estimates. The same scenario-to-run hierarchical
 bootstrap can now be propagated through `S_D`; dimension intervals are therefore based on replicate
 dimension scores, not on separately aggregated requirement interval endpoints.
+
+## Availability as a separate measurement layer
+
+Execution availability is now formalized downstream without changing the canonical Run Record or
+turning invalid acquisition into compliance failure. The availability layer treats the selected
+planned run slot as its denominator and reports whether the declared run protocol produced one
+selected valid attempt.
+
+This creates a deliberate separation:
+
+```text
+planned selected slot
+        |
+        +-- unavailable -> acquisition loss, operational failure diagnostics
+        |
+        `-- available valid run
+                 |
+                 `-- compliance opportunity -> compliant / violation /
+                                             unadjudicable / not_applicable
+```
+
+The R availability stage reports subject/scenario/selected-position acquisition rates,
+first-attempt and retry behavior, scenario-to-slot bootstrap intervals, and an explicit extreme-case
+missing-outcome sensitivity envelope. It writes normalized CSVs plus a separate
+`availability_analysis.xlsx` presentation workbook. The core `analysis_report.xlsx` remains focused
+on observed valid compliance estimands.
+
+Recorded `termination` and `failure_kind` fields are treated as operational surfaces rather than
+automatic causal labels. A harness-visible failure can still originate in subject behavior, so causal
+attribution requires evidence-backed diagnosis outside the availability rate itself.
+
+See `docs/analysis/availability.md` for the formal definitions and reporting rules.

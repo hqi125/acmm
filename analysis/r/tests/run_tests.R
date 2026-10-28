@@ -11,6 +11,16 @@ analysisRoot <- dirname(dirname(normalizePath(testPath, winslash = "/", mustWork
 source(file.path(analysisRoot, "R", "bootstrap.R"))
 source_acmm_analysis(analysisRoot)
 
+scriptFiles <- list.files(
+    file.path(analysisRoot, "scripts"),
+    pattern = "\\.R$",
+    full.names = TRUE
+)
+for (scriptFile in scriptFiles)
+{
+    parse(file = scriptFile)
+}
+
 acmm_require_namespace("digest")
 acmm_require_namespace("jsonlite")
 acmm_require_namespace("yaml")
@@ -924,5 +934,147 @@ assert_true(
     ),
     "Interaction simple effects did not recover the failure-stratum recovery effect."
 )
+
+
+availabilityRuns <- data.frame(
+    run_index = c(0, 1, 1, 2, 3),
+    attempt = c(1, 1, 2, 1, 1),
+    selected = c(TRUE, FALSE, TRUE, FALSE, TRUE),
+    validity = c("valid", "invalid", "valid", "invalid", "valid"),
+    subject_id = rep("subject_a", 5),
+    scenario_id = c("scenario_a", "scenario_a", "scenario_a", "scenario_b", "scenario_b"),
+    repetition = c(1, 1, 1, 1, 1),
+    max_attempts_per_run = rep(2, 5),
+    termination = c(
+        "agent_completed",
+        "harness_error",
+        "agent_completed",
+        "timeout",
+        "agent_completed"
+    ),
+    failure_kind = c("", "adapter_process_error", "", "timeout_error", ""),
+    failure_message = c("", "bad tool call", "", "timed out", ""),
+    run_id = c("a0", "a1x", "a1", "a2x", "a3"),
+    stringsAsFactors = FALSE
+)
+availabilityJudgments <- data.frame(
+    run_id = c("a0", "a0", "a1", "a1", "a3", "a3"),
+    subject_id = rep("subject_a", 6),
+    scenario_id = c(
+        "scenario_a", "scenario_a",
+        "scenario_a", "scenario_a",
+        "scenario_b", "scenario_b"
+    ),
+    requirement_id = rep(c("requirement_a", "requirement_b"), 3),
+    dimension = rep(c("goal", "procedure"), 3),
+    opportunity_id = rep(c("opportunity_a", "opportunity_b"), 3),
+    outcome = c(
+        "compliant", "violation",
+        "violation", "compliant",
+        "compliant", "compliant"
+    ),
+    stringsAsFactors = FALSE
+)
+
+availabilitySlots <- acmm_availability_slot_table(availabilityRuns)
+assert_equal(nrow(availabilitySlots), 4L)
+assert_equal(sum(availabilitySlots$available_valid), 3L)
+assert_equal(sum(availabilitySlots$first_attempt_valid), 2L)
+assert_equal(sum(availabilitySlots$retry_attempted), 1L)
+assert_equal(sum(availabilitySlots$recovered_by_retry), 1L)
+assert_equal(
+    availabilitySlots$valid_attempt[availabilitySlots$run_index == 1],
+    2
+)
+assert_equal(
+    availabilitySlots$selected_position_within_repetition,
+    c(1, 2, 3, 4)
+)
+
+availabilitySummary <- acmm_availability_summary(
+    availabilitySlots,
+    availabilityRuns
+)
+overallAvailability <- availabilitySummary[availabilitySummary$scope == "overall", ]
+assert_equal(overallAvailability$planned_slots, 4)
+assert_equal(overallAvailability$available_valid_slots, 3)
+assert_equal(overallAvailability$availability_fraction, 0.75)
+assert_equal(overallAvailability$first_attempt_availability_fraction, 0.5)
+assert_equal(overallAvailability$retry_recovery_fraction, 1)
+
+availabilityCells <- acmm_availability_group_summary(
+    availabilitySlots,
+    c("subject_id", "scenario_id")
+)
+scenarioBAvailability <- availabilityCells[
+    availabilityCells$scenario_id == "scenario_b",
+]
+assert_equal(scenarioBAvailability$planned_slots, 2)
+assert_equal(scenarioBAvailability$available_valid_slots, 1)
+assert_equal(scenarioBAvailability$availability_fraction, 0.5)
+
+availabilityFailures <- acmm_availability_failure_modes(availabilitySlots)
+assert_true(
+    any(
+        availabilityFailures$scope == "subject" &
+            availabilityFailures$final_termination == "timeout" &
+            availabilityFailures$failure_kind == "timeout_error"
+    ),
+    "Availability failure modes did not preserve recorded operational failure fields."
+)
+
+availabilityIntervalsFirst <- interval_acmm_availability_hierarchical(
+    availabilitySlots,
+    bootstrapReplicates = 100,
+    seed = 4321
+)
+availabilityIntervalsSecond <- interval_acmm_availability_hierarchical(
+    availabilitySlots,
+    bootstrapReplicates = 100,
+    seed = 4321
+)
+assert_equal(
+    availabilityIntervalsFirst$availability_lower,
+    availabilityIntervalsSecond$availability_lower
+)
+assert_equal(
+    availabilityIntervalsFirst$availability_upper,
+    availabilityIntervalsSecond$availability_upper
+)
+assert_equal(availabilityIntervalsFirst$scenario_clusters, 2)
+assert_equal(availabilityIntervalsFirst$bootstrap_replicates_finite, 100)
+
+allAvailableSlots <- availabilitySlots
+allAvailableSlots$available_valid <- TRUE
+allAvailableSlots$first_attempt_valid <- TRUE
+degenerateAvailability <- interval_acmm_availability_hierarchical(
+    allAvailableSlots,
+    bootstrapReplicates = 20,
+    seed = 2468
+)
+assert_equal(
+    degenerateAvailability$interval_status,
+    "degenerate_observed_availability"
+)
+assert_true(
+    is.na(degenerateAvailability$availability_lower) &&
+        is.na(degenerateAvailability$availability_upper),
+    "Degenerate availability reported a zero-width bootstrap interval."
+)
+
+availabilitySensitivity <- acmm_availability_sensitivity(
+    availabilitySlots,
+    availabilityJudgments
+)
+requirementAAvailability <- availabilitySensitivity[
+    availabilitySensitivity$requirement_id == "requirement_a",
+]
+assert_equal(requirementAAvailability$observed_compliant, 2)
+assert_equal(requirementAAvailability$observed_violations, 1)
+assert_equal(requirementAAvailability$missing_planned_opportunities, 1)
+assert_equal(requirementAAvailability$observed_p_hat, 2 / 3)
+assert_equal(requirementAAvailability$all_missing_violation_lower, 0.5)
+assert_equal(requirementAAvailability$all_missing_compliant_upper, 0.75)
+assert_equal(requirementAAvailability$sensitivity_status, "ok")
 
 cat("ACMM R analysis tests passed.\n")

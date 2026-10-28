@@ -7,31 +7,51 @@ command surfaces.
 ## `analyze_execution.py`
 
 Runs the repository analysis workflow for a completed execution and coordinates the canonical
-CSV export with the R analysis stages. The workflow writes requirement estimates, requirement
-hierarchical intervals, dimension scores, and dimension hierarchical intervals as both readable text
-reports and normalized CSV tables under the execution export's `analysis_output/` directory. A final
-presentation stage builds `analysis_report.xlsx` with an Overview, the four normalized analysis tables,
-raw Runs/Judgments sheets, and workbook metadata. The workbook is derived from the CSV outputs and does
-not replace them as analysis artifacts. The wrapper keeps report tables out of the console; terminal
-output is limited to workflow progress, output paths, warnings, and errors.
+CSV export with the R analysis stages. The user-facing workflow is strict-first and autonomous:
+when every selected planned run resolved, compliance analysis uses the strict population. When the
+execution is incomplete, the wrapper emits a non-blocking warning and automatically falls back to
+the available-valid compliance population. Invalid or missing runs are never converted into
+compliance failures, and arbitrary R/schema/integrity errors never trigger fallback.
 
-The default analysis population policy is `strict`: every selected planned run must resolve before
-statistics are computed. For diagnostic or sensitivity work on a completed-but-imperfect execution,
-use `--population-policy available-valid`. That mode analyzes only selected scientifically valid runs;
-it never converts invalid harness attempts into compliance failures. It also writes
-`population_summary.csv`, `population_cell_coverage.csv`, and `population_missing_runs.csv` so the
-planned design and missing slots remain explicit in both CSV and Excel outputs.
+The general availability layer runs for every structurally valid execution regardless of whether the
+compliance population remained strict or fell back. Available-valid compliance intervals remain
+conditional on the observed valid population; the availability layer separately reports planned-slot
+acquisition, first-attempt/retry behavior, scenario and within-repetition position imbalance,
+scenario-to-slot bootstrap intervals, and a deterministic all-missing-violation to
+all-missing-compliant opportunity-level sensitivity envelope. It does not assume that missing
+observations are random. See `docs/analysis/availability.md`.
+
+Routine usage therefore requires no population option:
 
 ```text
 python tools/analyze_execution.py \
-    results/<experiment_id>/execution_<execution_id> \
-    --population-policy available-valid
+    results/<experiment_id>/execution_<execution_id>
 ```
 
-Available-valid intervals are conditional on the observed valid population. They do not model the
-unknown outcomes of missing planned runs. If missingness is condition- or subject-dependent, inspect
-the population coverage tables and use an explicit sensitivity analysis rather than treating the
-missing observations as random by default.
+The top-level `analysis_output/` directory is reserved for human-readable workbooks and the figures
+directory. Derived tables and text diagnostics are organized underneath `data/` and `logs/`:
+
+```text
+analysis_output/
+    analysis_report.xlsx
+    availability_analysis.xlsx
+    interaction_analysis.xlsx              # only when registered
+    figures/
+        interaction/*.png                  # experiment-specific when applicable
+    data/
+        compliance/*.csv
+        availability/*.csv
+        interaction/*.csv                  # only when registered
+    logs/
+        compliance/*.txt
+        availability/*.txt
+        interaction/*.txt                  # only when registered
+```
+
+`runs.csv` and `judgments.csv` remain the canonical normalized export tables one level above
+`analysis_output/`; the files under `analysis_output/data/` are derived analysis tables, not raw
+execution records. When rerunning analysis on an older export, the wrapper removes legacy flat
+`.csv`/`.txt` analysis artifacts from `analysis_output/` so the readable top level stays clean.
 
 ## `cold_start_qualification.py`
 
@@ -122,14 +142,20 @@ The runtime adapter design and qualification notes live in
 ### Supplementary experiment analysis
 
 `tools/analyze_execution.py` can run experiment-registered supplementary analyses after the stable
-core workflow. Experiment 3 (`controlled_recovery_boundary_interaction_v1`) currently registers a
-cross-dimension interaction analysis. Its outputs are deliberately separate from the core workbook:
+core workflow. Interaction analysis is a generic opt-in capability: an experiment registers an
+interaction-design specification when its scientific design calls for factorial interaction
+estimands. Experiment 3 (`controlled_recovery_boundary_interaction_v1`) is currently the first
+registered interaction design. Its outputs are deliberately separate from the core workbook:
 
 ```text
 analysis_output/analysis_report.xlsx
+analysis_output/availability_analysis.xlsx
 analysis_output/interaction_analysis.xlsx
 analysis_output/figures/interaction/*.png
 ```
 
 The standalone figures are generated by R and are also embedded in the supplementary workbook.
-Experiments without a registered supplementary analysis retain the existing core workflow unchanged.
+Experiments without a registered interaction design still receive the core compliance report and
+general availability workbook, but no interaction workbook. Experiment 4 intentionally follows this
+path: its four transition cells are analyzed through the planned Goal/Procedure/Fidelity estimands,
+not through an automatically inferred factorial interaction.

@@ -28,7 +28,7 @@ def _write_csv(
 
 
 def _write_analysis_fixture(export_dir: Path) -> None:
-    analysis_dir = export_dir / "analysis_output"
+    analysis_dir = export_dir / "analysis_output" / "data" / "compliance"
     export_dir.mkdir(parents=True)
     manifest = {
         "schema_version": "0.1",
@@ -314,7 +314,13 @@ def test_build_analysis_workbook_creates_expected_sheets(tmp_path: Path) -> None
 def test_missing_analysis_table_is_rejected(tmp_path: Path) -> None:
     export_dir = tmp_path / "execution_example"
     _write_analysis_fixture(export_dir)
-    (export_dir / "analysis_output" / "dimension_intervals.csv").unlink()
+    (
+        export_dir
+        / "analysis_output"
+        / "data"
+        / "compliance"
+        / "dimension_intervals.csv"
+    ).unlink()
 
     with pytest.raises(
         analysis_workbook_error,

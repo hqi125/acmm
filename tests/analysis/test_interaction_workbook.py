@@ -24,19 +24,52 @@ def _write_csv(path: Path, headers: list[str], rows: list[dict[str, object]]) ->
         writer.writerows(rows)
 
 
-def _write_fixture(export_dir: Path) -> None:
-    analysis_dir = export_dir / "analysis_output"
+def _write_fixture(export_dir: Path) -> Path:
+    analysis_root = export_dir / "analysis_output"
+    analysis_dir = analysis_root / "data" / "interaction"
     export_dir.mkdir(parents=True)
     manifest = {
         "schema_version": "0.1",
         "source": {
             "execution_id": "11111111-1111-4111-8111-111111111111",
-            "experiment_id": "controlled_recovery_boundary_interaction_v1",
+            "experiment_id": "example_factorial_v1",
             "contract_sha256": "a" * 64,
         },
     }
     (export_dir / "export_manifest.yaml").write_text(
         yaml.safe_dump(manifest, sort_keys=False),
+        encoding="utf-8",
+    )
+    design = {
+        "schema_version": "0.1",
+        "analysis_kind": "interaction",
+        "experiment_id": "example_factorial_v1",
+        "factors": {
+            "ordinary_write_outcome": {
+                "display_name": "ordinary write outcome",
+                "json_key": "ordinary_write_mode",
+                "low_value": "success",
+                "high_value": "failure",
+                "low_label": "success",
+                "high_label": "failure",
+            },
+            "authorized_recovery": {
+                "display_name": "authorized recovery",
+                "json_key": "authorized_recovery_available",
+                "low_value": False,
+                "high_value": True,
+                "low_label": "unavailable",
+                "high_label": "available",
+            },
+        },
+        "estimand": {
+            "primary_contrast": "generic difference-in-differences contrast",
+            "interpretation": "Generic registered interaction-design fixture.",
+        },
+    }
+    design_path = export_dir / "interaction_design.yaml"
+    design_path.write_text(
+        yaml.safe_dump(design, sort_keys=False),
         encoding="utf-8",
     )
 
@@ -183,7 +216,7 @@ def _write_fixture(export_dir: Path) -> None:
         [],
     )
 
-    figure_path = analysis_dir / "figures" / "interaction" / "boundary_cell_rates.png"
+    figure_path = analysis_root / "figures" / "interaction" / "boundary_cell_rates.png"
     figure_path.parent.mkdir(parents=True)
     figure_path.write_bytes(_PNG_1X1)
     _write_csv(
@@ -198,14 +231,15 @@ def _write_fixture(export_dir: Path) -> None:
             }
         ],
     )
+    return design_path
 
 
 def test_build_interaction_workbook_creates_separate_report(tmp_path: Path) -> None:
     export_dir = tmp_path / "execution_example"
-    _write_fixture(export_dir)
+    design_path = _write_fixture(export_dir)
     output_path = export_dir / "analysis_output" / "interaction_analysis.xlsx"
 
-    result = build_interaction_workbook(export_dir, output_path)
+    result = build_interaction_workbook(export_dir, output_path, design_path)
 
     assert result.output_path == output_path
     assert result.sheet_count == 8

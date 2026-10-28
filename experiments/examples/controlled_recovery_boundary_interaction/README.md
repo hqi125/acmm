@@ -52,10 +52,12 @@ evidence only and must remain separate from the final 180-run comparative execut
 
 ## Supplementary interaction analysis
 
-Experiment 3 registers a supplementary R analysis in addition to the general ACMM requirement and
-dimension report. Running `tools/analyze_execution.py` for this experiment therefore preserves the
-normal `analysis_report.xlsx` and also produces `interaction_analysis.xlsx` plus standalone figures
-under `analysis_output/figures/interaction/`.
+Experiment 3 registers a generic interaction-analysis capability in addition to the general ACMM
+requirement/dimension and availability layers. Its experiment-local `interaction_analysis.yaml`
+describes the two factors, estimand text, and requested R figures; the shared interaction engine does
+not hard-code this experiment ID. Running `tools/analyze_execution.py` therefore preserves the normal
+`analysis_report.xlsx` and `availability_analysis.xlsx`, and also produces
+`interaction_analysis.xlsx` plus standalone figures under `analysis_output/figures/interaction/`.
 
 The interaction workbook reports the four factorial cell rates, conditional/simple effects, and the
 primary Recovery-availability x ordinary-write-outcome risk-difference interaction for each subject

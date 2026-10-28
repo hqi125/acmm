@@ -535,7 +535,9 @@ acmm_interaction_plot_cells <- function(
     interactionData,
     dimensionName,
     outputPath,
-    title
+    title,
+    factorADisplayName = NULL,
+    factorBDisplayName = NULL
 )
 {
     rows <- cellEstimates$dimension == dimensionName
@@ -550,6 +552,14 @@ acmm_interaction_plot_cells <- function(
     factorBName <- factorNames[[2]]
     factorA <- interactionData$factor_spec[[factorAName]]
     factorB <- interactionData$factor_spec[[factorBName]]
+    if (is.null(factorADisplayName))
+    {
+        factorADisplayName <- factorAName
+    }
+    if (is.null(factorBDisplayName))
+    {
+        factorBDisplayName <- factorBName
+    }
     subjects <- unique(data$subject_id)
 
     dir.create(dirname(outputPath), recursive = TRUE, showWarnings = FALSE)
@@ -575,7 +585,7 @@ acmm_interaction_plot_cells <- function(
             c(0, 1),
             type = "n",
             xaxt = "n",
-            xlab = "Ordinary write outcome",
+            xlab = factorADisplayName,
             ylab = "Observed compliance rate",
             main = subjectId,
             ylim = c(0, 1)
@@ -619,7 +629,7 @@ acmm_interaction_plot_cells <- function(
             legend = c(factorB$low_label, factorB$high_label),
             pch = c(16, 17),
             lty = c(1, 2),
-            title = "Authorized recovery",
+            title = factorBDisplayName,
             bty = "n"
         )
     }
@@ -627,7 +637,11 @@ acmm_interaction_plot_cells <- function(
     TRUE
 }
 
-acmm_interaction_plot_contrasts <- function(interactionTable, outputPath)
+acmm_interaction_plot_contrasts <- function(
+    interactionTable,
+    outputPath,
+    title = "Interaction contrasts"
+)
 {
     estimable <- interactionTable[is.finite(interactionTable$interaction_risk_difference), , drop = FALSE]
     if (nrow(estimable) == 0)
@@ -650,7 +664,7 @@ acmm_interaction_plot_contrasts <- function(interactionTable, outputPath)
         xlab = "Interaction risk difference",
         ylab = "",
         pch = 16,
-        main = "Recovery x ordinary-write interaction contrasts"
+        main = title
     )
     graphics::axis(2, at = y, labels = labels, las = 2, cex.axis = 0.75)
     graphics::abline(v = 0, lty = 2)

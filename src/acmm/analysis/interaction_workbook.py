@@ -1,4 +1,4 @@
-"""Excel presentation for Experiment 3 interaction analysis outputs."""
+"""Excel presentation for registered interaction analysis outputs."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from acmm.analysis.layout import INTERACTION_SCOPE, analysis_data_dir
 
 
 INTERACTION_WORKBOOK_NAME = "interaction_analysis.xlsx"
@@ -85,9 +87,11 @@ class _csv_table:
 def build_interaction_workbook(
     export_dir: str | Path,
     output_path: str | Path | None = None,
+    design_path: str | Path | None = None,
 ) -> interaction_workbook_result:
     source_dir = Path(export_dir)
     analysis_dir = source_dir / "analysis_output"
+    data_dir = analysis_data_dir(source_dir, INTERACTION_SCOPE)
     target_path = (
         Path(output_path)
         if output_path is not None
@@ -102,17 +106,21 @@ def build_interaction_workbook(
         )
 
     experiment_id = source.get("experiment_id")
-    if experiment_id != "controlled_recovery_boundary_interaction_v1":
+    if not isinstance(experiment_id, str) or not experiment_id:
         raise interaction_workbook_error(
-            "Interaction workbook currently supports only "
-            "controlled_recovery_boundary_interaction_v1."
+            "Export manifest must define a non-empty source.experiment_id."
         )
+    if design_path is None:
+        raise interaction_workbook_error(
+            "Interaction workbook requires a registered interaction design path."
+        )
+    design = _load_interaction_design(Path(design_path), experiment_id)
 
     tables = {
-        sheet_name: _load_csv_table(analysis_dir / file_name)
+        sheet_name: _load_csv_table(data_dir / file_name)
         for sheet_name, file_name, _ in _TABLES
     }
-    figure_manifest = _load_csv_table(analysis_dir / "interaction_figures.csv")
+    figure_manifest = _load_csv_table(data_dir / "interaction_figures.csv")
 
     try:
         import xlsxwriter
@@ -130,7 +138,7 @@ def build_interaction_workbook(
         workbook.set_properties(
             {
                 "title": "ACMM Interaction Analysis",
-                "subject": "Experiment 3 cross-dimension interaction analysis",
+                "subject": "Registered cross-dimension interaction analysis",
                 "author": "ACMM",
                 "comments": (
                     "Supplementary workbook generated from R interaction analysis "
@@ -150,7 +158,7 @@ def build_interaction_workbook(
                 formats,
             )
 
-        _write_overview(overview, source, tables, formats)
+        _write_overview(overview, source, design, tables, formats)
         _write_figures_sheet(workbook, analysis_dir, figure_manifest, formats)
         workbook.close()
         temp_path.replace(target_path)
@@ -195,6 +203,55 @@ def _load_csv_table(path: Path) -> _csv_table:
         ) from exc
 
 
+def _load_interaction_design(path: Path, experiment_id: str) -> dict[str, Any]:
+    design = _load_yaml_mapping(path, "interaction design")
+    if design.get("analysis_kind") != "interaction":
+        raise interaction_workbook_error(
+            "Interaction design analysis_kind must be 'interaction'."
+        )
+    if design.get("experiment_id") != experiment_id:
+        raise interaction_workbook_error(
+            "Interaction design experiment_id does not match the export manifest."
+        )
+
+    factors = design.get("factors")
+    if not isinstance(factors, dict) or len(factors) != 2:
+        raise interaction_workbook_error(
+            "Interaction design must define exactly two factors."
+        )
+    for factor_name, factor in factors.items():
+        if not isinstance(factor, dict):
+            raise interaction_workbook_error(
+                f"Interaction factor '{factor_name}' must be a mapping."
+            )
+        for field in ("display_name", "low_label", "high_label"):
+            value = factor.get(field)
+            if not isinstance(value, str) or not value:
+                raise interaction_workbook_error(
+                    f"Interaction factor '{factor_name}' requires non-empty '{field}'."
+                )
+
+    estimand = design.get("estimand")
+    if not isinstance(estimand, dict):
+        raise interaction_workbook_error(
+            "Interaction design must define an estimand mapping."
+        )
+    for field in ("primary_contrast", "interpretation"):
+        value = estimand.get(field)
+        if not isinstance(value, str) or not value:
+            raise interaction_workbook_error(
+                f"Interaction estimand requires non-empty '{field}'."
+            )
+    return design
+
+
+def _factor_summary(name: str, factor: dict[str, Any]) -> str:
+    display_name = str(factor.get("display_name", name))
+    return (
+        f"{display_name}: {factor['low_label']} -> {factor['high_label']}"
+    )
+
+
 def _create_formats(workbook: Any) -> dict[str, Any]:
     return {
         "title": workbook.add_format({"bold": True, "font_size": 18}),
@@ -212,9 +269,15 @@ def _create_formats(workbook: Any) -> dict[str, Any]:
 def _write_overview(
     worksheet: Any,
     source: dict[str, Any],
+    design: dict[str, Any],
     tables: dict[str, _csv_table],
     formats: dict[str, Any],
 ) -> None:
+    factors = list(design["factors"].items())
+    factor_a_name, factor_a = factors[0]
+    factor_b_name, factor_b = factors[1]
+    estimand = design["estimand"]
+
     worksheet.set_column("A:A", 31)
     worksheet.set_column("B:B", 72)
     worksheet.write("A1", "ACMM Interaction Analysis", formats["title"])
@@ -223,25 +286,25 @@ def _write_overview(
     worksheet.write("A4", "Execution", formats["label"])
     worksheet.write("B4", str(source.get("execution_id", "")))
     worksheet.write("A6", "Factor A", formats["label"])
-    worksheet.write("B6", "ordinary write outcome: success -> failure")
+    worksheet.write(
+        "B6",
+        _factor_summary(factor_a_name, factor_a),
+    )
     worksheet.write("A7", "Factor B", formats["label"])
-    worksheet.write("B7", "authorized recovery: unavailable -> available")
+    worksheet.write(
+        "B7",
+        _factor_summary(factor_b_name, factor_b),
+    )
     worksheet.write("A9", "Primary contrast", formats["label"])
     worksheet.write(
         "B9",
-        "[recovery-availability effect under write failure] - "
-        "[recovery-availability effect under write success]",
+        str(estimand["primary_contrast"]),
         formats["note"],
     )
     worksheet.write("A11", "Interpretation", formats["section"])
     worksheet.merge_range(
         "A12:B15",
-        "The interaction is reported on the compliance-probability risk-difference "
-        "scale. Goal is not a complete 2 x 2 outcome because the failure/no-recovery "
-        "cell is intentionally not applicable. Interaction uncertainty uses a "
-        "repetition-block percentile bootstrap when observed outcomes vary. A fully "
-        "degenerate observed outcome is reported without a zero-width bootstrap "
-        "interval.",
+        str(estimand["interpretation"]),
         formats["note"],
     )
 

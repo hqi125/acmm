@@ -12,6 +12,10 @@ The analysis layer currently implements:
 
 - validated export ingestion;
 - construction of the selected valid statistical population;
+- planned-slot availability analysis with first-attempt/retry diagnostics;
+- subject/scenario/within-repetition-position availability summaries;
+- scenario-to-slot hierarchical availability intervals;
+- extreme-case opportunity-level missing-outcome sensitivity envelopes;
 - opportunity-, run-, and scenario-weighted compliance estimands;
 - coverage for the same three weighting hierarchies;
 - explicit Wilson score intervals for independent-binomial opportunity reporting;
@@ -63,12 +67,13 @@ valid runs, and reports exact missing planned slots plus per-subject/scenario ac
 Invalid attempts remain available in `population$excluded_attempts`; they are never converted into
 compliance violations or silently deleted.
 
-Bootstrap intervals under `available-valid` are conditional on the observed valid population. They
-quantify sampling variation among available observations but do not model the unknown outcomes of
-missing planned runs. If missingness is related to subject behavior or experimental condition, pooled
-estimates may be biased; inspect `population_cell_coverage.csv` and
-`population_missing_runs.csv` and use an explicit sensitivity analysis rather than assuming the
-missing observations are random.
+Compliance bootstrap intervals under `available-valid` are conditional on the observed valid
+population. They quantify sampling variation among available observations but do not model the unknown
+outcomes of missing planned runs. The general availability stage addresses this separately: it retains
+the planned-slot denominator, reports first-attempt/retry acquisition behavior and imbalance, and
+constructs an explicit all-missing-violation to all-missing-compliant opportunity-level sensitivity
+envelope. The envelope is not a confidence interval and does not assume missing-at-random. See
+`docs/analysis/availability.md`.
 
 ## Compliance semantics
 
@@ -250,7 +255,26 @@ Rscript analysis/r/scripts/analyze_dimension_uncertainty.R \
     0.95
 ```
 
-The repository wrapper also asks each R stage to write a normalized CSV table beside its text report:
+General availability analysis:
+
+```text
+Rscript analysis/r/scripts/analyze_availability.R \
+    exports/<experiment_id>/execution_<execution_id> \
+    2000 \
+    12345 \
+    0.95 \
+    exports/<experiment_id>/execution_<execution_id>/analysis_output \
+    --population-policy=available-valid
+```
+
+The availability script writes slot, cell, selected-position, failure-mode, retry/attempt, interval,
+and opportunity-level sensitivity tables under `analysis_output/data/availability/`. For a fully
+resolved execution, `strict` is also valid. The population option remains available on the standalone
+R scripts for diagnostics; routine repository analysis resolves the population automatically.
+
+The repository wrapper asks the compliance R stages to write normalized tables under
+`analysis_output/data/compliance/` and captures their readable text output under
+`analysis_output/logs/compliance/`:
 
 ```text
 requirement_estimates.csv
@@ -274,40 +298,49 @@ python tools/analyze_execution.py \
     results/<experiment_id>/execution_<execution_id>
 ```
 
-For an incomplete execution that should remain analyzable as an observed valid population:
-
-```text
-python tools/analyze_execution.py \
-    results/<experiment_id>/execution_<execution_id> \
-    --population-policy available-valid
-```
+No population option is required for routine use. The wrapper first attempts the strict population
+semantically: if the export reports that every selected planned run resolved, strict analysis is used.
+Otherwise it emits a warning and automatically uses available-valid compliance analysis. This
+fallback is specific to incomplete acquisition; integrity, schema, dependency, or estimator failures
+remain fatal.
 
 The wrapper does not implement statistics and is not part of the `acmm` CLI. It follows repository
 storage conventions to:
 
 1. run `acmm export` when the canonical export does not already exist;
 2. verify and safely reuse a matching existing export when rerunning after an analysis-stage failure;
-3. run requirement point estimates, requirement uncertainty, dimension point scores, and dimension
+3. resolve strict versus available-valid compliance population automatically;
+4. run requirement point estimates, requirement uncertainty, dimension point scores, and dimension
    uncertainty in order;
-4. stop immediately when any stage fails;
-5. store both human-readable text output and normalized analysis CSV tables under
-   `<export-directory>/analysis_output/`; and
-6. build `analysis_report.xlsx` from the normalized analysis tables plus `runs.csv` and
-   `judgments.csv`.
+5. run the general availability analysis for every structurally valid execution;
+6. store derived CSV tables under `analysis_output/data/<layer>/` and text diagnostics under
+   `analysis_output/logs/<layer>/`;
+7. build `analysis_report.xlsx` and `availability_analysis.xlsx` directly under `analysis_output/`;
+   and
+8. run/build registered supplementary analyses without changing the core compliance estimators.
 
 The current analysis protocol is intentionally fixed in this research tool at 2,000 hierarchical
 bootstrap replicates, seed 12,345, and confidence level 0.95. Statistical calculations remain entirely
 inside the R analysis subsystem.
 
-## Experiment-specific supplementary analysis
+## Registered supplementary analysis
 
 The core analysis workflow remains intentionally stable and writes
-`analysis_output/analysis_report.xlsx`. Experiments may register a separate supplementary analysis
+`analysis_output/analysis_report.xlsx`. Availability is a general companion layer and writes
+`analysis_output/availability_analysis.xlsx` for every experiment. Experiments may additionally
+register a separate supplementary analysis
 when their scientific design requires estimands that do not belong in the general ACMM workbook.
 Supplementary outputs must not silently change the core requirement/dimension estimators.
 
-`controlled_recovery_boundary_interaction_v1` registers the first supplementary analysis. Its R
-stage writes:
+Interaction analysis is implemented as a generic, experiment-registered supplementary capability.
+The experiment supplies a small `interaction_analysis.yaml` design specification that defines the two
+factors, their environment-configuration bindings, the primary contrast text, and any figures worth
+generating. The R interaction engine and workbook consume that specification instead of hard-coding
+a particular experiment.
+
+`controlled_recovery_boundary_interaction_v1` registers the first interaction design. Its R stage
+writes derived tables under `analysis_output/data/interaction/` and figures under
+`analysis_output/figures/interaction/`:
 
 ```text
 interaction_population_summary.csv
@@ -345,6 +378,12 @@ interaction remains reportable but the nonparametric bootstrap interval is marke
 `degenerate_observed_outcome` rather than presenting a zero-width interval as strong uncertainty
 evidence.
 
-Figures are generated in R with base graphics so the statistical population and visualization path
-share the same filtering and factor construction. Excel-native charts remain an acceptable fallback
-for future analyses, but statistical figures should prefer the R path when practical.
+Figures are optional and are generated only when the registered interaction design requests them.
+When figures are useful, they are generated in R with base graphics so the statistical population and
+visualization path share the same filtering and factor construction. Excel-native charts remain an
+acceptable fallback for future analyses, but statistical figures should prefer the R path when
+practical.
+
+An experiment does not receive interaction analysis merely because it has multiple scenarios or
+dimensions. It must register a scientifically justified interaction design. This is why Experiment 4
+receives the general compliance and availability layers but no interaction workbook.

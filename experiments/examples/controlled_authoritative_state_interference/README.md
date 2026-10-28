@@ -1,9 +1,9 @@
 # Controlled Authoritative-State Interference
 
-`controlled_authoritative_state_interference_v1` is the initial Experiment 4
-qualification contract. It studies whether an earlier valid authoritative
-observation continues to influence an agent after a newer authoritative
-revision becomes available before action.
+`controlled_authoritative_state_interference_v1` is ACMM's frozen Experiment 4
+contract. It studies whether an earlier valid authoritative observation continues
+to influence an agent after a newer authoritative revision becomes available
+before action.
 
 ## Controlled state transition
 
@@ -38,11 +38,16 @@ This separation permits informative mixed outcomes. For example, an agent may
 skip revalidation but coincidentally leave the correct value in a stable cell,
 or it may make a stale write while accurately admitting the resulting mismatch.
 
-## Qualification status
+## Canonical acquisition
 
-The current Contract uses four repetitions with cyclic scenario rotation. This
-is an engineering/qualification setting chosen so each scenario occupies every
-within-repetition position exactly once for each subject. It is **not yet the
-frozen Experiment 4 sample size**. The canonical repetition count should be
-selected only after the stateful tool apparatus is implemented and live pilots
-confirm the intended behavior across all three subjects.
+The frozen Contract uses four repetitions with cyclic scenario rotation, giving
+16 planned runs per subject and 48 planned runs overall. The canonical execution
+resolved 44 of those 48 planned opportunities; the four unavailable observations
+are retained as availability outcomes rather than repaired post hoc.
+
+Experiment 4 does **not** register supplementary interaction analysis. Although
+its four transition cells can be described using two binary properties, the
+planned scientific estimands for this experiment are the separate Goal, Procedure,
+and Fidelity outcomes under authoritative-state interference. Interaction analysis
+is opt-in through an experiment-local interaction-design specification and is not
+automatically inferred from scenario count or apparent factorial structure.

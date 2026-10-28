@@ -606,7 +606,9 @@ population before computing opportunity-, run-, and scenario-weighted compliance
 `strict` population policy requires every selected planned slot to resolve. An explicit
 `available-valid` policy supports postmortem/sensitivity analysis of imperfect executions while
 keeping acquisition coverage and exact missing planned slots visible; invalid harness attempts are
-missing observations, not compliance failures.
+missing observations, not compliance failures. A separate general availability layer now formalizes
+planned-slot acquisition, first-attempt/retry behavior, scenario/position imbalance, hierarchical
+availability intervals, and explicit missing-outcome sensitivity envelopes.
 Requirement-level grouping is the default. The current analysis layer also implements
 scenario-to-run hierarchical bootstrap intervals, explicit dimension-level `S_D` scores with
 arithmetic, geometric, harmonic, and minimum aggregation, and hierarchical uncertainty propagated
@@ -626,17 +628,22 @@ python tools/analyze_execution.py \
     results/<experiment_id>/execution_<execution_id>
 ```
 
-The wrapper performs or reuses the deterministic CSV export, then runs requirement point
-estimates, requirement hierarchical uncertainty, dimension scores, and dimension hierarchical
-uncertainty in sequence. Each statistical stage stores both readable text and a normalized CSV table
-under `analysis_output/`. A final Python presentation stage generates `analysis_report.xlsx` from those
-normalized tables plus `runs.csv` and `judgments.csv`. The workbook is for human exploration; the CSV
-analysis tables, export manifest, and canonical experiment records retain their existing authority. The
-individual R scripts remain available for interactive R/RStudio work; see `analysis/r/README.md`.
-For incomplete executions, pass `--population-policy available-valid` to the wrapper. The resulting
-analysis is conditional on observed valid runs and reports the missing planned population explicitly.
+The wrapper performs or reuses the deterministic CSV export, then resolves the compliance
+population automatically. Complete acquisitions use the strict population. Incomplete acquisitions
+produce a non-blocking warning and fall back to the available-valid population; unrelated analysis
+errors still stop the workflow. Requirement point estimates, hierarchical uncertainty, dimension
+scores, and dimension hierarchical uncertainty then run under that resolved population. The general
+availability analysis runs for every structurally valid execution and remains a separate measurement
+layer.
 
-See `docs/analysis/boundary.md`, `docs/analysis/export.md`, and `analysis/r/README.md`.
+Human-readable workbooks stay directly under `analysis_output/`, R-generated figures stay under
+`analysis_output/figures/`, derived CSV tables are organized under `analysis_output/data/`, and text
+diagnostics are organized under `analysis_output/logs/`. `runs.csv` and `judgments.csv` remain the
+canonical normalized export tables one level above. The individual R scripts remain available for
+interactive R/RStudio work; see `analysis/r/README.md`.
+
+See `docs/analysis/boundary.md`, `docs/analysis/export.md`, `docs/analysis/availability.md`, and
+`analysis/r/README.md`.
 
 ## First concrete pilot: Hermes magic number
 

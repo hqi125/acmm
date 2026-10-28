@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import importlib.util
 from pathlib import Path
 import shutil
@@ -10,10 +11,23 @@ from typing import Any, Sequence
 
 import yaml
 
+from acmm.analysis.availability_workbook import (
+    AVAILABILITY_WORKBOOK_NAME,
+    availability_workbook_error,
+    build_availability_workbook,
+)
 from acmm.analysis.interaction_workbook import (
     INTERACTION_WORKBOOK_NAME,
     build_interaction_workbook,
     interaction_workbook_error,
+)
+from acmm.analysis.layout import (
+    AVAILABILITY_SCOPE,
+    COMPLIANCE_SCOPE,
+    INTERACTION_SCOPE,
+    analysis_data_dir,
+    analysis_log_dir,
+    analysis_output_dir,
 )
 from acmm.analysis.supplementary import get_supplementary_analysis
 from acmm.analysis.workbook import (
@@ -26,12 +40,18 @@ from acmm.analysis.workbook import (
 BOOTSTRAP_REPLICATES = 2000
 BOOTSTRAP_SEED = 12345
 CONFIDENCE_LEVEL = 0.95
-BASE_TOTAL_STAGES = 6
-POPULATION_POLICIES = ("strict", "available-valid")
+MAIN_WORKBOOK_STAGE = 6
+AVAILABILITY_ANALYSIS_STAGE = 7
+AVAILABILITY_WORKBOOK_STAGE = 8
+BASE_TOTAL_STAGES = AVAILABILITY_WORKBOOK_STAGE
+STRICT_POLICY = "strict"
+AVAILABLE_VALID_POLICY = "available-valid"
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _EXPORT_ROOT = _REPO_ROOT / "exports"
 _R_SCRIPT_ROOT = _REPO_ROOT / "analysis" / "r" / "scripts"
+_AVAILABILITY_SCRIPT_NAME = "analyze_availability.R"
+
 _R_STAGES = (
     (
         "Requirement estimates",
@@ -151,6 +171,7 @@ def _preflight(supplementary_script_name: str | None = None) -> tuple[str, str]:
         )
 
     script_names = [stage[1] for stage in _R_STAGES]
+    script_names.append(_AVAILABILITY_SCRIPT_NAME)
     if supplementary_script_name is not None:
         script_names.append(supplementary_script_name)
 
@@ -191,6 +212,64 @@ def _validate_reusable_export(
         raise analysis_workflow_error(
             "Existing export does not match the requested execution."
         )
+
+
+def _resolve_population_policy(export_dir: Path) -> tuple[str, int, int]:
+    runs_path = export_dir / "runs.csv"
+
+    try:
+        with runs_path.open("r", encoding="utf-8", newline="") as file:
+            reader = csv.DictReader(file)
+            required = {
+                "execution_selected_run_count",
+                "execution_resolved_run_count",
+            }
+            if reader.fieldnames is None or not required.issubset(reader.fieldnames):
+                raise analysis_workflow_error(
+                    "runs.csv is missing execution population count columns required "
+                    "for automatic strict-first population resolution."
+                )
+
+            selected_values: set[int] = set()
+            resolved_values: set[int] = set()
+            for row in reader:
+                try:
+                    selected_values.add(int(row["execution_selected_run_count"]))
+                    resolved_values.add(int(row["execution_resolved_run_count"]))
+                except (TypeError, ValueError) as exc:
+                    raise analysis_workflow_error(
+                        "runs.csv contains invalid execution population counts."
+                    ) from exc
+    except OSError as exc:
+        raise analysis_workflow_error(
+            f"Could not inspect analysis population in '{runs_path}': {exc}"
+        ) from exc
+
+    if len(selected_values) != 1 or len(resolved_values) != 1:
+        raise analysis_workflow_error(
+            "runs.csv must contain one consistent selected/resolved run-count pair."
+        )
+
+    selected_count = next(iter(selected_values))
+    resolved_count = next(iter(resolved_values))
+    if selected_count == resolved_count:
+        return STRICT_POLICY, selected_count, resolved_count
+
+    return AVAILABLE_VALID_POLICY, selected_count, resolved_count
+
+
+def _clean_legacy_flat_analysis_outputs(output_dir: Path) -> None:
+    if not output_dir.is_dir():
+        return
+
+    for path in output_dir.iterdir():
+        if path.is_file() and path.suffix.lower() in {".csv", ".txt"}:
+            try:
+                path.unlink()
+            except OSError as exc:
+                raise analysis_workflow_error(
+                    f"Could not remove legacy analysis artifact '{path}': {exc}"
+                ) from exc
 
 
 def _run_command(command: Sequence[str]) -> int:
@@ -274,16 +353,7 @@ def _run_and_save(command: Sequence[str], output_path: Path) -> int:
 
 def run_analysis_workflow(
     execution: str | Path,
-    *,
-    population_policy: str = "strict",
 ) -> int:
-    if population_policy not in POPULATION_POLICIES:
-        raise analysis_workflow_error(
-            "population_policy must be one of: "
-            + ", ".join(POPULATION_POLICIES)
-            + "."
-        )
-
     execution_dir = Path(execution).expanduser().resolve()
 
     if not execution_dir.is_dir():
@@ -293,11 +363,21 @@ def run_analysis_workflow(
 
     execution_id, experiment_id = _load_execution_identity(execution_dir)
     supplementary = get_supplementary_analysis(experiment_id)
+    supplementary_design_path = (
+        _REPO_ROOT / supplementary.design_path
+        if supplementary is not None
+        else None
+    )
     total_stages = BASE_TOTAL_STAGES + (2 if supplementary is not None else 0)
     if supplementary is None:
         acmm_command, rscript_command = _preflight()
     else:
         acmm_command, rscript_command = _preflight(supplementary.script_name)
+        if supplementary_design_path is None or not supplementary_design_path.is_file():
+            raise analysis_workflow_error(
+                "Registered supplementary analysis design is missing: "
+                f"'{supplementary_design_path}'."
+            )
     export_dir = _EXPORT_ROOT / experiment_id / f"execution_{execution_id}"
 
     if export_dir.exists():
@@ -326,7 +406,33 @@ def run_analysis_workflow(
 
         _validate_reusable_export(export_dir, execution_id, experiment_id)
 
-    analysis_output_dir = export_dir / "analysis_output"
+    output_dir = analysis_output_dir(export_dir)
+    _clean_legacy_flat_analysis_outputs(output_dir)
+    compliance_data_dir = analysis_data_dir(export_dir, COMPLIANCE_SCOPE)
+    compliance_log_dir = analysis_log_dir(export_dir, COMPLIANCE_SCOPE)
+    availability_log_dir = analysis_log_dir(export_dir, AVAILABILITY_SCOPE)
+    interaction_log_dir = analysis_log_dir(export_dir, INTERACTION_SCOPE)
+
+    population_policy, selected_count, resolved_count = _resolve_population_policy(
+        export_dir
+    )
+    if population_policy == STRICT_POLICY:
+        print(
+            "      population: strict "
+            f"({resolved_count}/{selected_count} selected planned runs resolved)"
+        )
+    else:
+        print(
+            "WARNING: strict population is unavailable: "
+            f"{resolved_count}/{selected_count} selected planned runs resolved.",
+            file=sys.stderr,
+        )
+        print(
+            "WARNING: falling back automatically to available-valid compliance "
+            "analysis; missing planned runs remain explicit and availability "
+            "analysis will run separately.",
+            file=sys.stderr,
+        )
 
     for stage_index, (
         label,
@@ -338,8 +444,8 @@ def run_analysis_workflow(
         _R_STAGES,
         start=2,
     ):
-        output_path = analysis_output_dir / output_name
-        csv_output_path = analysis_output_dir / csv_output_name
+        output_path = compliance_log_dir / output_name
+        csv_output_path = compliance_data_dir / csv_output_name
         command = (
             rscript_command,
             str(_R_SCRIPT_ROOT / script_name),
@@ -367,16 +473,17 @@ def run_analysis_workflow(
         print(f"      output: {output_path}")
         print(f"      table:  {csv_output_path}")
 
-    analysis_output_dir.mkdir(parents=True, exist_ok=True)
-    workbook_path = analysis_output_dir / WORKBOOK_NAME
-    workbook_failed_path = analysis_output_dir / "analysis_report.failed.txt"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    workbook_path = output_dir / WORKBOOK_NAME
+    workbook_failed_path = compliance_log_dir / "analysis_report.failed.txt"
     workbook_failed_path.unlink(missing_ok=True)
-    print(f"[{BASE_TOTAL_STAGES}/{total_stages}] Building Excel report...")
+    print(f"[{MAIN_WORKBOOK_STAGE}/{total_stages}] Building Excel report...")
 
     try:
         build_analysis_workbook(export_dir, workbook_path)
     except analysis_workbook_error as exc:
         try:
+            workbook_failed_path.parent.mkdir(parents=True, exist_ok=True)
             workbook_failed_path.write_text(
                 f"{exc}\n",
                 encoding="utf-8",
@@ -392,10 +499,51 @@ def run_analysis_workflow(
 
     print(f"      output: {workbook_path}")
 
+    availability_stage = AVAILABILITY_ANALYSIS_STAGE
+    availability_output = availability_log_dir / "availability_analysis.txt"
+    availability_command = (
+        rscript_command,
+        str(_R_SCRIPT_ROOT / _AVAILABILITY_SCRIPT_NAME),
+        str(export_dir),
+        str(BOOTSTRAP_REPLICATES),
+        str(BOOTSTRAP_SEED),
+        str(CONFIDENCE_LEVEL),
+        str(output_dir),
+        f"--population-policy={population_policy}",
+    )
+    print(f"[{availability_stage}/{total_stages}] Running availability analysis...")
+    return_code = _run_and_save(availability_command, availability_output)
+    if return_code != 0:
+        print(
+            f"ERROR: {_AVAILABILITY_SCRIPT_NAME} failed with exit code "
+            f"{return_code}.",
+            file=sys.stderr,
+        )
+        print(
+            f"Failed output: {_failed_output_path(availability_output)}",
+            file=sys.stderr,
+        )
+        print("Analysis stopped.", file=sys.stderr)
+        return return_code if return_code > 0 else 1
+    print(f"      output: {availability_output}")
+
+    availability_workbook_path = output_dir / AVAILABILITY_WORKBOOK_NAME
+    print(
+        f"[{AVAILABILITY_WORKBOOK_STAGE}/{total_stages}] "
+        "Building availability workbook..."
+    )
+    try:
+        build_availability_workbook(export_dir, availability_workbook_path)
+    except availability_workbook_error as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        print("Analysis stopped.", file=sys.stderr)
+        return 1
+    print(f"      output: {availability_workbook_path}")
+
     interaction_workbook_path = None
     if supplementary is not None:
         supplementary_stage = BASE_TOTAL_STAGES + 1
-        supplementary_output = analysis_output_dir / supplementary.text_output_name
+        supplementary_output = interaction_log_dir / supplementary.text_output_name
         supplementary_command = (
             rscript_command,
             str(_R_SCRIPT_ROOT / supplementary.script_name),
@@ -403,8 +551,8 @@ def run_analysis_workflow(
             str(BOOTSTRAP_REPLICATES),
             str(BOOTSTRAP_SEED),
             str(CONFIDENCE_LEVEL),
-            str(analysis_output_dir),
-            experiment_id,
+            str(output_dir),
+            str(supplementary_design_path),
             f"--population-policy={population_policy}",
         )
         print(
@@ -426,10 +574,14 @@ def run_analysis_workflow(
             return return_code if return_code > 0 else 1
         print(f"      output: {supplementary_output}")
 
-        interaction_workbook_path = analysis_output_dir / INTERACTION_WORKBOOK_NAME
+        interaction_workbook_path = output_dir / INTERACTION_WORKBOOK_NAME
         print(f"[{total_stages}/{total_stages}] Building interaction workbook...")
         try:
-            build_interaction_workbook(export_dir, interaction_workbook_path)
+            build_interaction_workbook(
+                export_dir,
+                interaction_workbook_path,
+                supplementary_design_path,
+            )
         except interaction_workbook_error as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             print("Analysis stopped.", file=sys.stderr)
@@ -439,10 +591,14 @@ def run_analysis_workflow(
     print("\nAnalysis workflow completed successfully.")
     print(f"  execution:       {execution_id}")
     print(f"  experiment:      {experiment_id}")
-    print(f"  population:      {population_policy}")
+    population_label = population_policy
+    if population_policy == AVAILABLE_VALID_POLICY:
+        population_label += " (automatic fallback)"
+    print(f"  population:      {population_label}")
     print(f"  export:          {export_dir}")
-    print(f"  analysis output: {analysis_output_dir}")
+    print(f"  analysis output: {output_dir}")
     print(f"  Excel report:    {workbook_path}")
+    print(f"  Availability:    {availability_workbook_path}")
     if interaction_workbook_path is not None:
         print(f"  Interaction:     {interaction_workbook_path}")
     return 0
@@ -455,23 +611,10 @@ def main() -> int:
         )
     )
     parser.add_argument("execution", help="Path to a completed execution_<id> directory.")
-    parser.add_argument(
-        "--population-policy",
-        choices=POPULATION_POLICIES,
-        default="strict",
-        help=(
-            "Analysis population policy. 'strict' requires every selected planned "
-            "run to resolve; 'available-valid' analyzes selected scientifically valid "
-            "runs and reports missing planned slots explicitly."
-        ),
-    )
     args = parser.parse_args()
 
     try:
-        return run_analysis_workflow(
-            args.execution,
-            population_policy=args.population_policy,
-        )
+        return run_analysis_workflow(args.execution)
     except KeyboardInterrupt:
         print("\nAnalysis interrupted by user.", file=sys.stderr)
         return 130

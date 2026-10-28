@@ -21,7 +21,7 @@ if (length(arguments) != 6)
     stop(
         paste0(
             "Usage: Rscript analyze_interactions.R <export-dir> <bootstrap-replicates> ",
-            "<seed> <confidence-level> <output-dir> <experiment-id> ",
+            "<seed> <confidence-level> <output-dir> <interaction-design> ",
             "[--population-policy=strict|available-valid]"
         )
     )
@@ -31,39 +31,103 @@ exportDir <- arguments[[1]]
 bootstrapReplicates <- as.numeric(arguments[[2]])
 seed <- as.numeric(arguments[[3]])
 confidenceLevel <- as.numeric(arguments[[4]])
-outputDir <- arguments[[5]]
-experimentId <- arguments[[6]]
+outputRoot <- arguments[[5]]
+dataDir <- file.path(outputRoot, "data", "interaction")
+designPath <- arguments[[6]]
 
-supportedExperiment <- "controlled_recovery_boundary_interaction_v1"
+acmm_require_namespace("yaml")
 acmm_assert(
-    identical(experimentId, supportedExperiment),
-    paste0(
-        "Interaction analysis currently supports only '", supportedExperiment,
-        "'; received '", experimentId, "'."
-    ),
+    file.exists(designPath),
+    paste0("Interaction design file does not exist: '", designPath, "'."),
+    "acmm_input_error"
+)
+design <- yaml::read_yaml(designPath)
+acmm_assert(
+    is.list(design),
+    "Interaction design must contain a YAML mapping.",
+    "acmm_interaction_design_error"
+)
+acmm_assert(
+    identical(as.character(design$schema_version), "0.1"),
+    "Interaction design schema_version must be '0.1'.",
+    "acmm_interaction_design_error"
+)
+acmm_assert(
+    identical(as.character(design$analysis_kind), "interaction"),
+    "Interaction design analysis_kind must be 'interaction'.",
+    "acmm_interaction_design_error"
+)
+acmm_assert(
+    is.character(design$experiment_id) && length(design$experiment_id) == 1 &&
+        nzchar(design$experiment_id),
+    "Interaction design must define one non-empty experiment_id.",
+    "acmm_interaction_design_error"
+)
+acmm_assert(
+    is.list(design$factors) && length(design$factors) == 2 &&
+        !is.null(names(design$factors)),
+    "Interaction design must define exactly two named factors.",
     "acmm_interaction_design_error"
 )
 
+for (factorName in names(design$factors))
+{
+    factor <- design$factors[[factorName]]
+    acmm_assert(
+        is.list(factor),
+        paste0("Interaction factor '", factorName, "' must be a mapping."),
+        "acmm_interaction_design_error"
+    )
+    for (field in c("display_name", "json_key", "low_label", "high_label"))
+    {
+        value <- factor[[field]]
+        acmm_assert(
+            is.character(value) && length(value) == 1 && nzchar(value),
+            paste0(
+                "Interaction factor '", factorName,
+                "' requires one non-empty '", field, "'."
+            ),
+            "acmm_interaction_design_error"
+        )
+    }
+    acmm_assert(
+        !is.null(factor$low_value) && !is.null(factor$high_value),
+        paste0(
+            "Interaction factor '", factorName,
+            "' requires low_value and high_value."
+        ),
+        "acmm_interaction_design_error"
+    )
+}
+
+acmm_assert(
+    is.list(design$estimand),
+    "Interaction design must define an estimand mapping.",
+    "acmm_interaction_design_error"
+)
+for (field in c("primary_contrast", "interpretation"))
+{
+    value <- design$estimand[[field]]
+    acmm_assert(
+        is.character(value) && length(value) == 1 && nzchar(value),
+        paste0("Interaction estimand requires one non-empty '", field, "'."),
+        "acmm_interaction_design_error"
+    )
+}
+
 exportData <- load_acmm_export(exportDir, populationPolicy = populationPolicy)
+experimentId <- exportData$binding$experiment_id
+acmm_assert(
+    identical(experimentId, as.character(design$experiment_id)),
+    paste0(
+        "Interaction design experiment_id '", design$experiment_id,
+        "' does not match export experiment '", experimentId, "'."
+    ),
+    "acmm_interaction_design_error"
+)
 population <- build_acmm_population(exportData, populationPolicy = populationPolicy)
 
-factorSpec <- list(
-    ordinary_write_outcome = list(
-        json_key = "ordinary_write_mode",
-        low_value = "success",
-        high_value = "failure",
-        low_label = "success",
-        high_label = "failure"
-    ),
-    authorized_recovery = list(
-        json_key = "authorized_recovery_available",
-        low_value = FALSE,
-        high_value = TRUE,
-        low_label = "unavailable",
-        high_label = "available"
-    )
-)
-
+factorSpec <- design$factors
 interactionData <- acmm_interaction_attach_factors(population, factorSpec)
 cellEstimates <- acmm_interaction_cell_estimates(interactionData)
 simpleEffects <- acmm_interaction_simple_effects(interactionData, cellEstimates)
@@ -74,75 +138,68 @@ interactionTable <- interval_acmm_interaction_block_bootstrap(
     confidenceLevel = confidenceLevel
 )
 
-if (!dir.exists(outputDir))
+if (!dir.exists(dataDir))
 {
-    dir.create(outputDir, recursive = TRUE, showWarnings = FALSE)
+    dir.create(dataDir, recursive = TRUE, showWarnings = FALSE)
 }
 
 write_acmm_interaction_csv(
     population$summary,
-    file.path(outputDir, "interaction_population_summary.csv")
+    file.path(dataDir, "interaction_population_summary.csv")
 )
 write_acmm_interaction_csv(
     population$cell_coverage,
-    file.path(outputDir, "interaction_population_cell_coverage.csv")
+    file.path(dataDir, "interaction_population_cell_coverage.csv")
 )
 write_acmm_interaction_csv(
     population$missing_runs,
-    file.path(outputDir, "interaction_population_missing_runs.csv")
+    file.path(dataDir, "interaction_population_missing_runs.csv")
 )
 write_acmm_interaction_csv(
     cellEstimates,
-    file.path(outputDir, "interaction_cell_estimates.csv")
+    file.path(dataDir, "interaction_cell_estimates.csv")
 )
 write_acmm_interaction_csv(
     simpleEffects,
-    file.path(outputDir, "interaction_simple_effects.csv")
+    file.path(dataDir, "interaction_simple_effects.csv")
 )
 write_acmm_interaction_csv(
     interactionTable,
-    file.path(outputDir, "interaction_contrasts.csv")
+    file.path(dataDir, "interaction_contrasts.csv")
 )
 
-figureDir <- file.path(outputDir, "figures", "interaction")
-figureSpecs <- list(
-    list(
-        name = "boundary_cell_rates",
-        dimension = "boundary",
-        file = "boundary_cell_rates.png",
-        title = "Boundary compliance across the 2 x 2 interaction design"
-    ),
-    list(
-        name = "recovery_cell_rates",
-        dimension = "recovery",
-        file = "recovery_cell_rates.png",
-        title = "Recovery compliance across the 2 x 2 interaction design"
-    ),
-    list(
-        name = "procedure_cell_rates",
-        dimension = "procedure",
-        file = "procedure_cell_rates.png",
-        title = "Procedure compliance across the 2 x 2 interaction design"
-    ),
-    list(
-        name = "goal_feasible_cell_rates",
-        dimension = "goal",
-        file = "goal_feasible_cell_rates.png",
-        title = "Goal compliance in applicable Experiment 3 cells"
-    )
-)
+factorNames <- names(factorSpec)
+factorA <- factorSpec[[factorNames[[1]]]]
+factorB <- factorSpec[[factorNames[[2]]]]
+figureDir <- file.path(outputRoot, "figures", "interaction")
+cellFigureSpecs <- design$figures$cell_rates
+if (is.null(cellFigureSpecs))
+{
+    cellFigureSpecs <- list()
+}
 
 figureRows <- list()
 figureIndex <- 1
-for (spec in figureSpecs)
+for (spec in cellFigureSpecs)
 {
+    acmm_assert(
+        is.list(spec) &&
+            is.character(spec$name) && length(spec$name) == 1 &&
+            is.character(spec$dimension) && length(spec$dimension) == 1 &&
+            is.character(spec$file) && length(spec$file) == 1 &&
+            is.character(spec$title) && length(spec$title) == 1,
+        "Each interaction cell-rate figure must define name, dimension, file, and title.",
+        "acmm_interaction_design_error"
+    )
     path <- file.path(figureDir, spec$file)
     generated <- acmm_interaction_plot_cells(
         cellEstimates,
         interactionData,
         spec$dimension,
         path,
-        spec$title
+        spec$title,
+        factorA$display_name,
+        factorB$display_name
     )
     figureRows[[figureIndex]] <- data.frame(
         figure_name = spec$name,
@@ -154,31 +211,62 @@ for (spec in figureSpecs)
     figureIndex <- figureIndex + 1
 }
 
-contrastPath <- file.path(figureDir, "interaction_contrasts.png")
-contrastGenerated <- acmm_interaction_plot_contrasts(interactionTable, contrastPath)
-figureRows[[figureIndex]] <- data.frame(
-    figure_name = "interaction_contrasts",
-    title = "Recovery x ordinary-write interaction contrasts",
-    relative_path = file.path("figures", "interaction", "interaction_contrasts.png"),
-    status = if (contrastGenerated) "generated" else "not_generated_no_data",
-    stringsAsFactors = FALSE
-)
+contrastSpec <- design$figures$contrast
+if (!is.null(contrastSpec))
+{
+    acmm_assert(
+        is.list(contrastSpec) &&
+            is.character(contrastSpec$name) && length(contrastSpec$name) == 1 &&
+            is.character(contrastSpec$file) && length(contrastSpec$file) == 1 &&
+            is.character(contrastSpec$title) && length(contrastSpec$title) == 1,
+        "Interaction contrast figure must define name, file, and title.",
+        "acmm_interaction_design_error"
+    )
+    contrastPath <- file.path(figureDir, contrastSpec$file)
+    contrastGenerated <- acmm_interaction_plot_contrasts(
+        interactionTable,
+        contrastPath,
+        contrastSpec$title
+    )
+    figureRows[[figureIndex]] <- data.frame(
+        figure_name = contrastSpec$name,
+        title = contrastSpec$title,
+        relative_path = file.path("figures", "interaction", contrastSpec$file),
+        status = if (contrastGenerated) "generated" else "not_generated_no_data",
+        stringsAsFactors = FALSE
+    )
+}
 
-figureManifest <- do.call(rbind, figureRows)
-rownames(figureManifest) <- NULL
+if (length(figureRows) == 0)
+{
+    figureManifest <- data.frame(
+        figure_name = character(0),
+        title = character(0),
+        relative_path = character(0),
+        status = character(0),
+        stringsAsFactors = FALSE
+    )
+} else {
+    figureManifest <- do.call(rbind, figureRows)
+    rownames(figureManifest) <- NULL
+}
 write_acmm_interaction_csv(
     figureManifest,
-    file.path(outputDir, "interaction_figures.csv")
+    file.path(dataDir, "interaction_figures.csv")
 )
 
 cat("ACMM interaction analysis completed successfully.\n")
 cat("Experiment:", experimentId, "\n")
 print_acmm_population_summary(population)
-cat("Factor A: ordinary write outcome (success -> failure)\n")
-cat("Factor B: authorized recovery (unavailable -> available)\n")
 cat(
-    "Interaction estimand: [B effect under failure] - [B effect under success].\n"
+    "Factor A:", factorA$display_name,
+    "(", factorA$low_label, "->", factorA$high_label, ")\n"
 )
+cat(
+    "Factor B:", factorB$display_name,
+    "(", factorB$low_label, "->", factorB$high_label, ")\n"
+)
+cat("Interaction estimand:", design$estimand$primary_contrast, "\n")
 cat(
     "Uncertainty: repetition-block percentile bootstrap when observed outcomes vary; ",
     "degenerate all-equal outcomes are reported without a zero-width bootstrap interval.\n",

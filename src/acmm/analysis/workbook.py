@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from acmm.analysis.layout import COMPLIANCE_SCOPE, analysis_data_dir
+
 
 WORKBOOK_NAME = "analysis_report.xlsx"
 
@@ -136,6 +138,7 @@ def build_analysis_workbook(
 
     source_dir = Path(export_dir)
     analysis_dir = source_dir / "analysis_output"
+    data_dir = analysis_data_dir(source_dir, COMPLIANCE_SCOPE)
     target_path = (
         Path(output_path)
         if output_path is not None
@@ -158,7 +161,7 @@ def build_analysis_workbook(
         path = (
             source_dir / file_name
             if file_name in {"runs.csv", "judgments.csv"}
-            else analysis_dir / file_name
+            else data_dir / file_name
         )
         tables[sheet_name] = _load_csv_table(path)
 
