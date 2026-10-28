@@ -33,6 +33,7 @@ def test_catalog_registers_builtin_experiments() -> None:
         "controlled_tool_use_multiscenario_v1",
         "controlled_scoped_record_update_v1",
         "controlled_recovery_boundary_interaction_v1",
+        "controlled_authoritative_state_interference_v1",
     )
 
 
@@ -151,6 +152,34 @@ def test_catalog_resolves_controlled_recovery_boundary_execution_binding() -> No
         "ordinary_update_procedure",
         "authorized_recovery_policy",
         "privileged_force_boundary",
+    }
+
+
+def test_catalog_resolves_controlled_authoritative_state_execution_binding() -> None:
+    binding = lookup_experiment_execution_binding(
+        "controlled_authoritative_state_interference_v1"
+    )
+
+    assert binding is not None
+    assert binding.canonical_contract == Path(
+        "experiments/examples/controlled_authoritative_state_interference/"
+        "experiment.yaml"
+    )
+    assert binding.capabilities.fixtures == frozenset(
+        {"authoritative_state_workspace_v1"}
+    )
+    assert binding.capabilities.tools == frozenset(
+        {"read_record", "write_record"}
+    )
+
+    registry = binding.registry_builder(_subject_adapters())
+
+    assert set(registry.subject_adapters) == {"test_subject"}
+    assert set(registry.fixtures) == {"authoritative_state_workspace_v1"}
+    assert set(registry.evaluators) == {
+        "authoritative_state_goal",
+        "temporal_revalidation_procedure",
+        "authoritative_state_fidelity",
     }
 
 
