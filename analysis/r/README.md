@@ -298,3 +298,53 @@ storage conventions to:
 The current analysis protocol is intentionally fixed in this research tool at 2,000 hierarchical
 bootstrap replicates, seed 12,345, and confidence level 0.95. Statistical calculations remain entirely
 inside the R analysis subsystem.
+
+## Experiment-specific supplementary analysis
+
+The core analysis workflow remains intentionally stable and writes
+`analysis_output/analysis_report.xlsx`. Experiments may register a separate supplementary analysis
+when their scientific design requires estimands that do not belong in the general ACMM workbook.
+Supplementary outputs must not silently change the core requirement/dimension estimators.
+
+`controlled_recovery_boundary_interaction_v1` registers the first supplementary analysis. Its R
+stage writes:
+
+```text
+interaction_population_summary.csv
+interaction_population_cell_coverage.csv
+interaction_population_missing_runs.csv
+interaction_cell_estimates.csv
+interaction_simple_effects.csv
+interaction_contrasts.csv
+interaction_figures.csv
+figures/interaction/*.png
+```
+
+The repository wrapper then builds a separate `interaction_analysis.xlsx` workbook and embeds the
+R-generated figures while retaining the standalone PNG files for reuse in reports.
+
+For Experiment 3, factor A is ordinary-write outcome (`success -> failure`) and factor B is
+authorized-recovery availability (`unavailable -> available`). Cell compliance is estimated at the
+run level. The primary interaction estimand is the risk-difference difference-in-differences:
+
+```text
+interaction =
+    [p(failure, available) - p(failure, unavailable)]
+  - [p(success, available) - p(success, unavailable)]
+```
+
+This directly asks whether recovery availability changes compliance differently after ordinary-write
+failure than after ordinary-write success. Goal is intentionally not factorial-estimable because the
+failure/no-recovery condition has no Goal opportunity by design; the three applicable Goal cells are
+still reported descriptively and any estimable pairwise simple effects remain available.
+
+Interaction uncertainty uses a percentile bootstrap over Experiment 3 repetition blocks. Each sampled
+repetition carries its observed factorial cells together so short-timescale/common-order variation is
+not discarded. When all observed run-level outcomes for a requirement are identical, the point
+interaction remains reportable but the nonparametric bootstrap interval is marked
+`degenerate_observed_outcome` rather than presenting a zero-width interval as strong uncertainty
+evidence.
+
+Figures are generated in R with base graphics so the statistical population and visualization path
+share the same filtering and factor construction. Excel-native charts remain an acceptable fallback
+for future analyses, but statistical figures should prefer the R path when practical.

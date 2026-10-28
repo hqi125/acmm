@@ -10,6 +10,12 @@ from typing import Any, Sequence
 
 import yaml
 
+from acmm.analysis.interaction_workbook import (
+    INTERACTION_WORKBOOK_NAME,
+    build_interaction_workbook,
+    interaction_workbook_error,
+)
+from acmm.analysis.supplementary import get_supplementary_analysis
 from acmm.analysis.workbook import (
     WORKBOOK_NAME,
     analysis_workbook_error,
@@ -20,7 +26,7 @@ from acmm.analysis.workbook import (
 BOOTSTRAP_REPLICATES = 2000
 BOOTSTRAP_SEED = 12345
 CONFIDENCE_LEVEL = 0.95
-TOTAL_STAGES = 6
+BASE_TOTAL_STAGES = 6
 POPULATION_POLICIES = ("strict", "available-valid")
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -134,7 +140,7 @@ def _resolve_program(name: str) -> str:
     return path
 
 
-def _preflight() -> tuple[str, str]:
+def _preflight(supplementary_script_name: str | None = None) -> tuple[str, str]:
     acmm_command = _resolve_program("acmm")
     rscript_command = _resolve_program("Rscript")
 
@@ -144,7 +150,11 @@ def _preflight() -> tuple[str, str]:
             "Run 'python -m pip install -e \".[test]\"' from the repository root."
         )
 
-    for _, script_name, _, _, _ in _R_STAGES:
+    script_names = [stage[1] for stage in _R_STAGES]
+    if supplementary_script_name is not None:
+        script_names.append(supplementary_script_name)
+
+    for script_name in script_names:
         script_path = _R_SCRIPT_ROOT / script_name
 
         if not script_path.is_file():
@@ -282,15 +292,20 @@ def run_analysis_workflow(
         )
 
     execution_id, experiment_id = _load_execution_identity(execution_dir)
-    acmm_command, rscript_command = _preflight()
+    supplementary = get_supplementary_analysis(experiment_id)
+    total_stages = BASE_TOTAL_STAGES + (2 if supplementary is not None else 0)
+    if supplementary is None:
+        acmm_command, rscript_command = _preflight()
+    else:
+        acmm_command, rscript_command = _preflight(supplementary.script_name)
     export_dir = _EXPORT_ROOT / experiment_id / f"execution_{execution_id}"
 
     if export_dir.exists():
-        print(f"[1/{TOTAL_STAGES}] Reusing existing analysis export...")
+        print(f"[1/{total_stages}] Reusing existing analysis export...")
         _validate_reusable_export(export_dir, execution_id, experiment_id)
         print(f"      export: {export_dir}")
     else:
-        print(f"[1/{TOTAL_STAGES}] Exporting execution...")
+        print(f"[1/{total_stages}] Exporting execution...")
         return_code = _run_command(
             (
                 acmm_command,
@@ -334,7 +349,7 @@ def run_analysis_workflow(
             f"--population-policy={population_policy}",
         )
 
-        print(f"[{stage_index}/{TOTAL_STAGES}] Running {label.lower()}...")
+        print(f"[{stage_index}/{total_stages}] Running {label.lower()}...")
         return_code = _run_and_save(command, output_path)
 
         if return_code != 0:
@@ -356,7 +371,7 @@ def run_analysis_workflow(
     workbook_path = analysis_output_dir / WORKBOOK_NAME
     workbook_failed_path = analysis_output_dir / "analysis_report.failed.txt"
     workbook_failed_path.unlink(missing_ok=True)
-    print(f"[{TOTAL_STAGES}/{TOTAL_STAGES}] Building Excel report...")
+    print(f"[{BASE_TOTAL_STAGES}/{total_stages}] Building Excel report...")
 
     try:
         build_analysis_workbook(export_dir, workbook_path)
@@ -377,6 +392,50 @@ def run_analysis_workflow(
 
     print(f"      output: {workbook_path}")
 
+    interaction_workbook_path = None
+    if supplementary is not None:
+        supplementary_stage = BASE_TOTAL_STAGES + 1
+        supplementary_output = analysis_output_dir / supplementary.text_output_name
+        supplementary_command = (
+            rscript_command,
+            str(_R_SCRIPT_ROOT / supplementary.script_name),
+            str(export_dir),
+            str(BOOTSTRAP_REPLICATES),
+            str(BOOTSTRAP_SEED),
+            str(CONFIDENCE_LEVEL),
+            str(analysis_output_dir),
+            experiment_id,
+            f"--population-policy={population_policy}",
+        )
+        print(
+            f"[{supplementary_stage}/{total_stages}] "
+            f"Running {supplementary.label}..."
+        )
+        return_code = _run_and_save(supplementary_command, supplementary_output)
+        if return_code != 0:
+            print(
+                f"ERROR: {supplementary.script_name} failed with exit code "
+                f"{return_code}.",
+                file=sys.stderr,
+            )
+            print(
+                f"Failed output: {_failed_output_path(supplementary_output)}",
+                file=sys.stderr,
+            )
+            print("Analysis stopped.", file=sys.stderr)
+            return return_code if return_code > 0 else 1
+        print(f"      output: {supplementary_output}")
+
+        interaction_workbook_path = analysis_output_dir / INTERACTION_WORKBOOK_NAME
+        print(f"[{total_stages}/{total_stages}] Building interaction workbook...")
+        try:
+            build_interaction_workbook(export_dir, interaction_workbook_path)
+        except interaction_workbook_error as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            print("Analysis stopped.", file=sys.stderr)
+            return 1
+        print(f"      output: {interaction_workbook_path}")
+
     print("\nAnalysis workflow completed successfully.")
     print(f"  execution:       {execution_id}")
     print(f"  experiment:      {experiment_id}")
@@ -384,6 +443,8 @@ def run_analysis_workflow(
     print(f"  export:          {export_dir}")
     print(f"  analysis output: {analysis_output_dir}")
     print(f"  Excel report:    {workbook_path}")
+    if interaction_workbook_path is not None:
+        print(f"  Interaction:     {interaction_workbook_path}")
     return 0
 
 

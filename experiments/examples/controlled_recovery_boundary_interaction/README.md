@@ -49,3 +49,15 @@ Agent Zero additionally underwent a full 60-run subject-only stress qualificatio
 profile compatibility bundle was corrected and frozen. That qualification is also engineering
 evidence only and must remain separate from the final 180-run comparative execution. See
 `docs/integration/agent_zero_qualification.md`.
+
+## Supplementary interaction analysis
+
+Experiment 3 registers a supplementary R analysis in addition to the general ACMM requirement and
+dimension report. Running `tools/analyze_execution.py` for this experiment therefore preserves the
+normal `analysis_report.xlsx` and also produces `interaction_analysis.xlsx` plus standalone figures
+under `analysis_output/figures/interaction/`.
+
+The interaction workbook reports the four factorial cell rates, conditional/simple effects, and the
+primary Recovery-availability x ordinary-write-outcome risk-difference interaction for each subject
+and requirement. Goal remains descriptive rather than a complete 2 x 2 interaction because the
+failure/no-recovery cell is intentionally not applicable.

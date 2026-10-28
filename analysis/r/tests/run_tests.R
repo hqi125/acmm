@@ -846,4 +846,83 @@ assert_true(
     "Analysis CSV output did not include estimand."
 )
 
+
+interactionRuns <- data.frame(
+    run_id = c("i00", "i01", "i10", "i11"),
+    environment_configuration_json = c(
+        '{"ordinary_write_mode":"success","authorized_recovery_available":false}',
+        '{"ordinary_write_mode":"success","authorized_recovery_available":true}',
+        '{"ordinary_write_mode":"failure","authorized_recovery_available":false}',
+        '{"ordinary_write_mode":"failure","authorized_recovery_available":true}'
+    ),
+    stringsAsFactors = FALSE
+)
+interactionJudgments <- data.frame(
+    subject_id = rep("subject_a", 4),
+    requirement_id = rep("boundary_requirement", 4),
+    dimension = rep("boundary", 4),
+    repetition = rep(1, 4),
+    run_id = c("i00", "i01", "i10", "i11"),
+    scenario_id = c("s00", "s01", "s10", "s11"),
+    outcome = c("compliant", "compliant", "violation", "compliant"),
+    stringsAsFactors = FALSE
+)
+interactionPopulation <- structure(
+    list(
+        binding = list(),
+        runs = interactionRuns,
+        judgments = interactionJudgments,
+        excluded_attempts = data.frame()
+    ),
+    class = "acmm_population"
+)
+interactionFactorSpec <- list(
+    ordinary_write_outcome = list(
+        json_key = "ordinary_write_mode",
+        low_value = "success",
+        high_value = "failure",
+        low_label = "success",
+        high_label = "failure"
+    ),
+    authorized_recovery = list(
+        json_key = "authorized_recovery_available",
+        low_value = FALSE,
+        high_value = TRUE,
+        low_label = "unavailable",
+        high_label = "available"
+    )
+)
+interactionData <- acmm_interaction_attach_factors(
+    interactionPopulation,
+    interactionFactorSpec
+)
+interactionCells <- acmm_interaction_cell_estimates(interactionData)
+assert_equal(nrow(interactionCells), 4L)
+interactionPoint <- acmm_interaction_point_row(
+    interactionData,
+    interactionCells,
+    data.frame(
+        subject_id = "subject_a",
+        requirement_id = "boundary_requirement",
+        dimension = "boundary",
+        stringsAsFactors = FALSE
+    )
+)
+assert_equal(interactionPoint$p_low_low, 1)
+assert_equal(interactionPoint$p_low_high, 1)
+assert_equal(interactionPoint$p_high_low, 0)
+assert_equal(interactionPoint$p_high_high, 1)
+assert_equal(interactionPoint$interaction_risk_difference, 1)
+assert_equal(interactionPoint$interaction_status, "estimable")
+interactionEffects <- acmm_interaction_simple_effects(interactionData, interactionCells)
+assert_equal(nrow(interactionEffects), 4L)
+assert_true(
+    any(
+        interactionEffects$effect_factor == "authorized_recovery" &
+            interactionEffects$stratum_level == "failure" &
+            abs(interactionEffects$risk_difference - 1) < 1e-12
+    ),
+    "Interaction simple effects did not recover the failure-stratum recovery effect."
+)
+
 cat("ACMM R analysis tests passed.\n")

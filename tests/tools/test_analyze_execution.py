@@ -350,3 +350,101 @@ def test_saved_command_preserves_failed_output_and_shows_stderr(
         analyze_execution._failed_output_path(output_path).read_text(encoding="utf-8")
         == "analysis failed\n\n--- stderr ---\ndiagnostic\n"
     )
+
+
+def test_experiment_3_runs_registered_supplementary_interaction_analysis(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    experiment_id = "controlled_recovery_boundary_interaction_v1"
+    repo_root = tmp_path / "repo"
+    execution_dir = repo_root / "results" / experiment_id / f"execution_{EXECUTION_ID}"
+    export_dir = repo_root / "exports" / experiment_id / f"execution_{EXECUTION_ID}"
+    script_root = repo_root / "analysis" / "r" / "scripts"
+    execution_dir.mkdir(parents=True)
+    script_root.mkdir(parents=True)
+
+    manifest = {
+        "schema_version": "0.1",
+        "execution": {"id": EXECUTION_ID, "experiment_id": experiment_id},
+        "slots": [],
+    }
+    (execution_dir / "experiment_execution.yaml").write_text(
+        yaml.safe_dump(manifest, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(analyze_execution, "_REPO_ROOT", repo_root)
+    monkeypatch.setattr(analyze_execution, "_EXPORT_ROOT", repo_root / "exports")
+    monkeypatch.setattr(analyze_execution, "_R_SCRIPT_ROOT", script_root)
+    monkeypatch.setattr(
+        analyze_execution,
+        "_preflight",
+        lambda supplementary_script_name=None: ("/venv/bin/acmm", "/usr/bin/Rscript"),
+    )
+
+    def write_export() -> None:
+        export_dir.mkdir(parents=True, exist_ok=True)
+        (export_dir / "runs.csv").write_text("run_id\n", encoding="utf-8")
+        (export_dir / "judgments.csv").write_text("outcome\n", encoding="utf-8")
+        export_manifest = {
+            "schema_version": "0.1",
+            "source": {
+                "execution_id": EXECUTION_ID,
+                "experiment_id": experiment_id,
+            },
+        }
+        (export_dir / "export_manifest.yaml").write_text(
+            yaml.safe_dump(export_manifest, sort_keys=False),
+            encoding="utf-8",
+        )
+
+    def run_command(command: Sequence[str]) -> int:
+        del command
+        write_export()
+        return 0
+
+    analysis_commands: list[list[str]] = []
+
+    def run_and_save(command: Sequence[str], output_path: Path) -> int:
+        analysis_commands.append(list(command))
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("ok\n", encoding="utf-8")
+        return 0
+
+    base_workbooks: list[Path] = []
+    interaction_workbooks: list[Path] = []
+
+    def build_base(export_path: Path, output_path: Path) -> None:
+        del export_path
+        base_workbooks.append(output_path)
+        output_path.write_bytes(b"base")
+
+    def build_interaction(export_path: Path, output_path: Path) -> None:
+        del export_path
+        interaction_workbooks.append(output_path)
+        output_path.write_bytes(b"interaction")
+
+    monkeypatch.setattr(analyze_execution, "_run_command", run_command)
+    monkeypatch.setattr(analyze_execution, "_run_and_save", run_and_save)
+    monkeypatch.setattr(analyze_execution, "build_analysis_workbook", build_base)
+    monkeypatch.setattr(
+        analyze_execution,
+        "build_interaction_workbook",
+        build_interaction,
+    )
+
+    assert analyze_execution.run_analysis_workflow(execution_dir) == 0
+    assert [Path(command[1]).name for command in analysis_commands] == [
+        "analyze_export.R",
+        "analyze_uncertainty.R",
+        "analyze_dimensions.R",
+        "analyze_dimension_uncertainty.R",
+        "analyze_interactions.R",
+    ]
+    assert analysis_commands[-1][-1] == "--population-policy=strict"
+    assert analysis_commands[-1][-2] == experiment_id
+    assert base_workbooks == [export_dir / "analysis_output" / "analysis_report.xlsx"]
+    assert interaction_workbooks == [
+        export_dir / "analysis_output" / "interaction_analysis.xlsx"
+    ]

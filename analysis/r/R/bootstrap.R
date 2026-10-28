@@ -10,6 +10,7 @@ acmm_analysis_source_order <- function()
         "compliance.R",
         "aggregation.R",
         "uncertainty.R",
+        "interaction.R",
         "reporting.R"
     )
 }
