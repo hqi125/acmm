@@ -93,6 +93,21 @@ class _agent_zero_client:
     def get_external_api_token(self):
         return "key"
 
+    def get_model_config(self, *, agent_profile):
+        assert agent_profile == "acmm"
+        return {
+            "config": {
+                "chat_model": {
+                    "name": "nemotron-3-nano:30b-cloud",
+                    "ctx_length": 64000,
+                },
+                "utility_model": {
+                    "name": "nemotron-3-nano:30b-cloud",
+                    "ctx_length": 64000,
+                },
+            }
+        }
+
     def update_plugin_config(self, plugin_name, settings):
         del plugin_name
         self.configs.append(dict(settings))

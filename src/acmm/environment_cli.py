@@ -12,6 +12,7 @@ from acmm_infra.cohort import (
     doctor_cohort,
     inspect_cohort,
     resolve_baseline_cohort,
+    resolve_deployed_cohort,
     resolve_experiment_cohort,
     stop_cohort,
     summarize_context,
@@ -61,9 +62,10 @@ def _register_environment_subcommands(
         dest="experiment_id",
         help=(
             "Prepare the subjects covered by the canonical Contract for this "
-            "experiment. Without this option, reconcile qualified baselines."
+            "experiment. Without this option, reconcile an LLM baseline."
         ),
     )
+    _add_llm_baseline_argument(apply_parser)
     _add_environment_root_arguments(apply_parser)
     _add_subject_arguments(apply_parser)
     apply_parser.add_argument(
@@ -79,7 +81,6 @@ def _register_environment_subcommands(
         help="Show the discovered state of qualified ACMM subject deployments.",
     )
     _add_environment_root_arguments(status_parser)
-    _add_subject_arguments(status_parser)
     status_parser.add_argument("--json", action="store_true")
     status_parser.set_defaults(handler=_safe_environment_handler(run_environment_status))
 
@@ -88,7 +89,6 @@ def _register_environment_subcommands(
         help="Check live readiness of the current ACMM experiment environment.",
     )
     _add_environment_root_arguments(doctor_parser)
-    _add_subject_arguments(doctor_parser)
     doctor_parser.add_argument(
         "--start-if-needed",
         action="store_true",
@@ -128,8 +128,17 @@ def run_environment_apply(args: argparse.Namespace) -> int:
             "apparatus.",
             file=sys.stderr,
         )
-        cohort = resolve_baseline_cohort(selected)
+        cohort = resolve_baseline_cohort(
+            repo_root,
+            selected,
+            llm_baseline_id=args.llm_baseline_id,
+        )
     else:
+        if args.llm_baseline_id is not None:
+            raise infrastructure_error(
+                "--llm-baseline cannot be combined with --experiment; experiment "
+                "Contracts resolve their historical LLM baseline automatically."
+            )
         cohort = resolve_experiment_cohort(
             repo_root,
             args.experiment_id,
@@ -142,7 +151,10 @@ def run_environment_apply(args: argparse.Namespace) -> int:
         print(f"  canonical Contract: {cohort.canonical_contract}")
     print(f"  subjects:           {len(cohort.subjects)}")
     for subject in cohort.subjects:
-        print(f"    {subject.subject_id} ({subject.infrastructure_subject})")
+        print(
+            f"    {subject.subject_id} ({subject.infrastructure_subject}, "
+            f"llm={subject.llm_baseline_id})"
+        )
 
     def progress(index, total, subject, payload) -> None:
         if index is not None:
@@ -178,7 +190,10 @@ def run_environment_apply(args: argparse.Namespace) -> int:
 def run_environment_status(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).expanduser().resolve()
     runtime_root = Path(args.runtime_root).expanduser().resolve()
-    cohort = resolve_baseline_cohort(tuple(args.subjects or ()))
+    cohort = resolve_deployed_cohort(
+        repo_root,
+        runtime_root,
+    )
     statuses = inspect_cohort(repo_root, runtime_root, cohort.subjects)
     context = summarize_context(statuses)
 
@@ -198,6 +213,8 @@ def run_environment_status(args: argparse.Namespace) -> int:
     for item in statuses:
         print(f"    {item.subject_id}:")
         print(f"      infrastructure:    {item.infrastructure_subject}")
+        if item.llm is not None:
+            _print_llm_observation(item.llm, indent=6, running=item.running)
         if item.error is not None:
             print(f"      state:             unavailable")
             print(f"      error:             {item.error}")
@@ -208,13 +225,17 @@ def run_environment_status(args: argparse.Namespace) -> int:
         print(f"      apparatus:         {item.apparatus_state}")
         if item.source_sha256 is not None:
             print(f"      apparatus SHA-256: {item.source_sha256}")
+    _print_context_comparability(statuses)
     return 0
 
 
 def run_environment_doctor(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).expanduser().resolve()
     runtime_root = Path(args.runtime_root).expanduser().resolve()
-    cohort = resolve_baseline_cohort(tuple(args.subjects or ()))
+    cohort = resolve_deployed_cohort(
+        repo_root,
+        runtime_root,
+    )
     contexts = inspect_cohort(
         repo_root,
         runtime_root,
@@ -262,11 +283,20 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
     )
 
     subject_ready = all(item.is_ready for item in doctor_results)
-    context_ready = (
-        context.state == "converged"
-        and all(item.application_scope == "experiment" for item in contexts)
-        and all(item.apparatus_state == "match" for item in contexts)
-    )
+    if context.state == "baseline":
+        context_ready = all(
+            item.error is None
+            and item.experiment_id is None
+            and item.application_scope is None
+            and item.apparatus_state == "none"
+            for item in contexts
+        )
+    else:
+        context_ready = (
+            context.state == "converged"
+            and all(item.application_scope == "experiment" for item in contexts)
+            and all(item.apparatus_state == "match" for item in contexts)
+        )
     ready = subject_ready and context_ready
 
     if args.json:
@@ -282,6 +312,7 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
                 {
                     "subject_id": item.subject.subject_id,
                     "infrastructure_subject": item.subject.infrastructure_subject,
+                    "llm_baseline_id": item.subject.llm_baseline_id,
                     "experiment_id": result.experiment_id,
                     "ready": item.is_ready,
                     "error": result.error,
@@ -293,6 +324,7 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
                         if isinstance(state, dict)
                         else None
                     ),
+                    "llm": asdict(item.llm) if item.llm is not None else None,
                     "checks": (
                         [asdict(check) for check in result.report.checks]
                         if result.report is not None
@@ -314,6 +346,13 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         state = item.deployment_state
         print(f"    {subject.subject_id}:")
         print(f"      infrastructure:    {subject.infrastructure_subject}")
+        print(f"      LLM baseline:      {subject.llm_baseline_id}")
+        if item.llm is not None:
+            _print_llm_observation(
+                item.llm,
+                indent=6,
+                running=True,
+            )
         print(f"      readiness:         {'READY' if item.is_ready else 'NOT READY'}")
         print(f"      experiment:        {result.experiment_id or 'none'}")
         if item.initially_running is not None:
@@ -336,12 +375,19 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         if item.release_error is not None:
             print(f"      cleanup error:     {item.release_error}")
 
+    _print_context_comparability(doctor_results)
     print()
     if not context_ready:
-        print(
-            "Experiment cohort context is not fully converged with full "
-            "experiment apparatus."
-        )
+        if context.state == "baseline":
+            print(
+                "Baseline cohort context is not fully converged with "
+                "experiment-independent state."
+            )
+        else:
+            print(
+                "Experiment cohort context is not fully converged with full "
+                "experiment apparatus."
+            )
     print("READY" if ready else "NOT READY")
     return 0 if ready else 1
 
@@ -349,7 +395,11 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
 def run_environment_stop(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).expanduser().resolve()
     runtime_root = Path(args.runtime_root).expanduser().resolve()
-    cohort = resolve_baseline_cohort(tuple(args.subjects or ()))
+    cohort = resolve_deployed_cohort(
+        repo_root,
+        runtime_root,
+        tuple(args.subjects or ()),
+    )
     results = stop_cohort(repo_root, runtime_root, cohort.subjects)
     failed = any(item.error is not None for item in results)
 
@@ -375,6 +425,100 @@ def run_environment_stop(args: argparse.Namespace) -> int:
         else:
             print("      result:         unchanged")
     return 1 if failed else 0
+
+
+def _print_llm_observation(
+    observation,
+    *,
+    indent: int,
+    running: bool | None = None,
+) -> None:
+    prefix = " " * indent
+    print(f"{prefix}LLM baseline:       {observation.deployed_baseline_id}")
+    if observation.expected_baseline_id != observation.deployed_baseline_id:
+        print(f"{prefix}expected baseline:  {observation.expected_baseline_id}")
+    print(f"{prefix}model:              {observation.model_name}")
+    print(f"{prefix}provider:           {observation.logical_provider}")
+    print(
+        f"{prefix}context minimum:    "
+        f"{observation.minimum_context_window}"
+    )
+    requested = observation.requested_context_window
+    print(f"{prefix}context requested:  {requested if requested is not None else 'not controlled'}")
+    observed = observation.observed_context_window
+    if observed is not None:
+        print(f"{prefix}context observed:   {observed}")
+    elif running is False:
+        print(
+            f"{prefix}context observed:   N/A "
+            "(runtime stopped; use env doctor --start-if-needed)"
+        )
+    else:
+        print(f"{prefix}context observed:   unavailable")
+    if observation.context_observation_kind != "unknown":
+        print(f"{prefix}context kind:       {observation.context_observation_kind}")
+    if observation.context_observation_source is not None:
+        print(f"{prefix}context source:     {observation.context_observation_source}")
+    if observation.observed_model_name is not None:
+        print(f"{prefix}model observed:     {observation.observed_model_name}")
+    if observation.model_observation_source is not None:
+        print(f"{prefix}model source:       {observation.model_observation_source}")
+    if observation.provider_model_available is not None:
+        state = "yes" if observation.provider_model_available else "no"
+        print(f"{prefix}model available:    {state}")
+    if observation.provider_model_availability_source is not None:
+        print(
+            f"{prefix}availability source:{observation.provider_model_availability_source}"
+        )
+    if observation.model_matches_baseline is False:
+        print(f"{prefix}model state:        WARNING: observed model differs from baseline")
+    if observation.context_meets_minimum is False:
+        print(f"{prefix}context state:      WARNING: observed context is below minimum")
+    elif observation.context_matches_requested is False:
+        print(f"{prefix}context state:      WARNING: observed context differs from request")
+
+
+def _print_context_comparability(statuses) -> None:
+    configured = []
+    capability = []
+    for item in statuses:
+        observation = item.llm
+        if observation is None or observation.observed_context_window is None:
+            continue
+        subject_id = getattr(item, "subject_id", None)
+        if subject_id is None and hasattr(item, "subject"):
+            subject_id = item.subject.subject_id
+        pair = (str(subject_id), observation.observed_context_window)
+        if observation.context_observation_kind == "configured_effective":
+            configured.append(pair)
+        else:
+            capability.append(pair)
+
+    if not configured and not capability:
+        return
+
+    print("  context-window observability:")
+    if configured:
+        rendered = ", ".join(f"{name}={value}" for name, value in configured)
+        print(f"    configured/effective: {rendered}")
+        values = {value for _, value in configured}
+        state = "equal" if len(values) == 1 else "different"
+        print(f"    comparable state:     {state}")
+    if capability:
+        rendered = ", ".join(f"{name}={value}" for name, value in capability)
+        print(f"    capability metadata:  {rendered}")
+
+
+def _add_llm_baseline_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--llm-baseline",
+        dest="llm_baseline_id",
+        help=(
+            "Select a registered experiment-independent LLM baseline. This is "
+            "intended for LLM Rebasing qualification and does not change the "
+            "catalog's current baseline."
+        ),
+    )
 
 
 def _add_environment_root_arguments(parser: argparse.ArgumentParser) -> None:

@@ -60,6 +60,62 @@ def files_equal(left: Path, right: Path) -> bool:
 
 def bool_text(value: bool) -> str:
     return "true" if value else "false"
+
+
+LLM_BASELINE_STATE_FILE = ".acmm-llm-baseline.json"
+LLM_BASELINE_STATE_SCHEMA_VERSION = "0.1"
+
+
+def read_llm_baseline_state(deployment_root: Path) -> dict[str, object] | None:
+    path = deployment_root / LLM_BASELINE_STATE_FILE
+    if not path.is_file():
+        return None
+
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise infrastructure_error(
+            f"Could not read LLM baseline state '{path}': {exc}"
+        ) from exc
+
+    if not isinstance(value, dict):
+        raise infrastructure_error(
+            f"LLM baseline state '{path}' has an unsupported format."
+        )
+    if value.get("schema_version") != LLM_BASELINE_STATE_SCHEMA_VERSION:
+        raise infrastructure_error(
+            f"LLM baseline state '{path}' has an unsupported format."
+        )
+    baseline_id = value.get("llm_baseline_id")
+    if not isinstance(baseline_id, str) or not baseline_id.strip():
+        raise infrastructure_error(
+            f"LLM baseline state '{path}' has an invalid baseline ID."
+        )
+    return value
+
+
+def write_llm_baseline_state(
+    deployment_root: Path,
+    *,
+    llm_baseline_id: str,
+    model_name: str,
+    logical_provider: str,
+) -> None:
+    path = deployment_root / LLM_BASELINE_STATE_FILE
+    payload = {
+        "schema_version": LLM_BASELINE_STATE_SCHEMA_VERSION,
+        "llm_baseline_id": llm_baseline_id,
+        "model_name": model_name,
+        "logical_provider": logical_provider,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    temporary.replace(path)
 EXPERIMENT_APPARATUS_STATE_FILE = ".acmm-experiment-apparatus.json"
 experiment_application_scope = Literal["experiment", "tools"]
 EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION = "0.2"

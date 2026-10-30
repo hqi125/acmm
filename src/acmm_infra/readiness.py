@@ -24,12 +24,14 @@ def doctor_deployed_subject(
     repo_root: str | Path,
     runtime_root: str | Path,
     infrastructure_subject: str,
+    llm_baseline_id: str | None = None,
 ) -> deployed_subject_doctor_result:
     try:
         context = build_deployed_subject_manager(
             repo_root,
             runtime_root,
             infrastructure_subject,
+            llm_baseline_id,
         )
     except (infrastructure_error, profile_error, OSError, ValueError) as exc:
         return deployed_subject_doctor_result(

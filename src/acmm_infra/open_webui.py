@@ -16,6 +16,7 @@ from acmm_infra.deployment import (
     read_experiment_apparatus_state,
     write_env,
     write_experiment_apparatus_state,
+    write_llm_baseline_state,
 )
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.open_webui_api import open_webui_api_client, open_webui_api_error
@@ -166,6 +167,13 @@ class open_webui_manager:
                     for tool in self.profile.tools
                 ],
             )
+
+        write_llm_baseline_state(
+            self.deployment_root,
+            llm_baseline_id=self.profile.llm_baseline_id,
+            model_name=self.profile.model_default,
+            logical_provider=self.profile.llm_logical_provider,
+        )
 
         return {
             "image": self.profile.image,
@@ -511,7 +519,7 @@ class open_webui_manager:
                 model_ok = backend["model_available"]
                 checks.append(
                     doctor_check(
-                        "experiment_model",
+                        "provider_model_available",
                         model_ok,
                         (
                             f"model {desired['model_default']!r} is available"
@@ -803,6 +811,19 @@ class open_webui_manager:
             )
             state["model_ids"] = model_ids
             state["model_available"] = self.profile.model_default in model_ids
+            matching_model = next(
+                (
+                    model
+                    for model in models
+                    if model.get("id") == self.profile.model_default
+                ),
+                None,
+            )
+            context_window, context_source = _model_context_observation(
+                matching_model
+            )
+            state["model_context_window"] = context_window
+            state["model_context_source"] = context_source
 
             tool_states: dict[str, dict[str, Any]] = {}
             for tool in self.profile.tools:
@@ -931,6 +952,37 @@ def _config_subset_matches(
     return all(observed.get(key) == value for key, value in desired.items())
 
 
+def _model_context_observation(
+    model: dict[str, Any] | None,
+) -> tuple[int | None, str | None]:
+    if not isinstance(model, dict):
+        return None, None
+    field_names = (
+        "context_window",
+        "context_length",
+        "num_ctx",
+        "num_context",
+        "context_size",
+    )
+    containers: tuple[tuple[str, dict[str, Any]], ...] = (("model", model),)
+    nested: list[tuple[str, dict[str, Any]]] = []
+    for key in ("info", "details", "meta", "ollama"):
+        value = model.get(key)
+        if isinstance(value, dict):
+            nested.append((key, value))
+    containers = containers + tuple(nested)
+    for container_name, container in containers:
+        for field_name in field_names:
+            value = container.get(field_name)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                return value, f"open_webui_model_catalog:{container_name}.{field_name}"
+            if isinstance(value, str) and value.isdigit() and int(value) > 0:
+                return int(value), (
+                    f"open_webui_model_catalog:{container_name}.{field_name}"
+                )
+    return None, None
+
+
 def _empty_backend_status(profile: open_webui_profile) -> dict[str, Any]:
     return {
         "authenticated": False,
@@ -941,6 +993,8 @@ def _empty_backend_status(profile: open_webui_profile) -> dict[str, Any]:
         "isolation_config": {},
         "model_available": False,
         "model_ids": (),
+        "model_context_window": None,
+        "model_context_source": None,
         "managed_tools": {
             tool.id: {
                 "present": False,

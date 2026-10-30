@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 from acmm.contract.loader import load_contract
 from acmm.experiments.catalog import lookup_experiment_execution_binding
@@ -11,9 +11,17 @@ from acmm.subjects.catalog import (
     registered_subject_ids,
 )
 from acmm_infra.common import infrastructure_error
-from acmm_infra.deployment import read_experiment_apparatus_state
+from acmm_infra.deployment import (
+    read_experiment_apparatus_state,
+    read_llm_baseline_state,
+)
 from acmm_infra.docker import docker_error
 from acmm_infra.profiles.common import profile_error
+from acmm_infra.profiles.llm import (
+    current_llm_baseline_id,
+    load_llm_baseline,
+    primary_requested_context_window,
+)
 from acmm_infra.profiles.experiments import experiment_apparatus_sha256
 from acmm_infra.readiness import (
     deployed_subject_doctor_result,
@@ -31,6 +39,7 @@ from acmm_infra.subject_managers import (
 class cohort_subject:
     subject_id: str
     infrastructure_subject: str
+    llm_baseline_id: str = "gpt_oss_120b_cloud_v1"
 
 
 @dataclass(frozen=True)
@@ -38,6 +47,28 @@ class experiment_cohort:
     experiment_id: str | None
     canonical_contract: Path | None
     subjects: tuple[cohort_subject, ...]
+
+
+@dataclass(frozen=True)
+class cohort_llm_observation:
+    expected_baseline_id: str
+    deployed_baseline_id: str
+    model_name: str
+    logical_provider: str
+    minimum_context_window: int
+    requested_context_window: int | None
+    observed_model_name: str | None
+    observed_context_window: int | None
+    model_observation_source: str | None
+    context_observation_source: str | None
+    context_observation_kind: str
+    model_matches_baseline: bool | None
+    context_meets_minimum: bool | None
+    context_matches_requested: bool | None
+    observed_utility_model: str | None = None
+    observed_utility_context_window: int | None = None
+    provider_model_available: bool | None = None
+    provider_model_availability_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +80,7 @@ class cohort_subject_status:
     application_scope: str | None
     apparatus_state: str
     source_sha256: str | None
+    llm: cohort_llm_observation | None = None
     error: str | None = None
 
 
@@ -74,6 +106,7 @@ class cohort_doctor_result:
     deployment_state: dict[str, object] | None
     initially_running: bool | None
     started_by_acmm: bool
+    llm: cohort_llm_observation | None = None
     release_error: str | None = None
 
     @property
@@ -102,6 +135,9 @@ def resolve_experiment_cohort(
             f"'{observed_id}', expected '{experiment_id}'."
         )
 
+    for subject in contract["subjects"]:
+        _require_contract_llm_binding(repo, subject)
+
     subject_ids = tuple(item["id"] for item in contract["subjects"])
     subjects = _resolve_subjects(subject_ids, selected_subject_ids)
     return experiment_cohort(
@@ -112,13 +148,101 @@ def resolve_experiment_cohort(
 
 
 def resolve_baseline_cohort(
+    repo_root: str | Path,
     selected_subject_ids: Iterable[str] = (),
+    *,
+    llm_baseline_id: str | None = None,
 ) -> experiment_cohort:
-    subjects = _resolve_subjects(registered_subject_ids(), selected_subject_ids)
+    baseline_id = llm_baseline_id or current_llm_baseline_id(repo_root)
+    load_llm_baseline(repo_root, baseline_id)
+    registered = registered_subject_ids(baseline_id)
+    if registered:
+        subjects = _resolve_subjects(registered, selected_subject_ids)
+    else:
+        subjects = _resolve_qualification_subjects(
+            baseline_id,
+            selected_subject_ids,
+        )
     return experiment_cohort(
         experiment_id=None,
         canonical_contract=None,
         subjects=subjects,
+    )
+
+
+def resolve_deployed_cohort(
+    repo_root: str | Path,
+    runtime_root: str | Path,
+    selected_subject_ids: Iterable[str] = (),
+) -> experiment_cohort:
+    repo = Path(repo_root).expanduser().resolve()
+    runtime = Path(runtime_root).expanduser().resolve()
+    current_baseline = current_llm_baseline_id(repo)
+    subjects: list[cohort_subject] = []
+
+    for infrastructure_subject in _INFRASTRUCTURE_SUBJECTS:
+        probe = build_subject_manager(
+            repo,
+            runtime,
+            infrastructure_subject,
+            None,
+            current_baseline,
+        )
+        deployment_root = probe.manager.deployment_root
+        apparatus = read_experiment_apparatus_state(deployment_root)
+        experiment_id = None
+        if apparatus is not None:
+            value = apparatus.get("experiment_id")
+            if isinstance(value, str) and value.strip():
+                experiment_id = value
+
+        if experiment_id is not None:
+            experiment = resolve_experiment_cohort(repo, experiment_id)
+            matches = tuple(
+                item
+                for item in experiment.subjects
+                if item.infrastructure_subject == infrastructure_subject
+            )
+            if len(matches) != 1:
+                raise infrastructure_error(
+                    f"Deployed experiment '{experiment_id}' does not resolve exactly "
+                    f"one subject for infrastructure '{infrastructure_subject}'."
+                )
+            subjects.append(matches[0])
+            continue
+
+        llm_state = read_llm_baseline_state(deployment_root)
+        baseline_id = current_baseline
+        if llm_state is not None:
+            value = llm_state.get("llm_baseline_id")
+            if isinstance(value, str) and value.strip():
+                baseline_id = value
+        subjects.append(
+            cohort_subject(
+                subject_id=_deployed_subject_id(
+                    baseline_id,
+                    infrastructure_subject,
+                ),
+                infrastructure_subject=infrastructure_subject,
+                llm_baseline_id=baseline_id,
+            )
+        )
+
+    selected = tuple(dict.fromkeys(selected_subject_ids))
+    if selected:
+        available = {item.subject_id for item in subjects}
+        unknown = tuple(item for item in selected if item not in available)
+        if unknown:
+            raise infrastructure_error(
+                "Selected subject(s) are not present in the deployed cohort: "
+                + ", ".join(unknown)
+            )
+        subjects = [item for item in subjects if item.subject_id in selected]
+
+    return experiment_cohort(
+        experiment_id=None,
+        canonical_contract=None,
+        subjects=tuple(subjects),
     )
 
 
@@ -138,6 +262,7 @@ def apply_cohort(
             runtime_root,
             subject.infrastructure_subject,
             cohort.experiment_id,
+            subject.llm_baseline_id,
         )
         contexts.append((subject, context))
         if context.manager.docker.container_running():
@@ -208,8 +333,21 @@ def inspect_subject_context(
             repo_root,
             runtime_root,
             subject.infrastructure_subject,
+            subject.llm_baseline_id,
         )
         status = context.manager.status() if include_running else None
+        llm_state = read_llm_baseline_state(context.manager.deployment_root)
+        deployed_baseline_id = context.llm_baseline_id
+        if llm_state is not None:
+            value = llm_state.get("llm_baseline_id")
+            if isinstance(value, str) and value.strip():
+                deployed_baseline_id = value
+        llm = _observe_llm_context(
+            repo_root,
+            subject,
+            deployed_baseline_id,
+            status,
+        )
         marker = read_experiment_apparatus_state(context.manager.deployment_root)
         experiment_id = context.experiment_id
         scope = None
@@ -237,6 +375,7 @@ def inspect_subject_context(
             application_scope=scope,
             apparatus_state=apparatus_state,
             source_sha256=source_sha256,
+            llm=llm,
         )
     except (infrastructure_error, profile_error, OSError, ValueError) as exc:
         return cohort_subject_status(
@@ -247,8 +386,126 @@ def inspect_subject_context(
             application_scope=None,
             apparatus_state="unknown",
             source_sha256=None,
+            llm=None,
             error=str(exc),
         )
+
+
+def _observe_llm_context(
+    repo_root: str | Path,
+    subject: cohort_subject,
+    deployed_baseline_id: str,
+    status: dict[str, Any] | None,
+) -> cohort_llm_observation:
+    baseline = load_llm_baseline(repo_root, deployed_baseline_id)
+    requested = primary_requested_context_window(
+        baseline,
+        subject.infrastructure_subject,
+    )
+    observed_model: str | None = None
+    observed_context: int | None = None
+    model_source: str | None = None
+    context_source: str | None = None
+    context_kind = "unknown"
+    observed_utility_model: str | None = None
+    observed_utility_context: int | None = None
+    provider_model_available: bool | None = None
+    provider_model_source: str | None = None
+
+    if status is not None and subject.infrastructure_subject == "hermes":
+        observed = status.get("observed")
+        if isinstance(observed, dict) and observed.get("live_observation_ok") is True:
+            model_value = observed.get("model_default")
+            context_value = observed.get("context_window")
+            if isinstance(model_value, str) and model_value:
+                observed_model = model_value
+                model_source = "hermes_live_config"
+            if isinstance(context_value, int) and not isinstance(context_value, bool):
+                observed_context = context_value
+                context_source = "hermes_live_config:context_window"
+                context_kind = "configured_effective"
+            availability = observed.get("provider_model_available")
+            if isinstance(availability, bool):
+                provider_model_available = availability
+                provider_model_source = "ollama_api:/api/tags via hermes"
+
+    elif status is not None and subject.infrastructure_subject == "open-webui":
+        observed = status.get("observed")
+        backend = observed.get("backend") if isinstance(observed, dict) else None
+        if isinstance(backend, dict):
+            availability = backend.get("model_available")
+            if isinstance(availability, bool):
+                provider_model_available = availability
+                provider_model_source = "open_webui_model_catalog"
+            if availability is True:
+                observed_model = baseline.model_name
+                model_source = "open_webui_model_catalog"
+            context_value = backend.get("model_context_window")
+            if isinstance(context_value, int) and not isinstance(context_value, bool):
+                observed_context = context_value
+                source_value = backend.get("model_context_source")
+                context_source = (
+                    source_value if isinstance(source_value, str) else "open_webui_model_catalog"
+                )
+                context_kind = "model_capability"
+
+    elif status is not None and subject.infrastructure_subject == "agent-zero":
+        observed = status.get("observed")
+        live = observed.get("live_application") if isinstance(observed, dict) else None
+        if isinstance(live, dict) and not live.get("error"):
+            model_value = live.get("observed_model")
+            context_value = live.get("observed_context_window")
+            utility_model = live.get("observed_utility_model")
+            utility_context = live.get("observed_utility_context_window")
+            if isinstance(model_value, str) and model_value:
+                observed_model = model_value
+                model_source = "agent_zero_model_config_api"
+            if isinstance(context_value, int) and not isinstance(context_value, bool):
+                observed_context = context_value
+                context_source = "agent_zero_model_config_api:chat_model.ctx_length"
+                context_kind = "configured_effective"
+            if isinstance(utility_model, str) and utility_model:
+                observed_utility_model = utility_model
+            if isinstance(utility_context, int) and not isinstance(utility_context, bool):
+                observed_utility_context = utility_context
+            availability = live.get("model_available")
+            if isinstance(availability, bool):
+                provider_model_available = availability
+                provider_model_source = "agent_zero_model_search"
+
+    model_matches = (
+        None if observed_model is None else observed_model == baseline.model_name
+    )
+    context_meets = (
+        None
+        if observed_context is None
+        else observed_context >= baseline.minimum_context_window
+    )
+    context_matches = (
+        None
+        if requested is None or observed_context is None
+        else observed_context == requested
+    )
+    return cohort_llm_observation(
+        expected_baseline_id=subject.llm_baseline_id,
+        deployed_baseline_id=deployed_baseline_id,
+        model_name=baseline.model_name,
+        logical_provider=baseline.logical_provider,
+        minimum_context_window=baseline.minimum_context_window,
+        requested_context_window=requested,
+        observed_model_name=observed_model,
+        observed_context_window=observed_context,
+        model_observation_source=model_source,
+        context_observation_source=context_source,
+        context_observation_kind=context_kind,
+        model_matches_baseline=model_matches,
+        context_meets_minimum=context_meets,
+        context_matches_requested=context_matches,
+        observed_utility_model=observed_utility_model,
+        observed_utility_context_window=observed_utility_context,
+        provider_model_available=provider_model_available,
+        provider_model_availability_source=provider_model_source,
+    )
 
 
 def summarize_context(
@@ -279,6 +536,7 @@ def stop_cohort(
                 repo_root,
                 runtime_root,
                 subject.infrastructure_subject,
+                subject.llm_baseline_id,
             )
             initial_running = lease.initially_running
             if initial_running:
@@ -319,6 +577,7 @@ def doctor_cohort(
         lease = None
         initial_running: bool | None = None
         started_by_acmm = False
+        live_llm: cohort_llm_observation | None = None
         release_error = None
         if progress is not None:
             progress(index, total, subject, "begin")
@@ -327,6 +586,7 @@ def doctor_cohort(
                 repo_root,
                 runtime_root,
                 subject.infrastructure_subject,
+                subject.llm_baseline_id,
             )
             initial_running = lease.initially_running
             if progress is not None:
@@ -349,7 +609,15 @@ def doctor_cohort(
                 repo_root,
                 runtime_root,
                 subject.infrastructure_subject,
+                subject.llm_baseline_id,
             )
+            live_status = inspect_subject_context(
+                repo_root,
+                runtime_root,
+                subject,
+                include_running=True,
+            )
+            live_llm = live_status.llm
         except (infrastructure_error, profile_error, docker_error, OSError, ValueError) as exc:
             doctor = deployed_subject_doctor_result(
                 infrastructure_subject=subject.infrastructure_subject,
@@ -380,6 +648,7 @@ def doctor_cohort(
             repo_root,
             runtime_root,
             subject.infrastructure_subject,
+            subject.llm_baseline_id,
         )
         item = cohort_doctor_result(
             subject=subject,
@@ -387,6 +656,7 @@ def doctor_cohort(
             deployment_state=state,
             initially_running=initial_running,
             started_by_acmm=started_by_acmm,
+            llm=live_llm,
             release_error=release_error,
         )
         results.append(item)
@@ -398,6 +668,87 @@ def doctor_cohort(
                 "complete-ready" if item.is_ready else "complete-not-ready",
             )
     return tuple(results)
+
+
+def _require_contract_llm_binding(
+    repo_root: Path,
+    subject: dict[str, object],
+) -> None:
+    subject_id = subject.get("id")
+    if not isinstance(subject_id, str):
+        raise infrastructure_error("Contract subject is missing a valid id.")
+    binding = lookup_subject_execution_binding(subject_id)
+    if binding is None:
+        raise infrastructure_error(
+            f"Subject '{subject_id}' has no registered execution binding."
+        )
+    baseline = load_llm_baseline(repo_root, binding.llm_baseline_id)
+    model = subject.get("model")
+    if not isinstance(model, dict):
+        raise infrastructure_error(
+            f"Contract subject '{subject_id}' is missing model metadata."
+        )
+    observed_name = model.get("name")
+    observed_provider = model.get("provider")
+    if observed_name != baseline.model_name:
+        raise infrastructure_error(
+            f"Contract subject '{subject_id}' declares model '{observed_name}', but "
+            f"its registered LLM baseline '{baseline.id}' requires "
+            f"'{baseline.model_name}'."
+        )
+    if observed_provider != baseline.logical_provider:
+        raise infrastructure_error(
+            f"Contract subject '{subject_id}' declares provider "
+            f"'{observed_provider}', but its registered LLM baseline "
+            f"'{baseline.id}' requires '{baseline.logical_provider}'."
+        )
+
+    configuration = subject.get("configuration")
+    if not isinstance(configuration, dict):
+        return
+    context_window = configuration.get("context_window")
+    if context_window is None:
+        return
+    if (
+        not isinstance(context_window, int)
+        or isinstance(context_window, bool)
+        or context_window < baseline.minimum_context_window
+    ):
+        raise infrastructure_error(
+            f"Contract subject '{subject_id}' context_window must be an integer at "
+            f"least {baseline.minimum_context_window} for LLM baseline "
+            f"'{baseline.id}'."
+        )
+
+
+_INFRASTRUCTURE_SUBJECTS = ("hermes", "open-webui", "agent-zero")
+_QUALIFICATION_SUBJECT_IDS = {
+    "hermes": "hermes_llm_qualification",
+    "open-webui": "open_webui_llm_qualification",
+    "agent-zero": "agent_zero_llm_qualification",
+}
+
+
+def _deployed_subject_id(
+    baseline_id: str,
+    infrastructure_subject: str,
+) -> str:
+    matches: list[str] = []
+    for subject_id in registered_subject_ids(baseline_id):
+        binding = lookup_subject_execution_binding(subject_id)
+        if (
+            binding is not None
+            and binding.infrastructure_subject == infrastructure_subject
+        ):
+            matches.append(subject_id)
+    if len(matches) > 1:
+        raise infrastructure_error(
+            f"LLM baseline '{baseline_id}' has multiple subjects for "
+            f"infrastructure '{infrastructure_subject}'."
+        )
+    if matches:
+        return matches[0]
+    return _QUALIFICATION_SUBJECT_IDS[infrastructure_subject]
 
 
 def _resolve_subjects(
@@ -437,9 +788,38 @@ def _resolve_subjects(
             cohort_subject(
                 subject_id=subject_id,
                 infrastructure_subject=binding.infrastructure_subject,
+                llm_baseline_id=binding.llm_baseline_id,
             )
         )
     return tuple(subjects)
+
+
+def _resolve_qualification_subjects(
+    baseline_id: str,
+    selected_subject_ids: Iterable[str],
+) -> tuple[cohort_subject, ...]:
+    available = tuple(
+        (_QUALIFICATION_SUBJECT_IDS[item], item)
+        for item in _INFRASTRUCTURE_SUBJECTS
+    )
+    selected = tuple(dict.fromkeys(selected_subject_ids))
+    available_ids = tuple(subject_id for subject_id, _ in available)
+    if selected:
+        unknown = tuple(item for item in selected if item not in available_ids)
+        if unknown:
+            raise infrastructure_error(
+                "Selected subject(s) are not covered by this LLM qualification "
+                "cohort: " + ", ".join(unknown)
+            )
+        available = tuple(item for item in available if item[0] in selected)
+    return tuple(
+        cohort_subject(
+            subject_id=subject_id,
+            infrastructure_subject=infrastructure_subject,
+            llm_baseline_id=baseline_id,
+        )
+        for subject_id, infrastructure_subject in available
+    )
 
 
 def _apparatus_state(

@@ -14,6 +14,9 @@ The managed source layout is:
 
 ```text
 infrastructure/
+|-- llm-baselines/
+|   |-- catalog.yaml
+|   `-- <baseline-id>.yaml
 |-- hermes/
 |   |-- profile.yaml
 |   |-- defaults/
@@ -37,13 +40,31 @@ infrastructure/
 
 The split is intentional:
 
-- `profile.yaml` and other subject-root files define experiment-independent qualified state;
+- `llm-baselines/` owns registered model-specific desired state and identifies the current LLM
+  baseline;
+- `profile.yaml` and other subject-root files define experiment-independent agent/framework state;
 - `experiments/<experiment-id>/` owns the exact agent-facing apparatus for that experiment;
 - scenario/run state remains controlled by the runtime fixture and adapter rather than by
   creating a different deployed package per scenario.
 
 Small apparatus duplication across experiments is deliberate. A frozen experiment keeps its
 own deployable bytes even when a later experiment starts from similar tools.
+
+
+## LLM baseline composition
+
+The model baseline is deliberately separate from the agent profile. A subject is provisioned by
+composing the agent profile with a registered LLM baseline and, when selected, experiment
+apparatus. This prevents a future model switch from silently changing a frozen experiment.
+
+The current baseline ID is declared in `infrastructure/llm-baselines/catalog.yaml`. Historical
+subject bindings record their own baseline ID, so experiment-aware provisioning follows the
+Contract's subject bindings rather than blindly using whichever model is currently preferred.
+
+Context is expressed as a minimum capability plus optional per-agent requested values. The current
+minimum remains 64,000 tokens, but exact equality is not treated as an eternal model identity.
+See `docs/infrastructure/llm_rebasing.md` for the rebasing architecture and context policy, and
+`docs/infrastructure/llm_rebasing_workflow.md` for the operational candidate-to-promotion workflow.
 
 ## Infrastructure CLI architecture
 
@@ -68,15 +89,16 @@ acmm env apply
     warning and removes active experiment apparatus.
 
 acmm env status
-    Passively discover each qualified subject's deployed experiment context and summarize
-    environment convergence.
+    Passively discover all deployed agent environments, their active LLM baselines, experiment
+    context, and convergence. This command accepts no cohort selector.
 
 acmm env doctor
-    Run each subject's existing passive doctor and report aggregate experiment-environment
-    readiness.
+    Run the existing doctor for all three deployed agent environments and report aggregate
+    readiness. This command accepts no cohort selector.
 ```
 
-Repeatable `--subject <qualified-subject-id>` filters can narrow any `acmm env` command.
+Repeatable `--subject <subject-id>` filters remain available for state-changing/operator commands
+such as `apply` and `stop`; they do not redefine what `status` or `doctor` observes.
 Environment apply verifies that every selected runtime is stopped before mutating the first
 subject. It is fail-fast but not transactional: if a later subject fails after earlier subjects
 were applied, the error reports the partial state and no automatic rollback is attempted.

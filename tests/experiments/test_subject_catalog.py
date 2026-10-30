@@ -15,6 +15,9 @@ def test_subject_catalog_registers_qualified_subjects() -> None:
         "hermes_nemotron30b",
         "open_webui_nemotron30b",
         "agent_zero_nemotron30b",
+        "hermes_gpt_oss120b",
+        "open_webui_gpt_oss120b",
+        "agent_zero_gpt_oss120b",
     )
 
 

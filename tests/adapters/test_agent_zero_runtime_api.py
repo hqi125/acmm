@@ -76,6 +76,43 @@ def test_runtime_client_reads_external_token_and_updates_plugin_config() -> None
     }
 
 
+def test_runtime_client_reads_model_config_for_agent_profile() -> None:
+    requests = []
+
+    def opener(request, *, timeout):
+        del timeout
+        requests.append(request)
+        if _path(request) == "/api/csrf_token":
+            return fake_response({"ok": True, "token": _CSRF_TOKEN})
+        if _path(request) == "/api/plugins/_model_config/model_config_get":
+            return fake_response(
+                {
+                    "chat_model": {
+                        "name": "nemotron-3-nano:30b-cloud",
+                        "ctx_length": 64000,
+                    },
+                    "utility_model": {
+                        "name": "nemotron-3-nano:30b-cloud",
+                        "ctx_length": 64000,
+                    },
+                }
+            )
+        raise AssertionError(_path(request))
+
+    client = agent_zero_runtime_api_client(
+        "http://127.0.0.1:50080",
+        opener=opener,
+    )
+
+    result = client.get_model_config(agent_profile="acmm")
+
+    assert result["chat_model"]["ctx_length"] == 64000
+    request = requests[-1]
+    assert request.full_url.endswith("/api/plugins/_model_config/model_config_get")
+    assert json.loads(request.data.decode("utf-8")) == {"agent_profile": "acmm"}
+    assert request.get_header("X-csrf-token") == _CSRF_TOKEN
+
+
 def test_runtime_client_creates_context_with_explicit_id() -> None:
     requests = []
 

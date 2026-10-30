@@ -15,9 +15,10 @@ def main() -> int:
     adapter = open_webui_adapter(open_webui_runtime_api_client())
     result = adapter.execute(
         build_subject(
-            subject_id="open_webui_nemotron30b_smoke",
+            subject_id="open_webui_llm_smoke",
             agent_name="Open WebUI",
             agent_version="0.11.4",
+            infrastructure_subject="open-webui",
         ),
         build_scenario(scenario_id="open_webui_adapter_smoke"),
         build_environment(),

@@ -15,12 +15,6 @@ runtime:
   data_directory: data
 
 baseline:
-  model_provider: custom
-  model_base_url: http://host.docker.internal:11434/v1
-  model_api_mode: chat_completions
-  model_default: nemotron-3-nano:30b-cloud
-  context_window: 64000
-  reasoning_effort: medium
   terminal_backend: local
 
 blank_slate:
@@ -43,7 +37,6 @@ experiment_isolation:
   title_generation_enabled: false
   background_review_enabled: false
   tool_search_enabled: "off"
-
 
 plugins:
   managed: []

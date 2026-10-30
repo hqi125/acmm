@@ -1,0 +1,28 @@
+schema_version: "0.1"
+
+baseline:
+  id: gpt_oss_120b_cloud_v1
+  model_name: gpt-oss:120b-cloud
+  logical_provider: ollama_cloud
+  minimum_context_window: 64000
+
+agents:
+  hermes:
+    model_provider: custom
+    model_base_url: http://host.docker.internal:11434/v1
+    model_api_mode: chat_completions
+    requested_context_window: 64000
+    reasoning_effort: medium
+
+  open_webui:
+    ollama_base_url: http://host.docker.internal:11434
+    requested_context_window: null
+
+  agent_zero:
+    model_provider: ollama
+    model_base_url: http://host.docker.internal:11434
+    requested_context_window: 64000
+    utility_model_provider: ollama
+    utility_model_base_url: http://host.docker.internal:11434
+    utility_model_name: gpt-oss:120b-cloud
+    utility_requested_context_window: 64000

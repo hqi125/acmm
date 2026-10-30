@@ -16,6 +16,7 @@ from acmm_infra.deployment import (
     install_default_if_missing,
     read_experiment_apparatus_state,
     write_experiment_apparatus_state,
+    write_llm_baseline_state,
 )
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.profiles.experiments import (
@@ -208,6 +209,13 @@ class hermes_manager:
                     for plugin in self.profile.plugins
                 ],
             )
+
+        write_llm_baseline_state(
+            self.deployment_root,
+            llm_baseline_id=self.profile.llm_baseline_id,
+            model_name=self.profile.model_default,
+            logical_provider=self.profile.llm_logical_provider,
+        )
 
         if output_mode != "quiet":
             if experiment_id is None:
@@ -437,6 +445,9 @@ class hermes_manager:
             "env_path": None,
             "plugins_enabled": [],
             "plugin_tool_overrides": {},
+            "provider_model_available": None,
+            "provider_model_ids": [],
+            "provider_model_error": None,
         }
 
         if running:
@@ -769,6 +780,16 @@ class hermes_manager:
                     detail=(
                         f"observed={observed['model_default']!r}, "
                         f"expected={desired['model_default']!r}"
+                    ),
+                ),
+                doctor_check(
+                    name="provider_model_available",
+                    ok=observed["provider_model_available"] is True,
+                    detail=_provider_model_availability_detail(
+                        desired["model_default"],
+                        observed["provider_model_available"],
+                        observed["provider_model_ids"],
+                        observed["provider_model_error"],
                     ),
                 ),
                 doctor_check(
@@ -1310,6 +1331,27 @@ def _parse_json_value(stdout: str) -> Any:
 
 def _parse_json_scalar(stdout: str) -> Any:
     return _parse_json_value(stdout)
+
+
+def _provider_model_availability_detail(
+    model_name: str,
+    available: object,
+    model_ids: object,
+    error: object,
+) -> str:
+    if available is True:
+        return f"model {model_name!r} is available from the configured Ollama host"
+    if isinstance(error, str) and error:
+        return (
+            f"model {model_name!r} could not be verified from the configured "
+            f"Ollama host: {error}"
+        )
+    count = len(model_ids) if isinstance(model_ids, list) else 0
+    return (
+        f"model {model_name!r} is not registered on the configured Ollama host; "
+        f"observed {count} models. Run 'ollama pull {model_name}' on the Ollama "
+        "host before qualification."
+    )
 
 
 def _version_matches(observed: Any, expected: str) -> bool:

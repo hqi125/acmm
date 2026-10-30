@@ -59,6 +59,27 @@ class fake_agent_zero_client:
     def get_external_api_token(self):
         return "external-key"
 
+    def get_model_config(self, *, agent_profile):
+        assert agent_profile == "acmm"
+        return {
+            "configured_preset": "Default",
+            "selected_preset": "Default",
+            "config": {
+                "chat_model": {
+                    "provider": "ollama",
+                    "name": "nemotron-3-nano:30b-cloud",
+                    "api_base": "http://host.docker.internal:11434",
+                    "ctx_length": 64000,
+                },
+                "utility_model": {
+                    "provider": "ollama",
+                    "name": "nemotron-3-nano:30b-cloud",
+                    "api_base": "http://host.docker.internal:11434",
+                    "ctx_length": 64000,
+                },
+            },
+        }
+
     def update_plugin_config(self, plugin_name, settings):
         assert plugin_name == "acmm_tools"
         self.plugin_configs.append(dict(settings))
@@ -209,6 +230,62 @@ def test_agent_zero_adapter_runs_isolated_context_and_captures_evidence() -> Non
     assert provenance["configuration"]["execution_interface"] == (
         "external_api_with_webui_setup"
     )
+    assert provenance["configuration"]["reported_model"] == (
+        "nemotron-3-nano:30b-cloud"
+    )
+    assert provenance["configuration"]["reported_context_window"] == 64000
+    assert provenance["configuration"]["reported_model_source"] == (
+        "agent_zero_model_config_api"
+    )
+
+
+def test_agent_zero_adapter_rejects_observed_model_mismatch() -> None:
+    client = fake_agent_zero_client()
+
+    def wrong_model(*, agent_profile):
+        assert agent_profile == "acmm"
+        response = client.__class__.get_model_config(client, agent_profile=agent_profile)
+        response["config"]["chat_model"]["name"] = "different-model"
+        return response
+
+    client.get_model_config = wrong_model
+    result = agent_zero_adapter(client).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.termination == "harness_error"
+    assert result.failure is not None
+    assert result.failure.kind == "subject_model_mismatch"
+    assert result.subject_provenance is not None
+    assert result.subject_provenance["configuration"]["reported_model"] == (
+        "different-model"
+    )
+
+
+def test_agent_zero_adapter_rejects_observed_context_mismatch() -> None:
+    client = fake_agent_zero_client()
+
+    def wrong_context(*, agent_profile):
+        assert agent_profile == "acmm"
+        response = client.__class__.get_model_config(client, agent_profile=agent_profile)
+        response["config"]["chat_model"]["ctx_length"] = 32768
+        return response
+
+    client.get_model_config = wrong_context
+    result = agent_zero_adapter(client).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.termination == "harness_error"
+    assert result.failure is not None
+    assert result.failure.kind == "subject_context_mismatch"
+
 
 
 def test_agent_zero_adapter_marks_controlled_tool_failure() -> None:

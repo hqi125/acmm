@@ -17,14 +17,6 @@ runtime:
 baseline:
   agent_profile: acmm
   model_preset: Default
-  model_provider: ollama
-  model_base_url: http://host.docker.internal:11434
-  model_default: nemotron-3-nano:30b-cloud
-  context_window: 64000
-  utility_model_provider: ollama
-  utility_model_base_url: http://host.docker.internal:11434
-  utility_model_default: nemotron-3-nano:30b-cloud
-  utility_context_window: 64000
   embedding_model_provider: huggingface
   embedding_model_default: sentence-transformers/all-MiniLM-L6-v2
 
@@ -46,7 +38,6 @@ experiment_isolation:
     memorize_consolidation: false
   chat_naming:
     automatic_naming: false
-
 
 plugins:
   managed: []

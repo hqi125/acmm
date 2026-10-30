@@ -12,6 +12,7 @@ from acmm_infra.profiles.common import (
     _string_tuple,
     profile_error,
 )
+from acmm_infra.profiles.llm import load_llm_baseline
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,9 @@ class agent_zero_profile:
     web_port: int
     deployment_directory: Path
     data_directory: Path
+    llm_baseline_id: str
+    llm_logical_provider: str
+    llm_minimum_context_window: int
     agent_profile: str
     model_preset: str
     model_provider: str
@@ -66,8 +70,10 @@ class agent_zero_profile:
 
 def load_agent_zero_profile(
     repo_root: str | Path,
+    llm_baseline_id: str | None = None,
 ) -> agent_zero_profile:
     root = Path(repo_root).resolve()
+    llm = load_llm_baseline(root, llm_baseline_id)
     path = root / "infrastructure" / "agent-zero" / "profile.yaml"
 
     try:
@@ -103,15 +109,6 @@ def load_agent_zero_profile(
     web_port = container.get("web_port")
     if not isinstance(web_port, int) or isinstance(web_port, bool):
         raise profile_error("container.web_port must be an integer.")
-
-    context_window = baseline.get("context_window")
-    utility_context_window = baseline.get("utility_context_window")
-    for field_name, value in (
-        ("baseline.context_window", context_window),
-        ("baseline.utility_context_window", utility_context_window),
-    ):
-        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-            raise profile_error(f"{field_name} must be a positive integer.")
 
     if not isinstance(isolation_data, dict):
         raise profile_error("experiment_isolation must be a mapping.")
@@ -254,6 +251,9 @@ def load_agent_zero_profile(
             runtime.get("data_directory"),
             "runtime.data_directory",
         ),
+        llm_baseline_id=llm.id,
+        llm_logical_provider=llm.logical_provider,
+        llm_minimum_context_window=llm.minimum_context_window,
         agent_profile=_nonempty_string(
             baseline.get("agent_profile"),
             "baseline.agent_profile",
@@ -262,32 +262,14 @@ def load_agent_zero_profile(
             baseline.get("model_preset"),
             "baseline.model_preset",
         ),
-        model_provider=_nonempty_string(
-            baseline.get("model_provider"),
-            "baseline.model_provider",
-        ),
-        model_base_url=_nonempty_string(
-            baseline.get("model_base_url"),
-            "baseline.model_base_url",
-        ),
-        model_default=_nonempty_string(
-            baseline.get("model_default"),
-            "baseline.model_default",
-        ),
-        context_window=context_window,
-        utility_model_provider=_nonempty_string(
-            baseline.get("utility_model_provider"),
-            "baseline.utility_model_provider",
-        ),
-        utility_model_base_url=_nonempty_string(
-            baseline.get("utility_model_base_url"),
-            "baseline.utility_model_base_url",
-        ),
-        utility_model_default=_nonempty_string(
-            baseline.get("utility_model_default"),
-            "baseline.utility_model_default",
-        ),
-        utility_context_window=utility_context_window,
+        model_provider=llm.agent_zero.model_provider,
+        model_base_url=llm.agent_zero.model_base_url,
+        model_default=llm.model_name,
+        context_window=llm.agent_zero.requested_context_window,
+        utility_model_provider=llm.agent_zero.utility_model_provider,
+        utility_model_base_url=llm.agent_zero.utility_model_base_url,
+        utility_model_default=llm.agent_zero.utility_model_name,
+        utility_context_window=llm.agent_zero.utility_requested_context_window,
         embedding_model_provider=_nonempty_string(
             baseline.get("embedding_model_provider"),
             "baseline.embedding_model_provider",

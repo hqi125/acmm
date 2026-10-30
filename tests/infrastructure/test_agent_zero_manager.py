@@ -478,6 +478,21 @@ def test_up_waits_for_web_backend(tmp_path: Path) -> None:
     assert docker.running is True
 
 
+def test_status_exposes_live_primary_and_utility_context(tmp_path: Path) -> None:
+    manager, docker, _ = _manager(tmp_path)
+    manager.apply(timeout_seconds=1.0)
+    docker.running = True
+
+    status = manager.status()
+    live = status["observed"]["live_application"]
+
+    assert live["observed_model"] == "gpt-oss:120b-cloud"
+    assert live["observed_context_window"] == 64000
+    assert live["observed_utility_model"] == "gpt-oss:120b-cloud"
+    assert live["observed_utility_context_window"] == 64000
+
+
+
 def test_doctor_is_ready_for_matching_running_stage2_baseline(tmp_path: Path) -> None:
     manager, docker, _ = _manager(tmp_path)
     manager.apply(timeout_seconds=1.0)
@@ -489,7 +504,7 @@ def test_doctor_is_ready_for_matching_running_stage2_baseline(tmp_path: Path) ->
     names = {check.name for check in report.checks}
     assert "persistent_settings" in names
     assert "model_config" in names
-    assert "experiment_model" in names
+    assert "provider_model_available" in names
 
 
 def test_doctor_detects_managed_plugin_drift(tmp_path: Path) -> None:
@@ -643,7 +658,7 @@ def test_doctor_detects_initial_message_prompt_drift(tmp_path: Path) -> None:
     assert not check.ok
 
 
-def test_doctor_detects_missing_experiment_model(tmp_path: Path) -> None:
+def test_doctor_detects_missing_provider_model(tmp_path: Path) -> None:
     manager, docker, api = _manager(tmp_path)
     manager.apply(timeout_seconds=1.0)
     docker.running = True
@@ -652,7 +667,7 @@ def test_doctor_detects_missing_experiment_model(tmp_path: Path) -> None:
     report = manager.doctor()
 
     assert not report.is_ready
-    check = next(item for item in report.checks if item.name == "experiment_model")
+    check = next(item for item in report.checks if item.name == "provider_model_available")
     assert not check.ok
 
 

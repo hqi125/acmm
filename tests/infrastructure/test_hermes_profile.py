@@ -14,7 +14,7 @@ def test_hermes_profile_loads_repository_baseline() -> None:
     assert profile.model_provider == "custom"
     assert profile.model_base_url == "http://host.docker.internal:11434/v1"
     assert profile.model_api_mode == "chat_completions"
-    assert profile.model_default == "nemotron-3-nano:30b-cloud"
+    assert profile.model_default == "gpt-oss:120b-cloud"
     assert profile.context_window == 64000
     assert profile.reasoning_effort == "medium"
     assert profile.terminal_backend == "local"

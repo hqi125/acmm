@@ -21,10 +21,10 @@ def test_agent_zero_profile_loads_repository_baseline() -> None:
     assert profile.model_preset == "Default"
     assert profile.model_provider == "ollama"
     assert profile.model_base_url == "http://host.docker.internal:11434"
-    assert profile.model_default == "nemotron-3-nano:30b-cloud"
+    assert profile.model_default == "gpt-oss:120b-cloud"
     assert profile.context_window == 64000
     assert profile.utility_model_provider == "ollama"
-    assert profile.utility_model_default == "nemotron-3-nano:30b-cloud"
+    assert profile.utility_model_default == "gpt-oss:120b-cloud"
     assert profile.utility_context_window == 64000
     assert profile.embedding_model_provider == "huggingface"
     assert profile.embedding_model_default == "sentence-transformers/all-MiniLM-L6-v2"

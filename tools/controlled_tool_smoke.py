@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
 from typing import Any
 
 from acmm.runtime.interfaces import adapter_execution_result
+from acmm_infra.profiles.llm import (
+    load_llm_baseline,
+    primary_requested_context_window,
+    runtime_provenance_configuration,
+)
 
 
 _PROMPT = (
@@ -23,12 +29,46 @@ class controlled_tool_smoke_summary:
     redundant_tool_call_count: int
 
 
+@dataclass(frozen=True)
+class controlled_tool_smoke_assessment:
+    passed: bool
+    detail: str
+    final_response: str | None
+    tool_calls: tuple[dict[str, Any], ...]
+    tool_results: tuple[dict[str, Any], ...]
+    summary: controlled_tool_smoke_summary | None
+
+
 def build_subject(
     *,
     subject_id: str,
     agent_name: str,
     agent_version: str,
+    infrastructure_subject: str,
+    repo_root: str | Path | None = None,
+    llm_baseline_id: str | None = None,
 ) -> dict[str, Any]:
+    root = (
+        Path(repo_root).expanduser().resolve()
+        if repo_root is not None
+        else Path(__file__).resolve().parents[1]
+    )
+    baseline = load_llm_baseline(root, llm_baseline_id)
+    requested_context = primary_requested_context_window(
+        baseline,
+        infrastructure_subject,
+    )
+    configuration = {
+        "context_window": (
+            requested_context
+            if requested_context is not None
+            else baseline.minimum_context_window
+        ),
+        **runtime_provenance_configuration(
+            baseline,
+            infrastructure_subject,
+        ),
+    }
     return {
         "id": subject_id,
         "agent": {
@@ -36,12 +76,10 @@ def build_subject(
             "version": agent_version,
         },
         "model": {
-            "name": "nemotron-3-nano:30b-cloud",
-            "provider": "ollama_cloud",
+            "name": baseline.model_name,
+            "provider": baseline.logical_provider,
         },
-        "configuration": {
-            "context_window": 64000,
-        },
+        "configuration": configuration,
     }
 
 
@@ -68,12 +106,16 @@ def build_termination() -> dict[str, int]:
     }
 
 
-def print_and_check_result(result: adapter_execution_result) -> int:
-    print(f"termination: {result.termination}")
+def assess_result(result: adapter_execution_result) -> controlled_tool_smoke_assessment:
     if result.failure is not None:
-        print(f"failure: {result.failure.kind}: {result.failure.message}")
-        print("smoke: FAIL")
-        return 1
+        return controlled_tool_smoke_assessment(
+            passed=False,
+            detail=f"{result.failure.kind}: {result.failure.message}",
+            final_response=None,
+            tool_calls=(),
+            tool_results=(),
+            summary=None,
+        )
 
     try:
         evidence = {item.id: item for item in result.evidence}
@@ -87,22 +129,53 @@ def print_and_check_result(result: adapter_execution_result) -> int:
             tool_results,
         )
     except (KeyError, UnicodeDecodeError, ValueError, TypeError) as error:
-        print(f"smoke check failure: {error}")
+        return controlled_tool_smoke_assessment(
+            passed=False,
+            detail=str(error),
+            final_response=None,
+            tool_calls=(),
+            tool_results=(),
+            summary=None,
+        )
+
+    return controlled_tool_smoke_assessment(
+        passed=True,
+        detail="required dependency path and final result satisfied",
+        final_response=final_response,
+        tool_calls=tuple(tool_calls),
+        tool_results=tuple(tool_results),
+        summary=summary,
+    )
+
+
+def print_and_check_result(result: adapter_execution_result) -> int:
+    print(f"termination: {result.termination}")
+    assessment = assess_result(result)
+    if not assessment.passed:
+        if result.failure is not None:
+            print(f"failure: {assessment.detail}")
+        else:
+            print(f"smoke check failure: {assessment.detail}")
         print("smoke: FAIL")
         return 1
 
+    assert assessment.final_response is not None
+    assert assessment.summary is not None
     print("final response:")
-    print(final_response)
+    print(assessment.final_response)
     print("tool calls:")
-    print(json.dumps(tool_calls, indent=2))
+    print(json.dumps(assessment.tool_calls, indent=2))
     print("tool results:")
-    print(json.dumps(tool_results, indent=2))
+    print(json.dumps(assessment.tool_results, indent=2))
     print("checks:")
     print("  required dependency path: PASS")
     print("  final result: PASS")
     print("observations:")
-    print(f"  controlled tool calls: {summary.tool_call_count}")
-    print(f"  redundant controlled tool calls: {summary.redundant_tool_call_count}")
+    print(f"  controlled tool calls: {assessment.summary.tool_call_count}")
+    print(
+        "  redundant controlled tool calls: "
+        f"{assessment.summary.redundant_tool_call_count}"
+    )
     print("  upstream model requests: observe externally; not a pass criterion")
     print("smoke: PASS")
     return 0

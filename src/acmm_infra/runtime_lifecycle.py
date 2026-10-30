@@ -25,11 +25,13 @@ class subject_runtime_lease:
         repo_root: str | Path,
         runtime_root: str | Path,
         infrastructure_subject: str,
+        llm_baseline_id: str | None = None,
     ) -> subject_runtime_lease:
         context = build_deployed_subject_manager(
             repo_root,
             runtime_root,
             infrastructure_subject,
+            llm_baseline_id,
         )
         return cls(
             infrastructure_subject=infrastructure_subject,
@@ -84,12 +86,14 @@ def discover_runtime_lease(
     repo_root: str | Path,
     runtime_root: str | Path,
     infrastructure_subject: str,
+    llm_baseline_id: str | None = None,
 ) -> subject_runtime_lease:
     try:
         return subject_runtime_lease.discover(
             repo_root,
             runtime_root,
             infrastructure_subject,
+            llm_baseline_id,
         )
     except (infrastructure_error, profile_error, OSError, ValueError):
         raise

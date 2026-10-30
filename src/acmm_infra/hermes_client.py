@@ -28,11 +28,18 @@ class hermes_client:
     def profile_operation_count(self, profile: hermes_profile) -> int:
         settings = _profile_settings(profile)
         extra_operations = 3 if profile.blank_slate.enabled else 0
-        return len(settings) + len(profile.plugins) + extra_operations
+        residue_operation = 1 if _disabled_plugin_toolsets(profile.plugins) else 0
+        return (
+            len(settings)
+            + len(profile.plugins)
+            + extra_operations
+            + residue_operation
+        )
 
     def tool_operation_count(self, profile: hermes_profile) -> int:
         toolset_operation = 1 if profile.plugins else 0
-        return 1 + toolset_operation + len(profile.plugins)
+        residue_operation = 1 if _disabled_plugin_toolsets(profile.plugins) else 0
+        return 1 + toolset_operation + len(profile.plugins) + residue_operation
 
     def apply_profile(
         self,
@@ -349,6 +356,11 @@ def _build_observation_script(
             "print(json.dumps(sorted(ESSENTIAL_SKILLS)))"
         ),
     ]
+    provider_catalog_command = [
+        HERMES_PYTHON,
+        "-c",
+        _provider_model_catalog_python(profile),
+    ]
 
     commands = (
         commands
@@ -369,6 +381,10 @@ def _build_observation_script(
             (
                 "essential_skills",
                 essential_skills_command,
+            ),
+            (
+                "provider_model_catalog",
+                provider_catalog_command,
             ),
         )
     )
@@ -442,6 +458,22 @@ def _parse_observation_output(
     observed["config_path"] = raw.get("config_path") or None
     observed["env_path"] = raw.get("env_path") or None
 
+    provider_catalog = _parse_json_value(raw.get("provider_model_catalog", ""))
+    if isinstance(provider_catalog, dict):
+        observed["provider_model_available"] = provider_catalog.get("available")
+        model_ids = provider_catalog.get("models")
+        observed["provider_model_ids"] = (
+            [item for item in model_ids if isinstance(item, str)]
+            if isinstance(model_ids, list)
+            else []
+        )
+        error = provider_catalog.get("error")
+        observed["provider_model_error"] = error if isinstance(error, str) else None
+    else:
+        observed["provider_model_available"] = None
+        observed["provider_model_ids"] = []
+        observed["provider_model_error"] = "provider model catalog could not be read"
+
     plugins = _parse_json_value(raw.get("plugins_enabled", ""))
     observed["plugins_enabled"] = (
         [item for item in plugins if isinstance(item, str)]
@@ -459,6 +491,25 @@ def _parse_observation_output(
         )
 
     return observed
+
+
+def _provider_model_catalog_python(profile: hermes_profile) -> str:
+    base_url = profile.model_base_url.removesuffix("/v1").rstrip("/")
+    return (
+        "import json,urllib.request; "
+        f"url={base_url!r} + '/api/tags'; "
+        f"target={profile.model_default!r}; "
+        "out={'available':False,'models':[],'error':None}; "
+        "\ntry:\n"
+        " data=json.load(urllib.request.urlopen(url, timeout=10)); "
+        " models=[str(item.get('name') or item.get('model')) for item in "
+        "data.get('models',[]) if isinstance(item,dict) and "
+        "(item.get('name') or item.get('model'))]; "
+        " out={'available':target in models,'models':models,'error':None} "
+        "\nexcept Exception as exc:\n"
+        " out={'available':False,'models':[],'error':str(exc)} "
+        "\nprint(json.dumps(out,separators=(',',':')))"
+    )
 
 
 def _experiment_isolation_settings(
@@ -518,6 +569,21 @@ def _build_tool_provisioning_script(
         )
 
     operations.extend(_plugin_operations(plugins))
+
+    disabled_toolsets = _disabled_plugin_toolsets(plugins)
+    if disabled_toolsets:
+        command = [
+            HERMES_PYTHON,
+            "-c",
+            _purge_disabled_plugin_toolsets_python(disabled_toolsets),
+        ]
+        operations.append(
+            (
+                "purge disabled plugin toolset residue",
+                " ".join(shlex.quote(part) for part in command),
+            )
+        )
+
     return _render_provisioning_operations(operations)
 
 
@@ -559,6 +625,41 @@ print(
     + (",".join(sorted(enabled)) or "none")
     + "; disabled="
     + (",".join(sorted(disabled_overlay)) or "none")
+)
+""".strip()
+
+
+def _disabled_plugin_toolsets(
+    plugins: tuple[managed_hermes_plugin, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                toolset
+                for plugin in plugins
+                if not plugin.enabled
+                for toolset in plugin.toolsets
+            }
+        )
+    )
+
+
+def _purge_disabled_plugin_toolsets_python(
+    toolsets: tuple[str, ...],
+) -> str:
+    return f"""
+from hermes_cli.setup import load_config, save_config
+
+purge = set({list(toolsets)!r})
+config = load_config()
+agent = config.setdefault("agent", {{}})
+disabled = set(agent.get("disabled_toolsets") or [])
+disabled.difference_update(purge)
+agent["disabled_toolsets"] = sorted(disabled)
+save_config(config)
+print(
+    "✓ Disabled plugin toolset residue purged: "
+    + ",".join(sorted(purge))
 )
 """.strip()
 
@@ -700,6 +801,21 @@ def _build_provisioning_script(
         )
 
     operations.extend(_plugin_operations(plugins))
+
+    disabled_toolsets = _disabled_plugin_toolsets(plugins)
+    if disabled_toolsets:
+        command = [
+            HERMES_PYTHON,
+            "-c",
+            _purge_disabled_plugin_toolsets_python(disabled_toolsets),
+        ]
+        operations.append(
+            (
+                "purge disabled plugin toolset residue",
+                " ".join(shlex.quote(part) for part in command),
+            )
+        )
+
     return _render_provisioning_operations(operations)
 
 

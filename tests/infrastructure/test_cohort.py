@@ -84,14 +84,143 @@ def test_resolve_experiment_cohort_rejects_subject_outside_contract() -> None:
         )
 
 
+def test_llm_observation_distinguishes_configured_context_from_capability_metadata() -> None:
+    baseline_id = "nemotron_3_nano_30b_cloud_v1"
+    hermes = cohort_module._observe_llm_context(
+        ROOT,
+        cohort_subject("hermes_nemotron30b", "hermes", baseline_id),
+        baseline_id,
+        {
+            "observed": {
+                "live_observation_ok": True,
+                "model_default": "nemotron-3-nano:30b-cloud",
+                "context_window": 64000,
+            }
+        },
+    )
+    assert hermes.context_observation_kind == "configured_effective"
+    assert hermes.observed_context_window == 64000
+    assert hermes.context_meets_minimum is True
+    assert hermes.context_matches_requested is True
+
+    open_webui = cohort_module._observe_llm_context(
+        ROOT,
+        cohort_subject("open_webui_nemotron30b", "open-webui", baseline_id),
+        baseline_id,
+        {
+            "observed": {
+                "backend": {
+                    "model_available": True,
+                    "model_context_window": 131072,
+                    "model_context_source": (
+                        "open_webui_model_catalog:info.context_length"
+                    ),
+                }
+            }
+        },
+    )
+    assert open_webui.context_observation_kind == "model_capability"
+    assert open_webui.requested_context_window is None
+    assert open_webui.observed_context_window == 131072
+    assert open_webui.context_meets_minimum is True
+    assert open_webui.context_matches_requested is None
+
+    agent_zero = cohort_module._observe_llm_context(
+        ROOT,
+        cohort_subject("agent_zero_nemotron30b", "agent-zero", baseline_id),
+        baseline_id,
+        {
+            "observed": {
+                "live_application": {
+                    "error": None,
+                    "observed_model": "nemotron-3-nano:30b-cloud",
+                    "observed_context_window": 64000,
+                    "observed_utility_model": "nemotron-3-nano:30b-cloud",
+                    "observed_utility_context_window": 64000,
+                }
+            }
+        },
+    )
+    assert agent_zero.context_observation_kind == "configured_effective"
+    assert agent_zero.observed_context_window == 64000
+    assert agent_zero.observed_utility_context_window == 64000
+
+
+
+def test_apply_cohort_propagates_selected_llm_baseline(monkeypatch, tmp_path: Path) -> None:
+    baseline_id = "gpt_oss_120b_cloud_candidate_v1"
+    manager = _fake_manager(running=False)
+    observed_baselines: list[str | None] = []
+
+    def fake_builder(
+        repo_root,
+        runtime_root,
+        infrastructure_subject,
+        experiment_id,
+        llm_baseline_id=None,
+    ):
+        del repo_root, runtime_root, experiment_id
+        observed_baselines.append(llm_baseline_id)
+        return subject_manager_context(
+            infrastructure_subject=infrastructure_subject,
+            experiment_id=None,
+            manager=manager,
+            llm_baseline_id=llm_baseline_id or baseline_id,
+        )
+
+    def fake_inspect(repo_root, runtime_root, subject, include_running=True):
+        del repo_root, runtime_root, include_running
+        return cohort_subject_status(
+            subject_id=subject.subject_id,
+            infrastructure_subject=subject.infrastructure_subject,
+            running=None,
+            experiment_id=None,
+            application_scope=None,
+            apparatus_state="none",
+            source_sha256=None,
+        )
+
+    monkeypatch.setattr(cohort_module, "build_subject_manager", fake_builder)
+    monkeypatch.setattr(cohort_module, "inspect_subject_context", fake_inspect)
+
+    cohort = experiment_cohort(
+        experiment_id=None,
+        canonical_contract=None,
+        subjects=(
+            cohort_subject(
+                "hermes_llm_qualification",
+                "hermes",
+                baseline_id,
+            ),
+        ),
+    )
+    results = apply_cohort(
+        tmp_path,
+        tmp_path / "runtime",
+        cohort,
+        timeout_seconds=120.0,
+        progress=lambda *args: None,
+    )
+
+    assert manager.applied is True
+    assert observed_baselines == [baseline_id]
+    assert len(results) == 1
+
+
 def test_apply_cohort_checks_all_runtimes_before_mutating(monkeypatch, tmp_path: Path) -> None:
     managers = {
         "hermes": _fake_manager(running=False),
         "open-webui": _fake_manager(running=True),
     }
 
-    def fake_builder(repo_root, runtime_root, infrastructure_subject, experiment_id):
-        del repo_root, runtime_root
+    def fake_builder(
+        repo_root,
+        runtime_root,
+        infrastructure_subject,
+        experiment_id,
+        llm_baseline_id=None,
+    ):
+        del repo_root, runtime_root, llm_baseline_id
         return subject_manager_context(
             infrastructure_subject=infrastructure_subject,
             experiment_id=experiment_id,
@@ -152,8 +281,14 @@ def test_apply_cohort_reports_partial_failure_without_rollback(monkeypatch, tmp_
     second = failing_manager(running=False)
     managers = {"hermes": first, "open-webui": second}
 
-    def fake_builder(repo_root, runtime_root, infrastructure_subject, experiment_id):
-        del repo_root, runtime_root
+    def fake_builder(
+        repo_root,
+        runtime_root,
+        infrastructure_subject,
+        experiment_id,
+        llm_baseline_id=None,
+    ):
+        del repo_root, runtime_root, llm_baseline_id
         return subject_manager_context(
             infrastructure_subject=infrastructure_subject,
             experiment_id=experiment_id,
@@ -227,13 +362,18 @@ def test_doctor_cohort_temporarily_starts_subjects_sequentially(
     monkeypatch.setattr(
         cohort_module,
         "discover_runtime_lease",
-        lambda repo_root, runtime_root, infrastructure_subject: fake_lease(
-            infrastructure_subject
+        lambda repo_root, runtime_root, infrastructure_subject, llm_baseline_id=None: (
+            fake_lease(infrastructure_subject)
         ),
     )
 
-    def fake_doctor(repo_root, runtime_root, infrastructure_subject):
-        del repo_root, runtime_root
+    def fake_doctor(
+        repo_root,
+        runtime_root,
+        infrastructure_subject,
+        llm_baseline_id=None,
+    ):
+        del repo_root, runtime_root, llm_baseline_id
         events.append(f"doctor:{infrastructure_subject}")
         return deployed_subject_doctor_result(
             infrastructure_subject=infrastructure_subject,
@@ -320,9 +460,9 @@ def test_stop_cohort_ignores_experiment_convergence(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(
         cohort_module,
         "discover_runtime_lease",
-        lambda repo_root, runtime_root, infrastructure_subject: leases[
-            infrastructure_subject
-        ],
+        lambda repo_root, runtime_root, infrastructure_subject, llm_baseline_id=None: (
+            leases[infrastructure_subject]
+        ),
     )
 
     results = cohort_module.stop_cohort(

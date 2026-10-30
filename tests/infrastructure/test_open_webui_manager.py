@@ -109,7 +109,12 @@ class fake_open_webui_api:
 
     def get_models(self, token: str):
         assert token == "test-token"
-        return [{"id": self.model}]
+        return [
+            {
+                "id": self.model,
+                "info": {"context_length": 131072},
+            }
+        ]
 
     def get_tool(self, token: str, tool_id: str):
         assert token == "test-token"
@@ -334,6 +339,22 @@ def test_apply_reconciles_persistent_provider_config(tmp_path: Path) -> None:
     assert api.config["terminal_server.connections"] == []
     assert result["tools"]["created"] == ()
     assert docker.running is False
+
+
+def test_status_exposes_model_context_capability_metadata(tmp_path: Path) -> None:
+    manager, docker, _ = _manager(tmp_path)
+    manager.apply()
+    docker.running = True
+
+    status = manager.status()
+    backend = status["observed"]["backend"]
+
+    assert backend["model_available"] is True
+    assert backend["model_context_window"] == 131072
+    assert backend["model_context_source"] == (
+        "open_webui_model_catalog:info.context_length"
+    )
+
 
 
 def test_doctor_is_ready_for_matching_running_baseline(tmp_path: Path) -> None:

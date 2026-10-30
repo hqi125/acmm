@@ -139,9 +139,7 @@ class sequence_adapter:
                     "name": "nemotron-3-nano:30b-cloud",
                     "provider": "ollama_cloud",
                 },
-                "configuration": {
-                    "context_window": 64000,
-                },
+                "configuration": dict(subject.get("configuration", {})),
             },
         )
 
@@ -159,6 +157,13 @@ def _registry(adapter: sequence_adapter) -> execution_registry:
         evaluators={
             "magic_number_retrieval": evaluator,
             "magic_number_addition": evaluator,
+        },
+        subject_configuration_overlays={
+            "hermes_nemotron30b": {
+                "llm_baseline_id": "nemotron_3_nano_30b_cloud_v1",
+                "llm_minimum_context_window": 64000,
+                "llm_requested_context_window": 64000,
+            }
         },
     )
 
@@ -258,6 +263,9 @@ def test_execute_experiment_snapshots_contract_and_completes_plan(
     assert manifest["execution"]["planned_run_count"] == 5
     assert manifest["execution"]["resolved_run_count"] == 5
     assert manifest["execution"]["unresolved_run_indices"] == []
+    assert manifest["execution"]["subject_llm_baselines"] == {
+        "hermes_nemotron30b": "nemotron_3_nano_30b_cloud_v1"
+    }
     assert len(manifest["slots"]) == 5
 
     for slot in manifest["slots"]:

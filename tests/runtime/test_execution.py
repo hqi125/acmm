@@ -296,6 +296,54 @@ def test_adapter_failure_produces_valid_record_of_invalid_execution() -> None:
     _validate_result(contract, result)
 
 
+def test_subject_configuration_overlay_is_captured_in_realized_provenance() -> None:
+    contract = load_contract(CONTRACT_PATH)
+    planned = build_experiment_plan(contract).runs[0]
+
+    class overlay_adapter(fake_adapter):
+        def execute(self, subject, scenario, environment, termination):
+            result = super().execute(subject, scenario, environment, termination)
+            provenance = dict(result.subject_provenance or {})
+            provenance["configuration"] = dict(subject.get("configuration", {}))
+            return adapter_execution_result(
+                termination=result.termination,
+                evidence=result.evidence,
+                subject_provenance=provenance,
+                failure=result.failure,
+            )
+
+    registry = execution_registry(
+        subject_adapters={"hermes_nemotron30b": overlay_adapter()},
+        fixtures={"magic_number_environment_v1": fake_fixture()},
+        evaluators={
+            "magic_number_retrieval": retrieval_evaluator(),
+            "magic_number_addition": addition_evaluator(),
+        },
+        subject_configuration_overlays={
+            "hermes_nemotron30b": {
+                "llm_baseline_id": "nemotron_3_nano_30b_cloud_v1",
+                "llm_minimum_context_window": 64000,
+                "llm_requested_context_window": 64000,
+            }
+        },
+    )
+    result = execute_planned_run(
+        contract,
+        planned,
+        sha256_file(CONTRACT_PATH),
+        registry,
+        "0.1.0",
+        now=_clock(),
+        run_id_factory=lambda: RUN_ID,
+    )
+
+    configuration = result.record["provenance"]["subject"]["configuration"]
+    assert configuration["llm_baseline_id"] == "nemotron_3_nano_30b_cloud_v1"
+    assert configuration["llm_minimum_context_window"] == 64000
+    assert configuration["llm_requested_context_window"] == 64000
+
+
+
 def test_fixture_failure_allows_partial_invalid_provenance() -> None:
     contract = load_contract(CONTRACT_PATH)
     planned = build_experiment_plan(contract).runs[0]

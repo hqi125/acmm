@@ -15,9 +15,10 @@ def main() -> int:
     adapter = agent_zero_adapter(agent_zero_runtime_api_client())
     result = adapter.execute(
         build_subject(
-            subject_id="agent_zero_nemotron30b_smoke",
+            subject_id="agent_zero_llm_smoke",
             agent_name="Agent Zero",
             agent_version="v2.14",
+            infrastructure_subject="agent-zero",
         ),
         build_scenario(scenario_id="agent_zero_adapter_smoke"),
         build_environment(),

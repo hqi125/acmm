@@ -20,6 +20,9 @@ class agent_zero_adapter_client(Protocol):
     def get_external_api_token(self) -> str:
         ...
 
+    def get_model_config(self, *, agent_profile: str) -> dict[str, Any]:
+        ...
+
     def update_plugin_config(
         self,
         plugin_name: str,
@@ -84,6 +87,7 @@ class agent_zero_adapter:
         api_key: str | None = None
         context_id: str | None = None
         prompt: str | None = None
+        model_observation: dict[str, Any] | None = None
         tool_config_applied = False
 
         try:
@@ -108,6 +112,23 @@ class agent_zero_adapter:
             if created_id != context_id:
                 raise agent_zero_adapter_error(
                     "Agent Zero created a different context ID than requested."
+                )
+
+            model_observation = self._client.get_model_config(
+                agent_profile=self._config.agent_profile
+            )
+            model_failure = _validate_model_observation(subject, model_observation)
+            if model_failure is not None:
+                return adapter_execution_result(
+                    termination="harness_error",
+                    evidence=(),
+                    subject_provenance=_subject_provenance(
+                        subject=subject,
+                        context_id=context_id,
+                        agent_profile=self._config.agent_profile,
+                        model_observation=model_observation,
+                    ),
+                    failure=model_failure,
                 )
 
             response = self._client.send_message(
@@ -146,6 +167,7 @@ class agent_zero_adapter:
                 subject=subject,
                 plugin_name=self._config.plugin_name,
                 agent_profile=self._config.agent_profile,
+                model_observation=model_observation,
             )
 
             if parsed.failure is not None:
@@ -183,6 +205,7 @@ class agent_zero_adapter:
                     subject=subject,
                     plugin_name=self._config.plugin_name,
                     agent_profile=self._config.agent_profile,
+                    model_observation=model_observation,
                     require_final_response=False,
                 )
             except Exception as log_exc:
@@ -246,6 +269,7 @@ def _parse_run(
     subject: dict[str, Any],
     plugin_name: str,
     agent_profile: str,
+    model_observation: dict[str, Any] | None,
     require_final_response: bool = True,
 ) -> _parsed_run:
     returned_context_id = logs.get("context_id")
@@ -279,6 +303,7 @@ def _parse_run(
         subject=subject,
         context_id=context_id,
         agent_profile=agent_profile,
+        model_observation=model_observation,
     )
     evidence = (
         captured_evidence(
@@ -541,11 +566,107 @@ def _tool_output_has_error(output: str) -> bool:
     return value.get("ok") is False or "error" in value
 
 
+def _validate_model_observation(
+    subject: dict[str, Any],
+    response: dict[str, Any],
+) -> execution_failure | None:
+    observed = _model_observation_fields(response)
+    expected_model = _required_string(
+        subject.get("model", {}).get("name"),
+        "subject model name",
+    )
+    actual_model = observed.get("reported_model")
+    if actual_model != expected_model:
+        return execution_failure(
+            kind="subject_model_mismatch",
+            message=(
+                f"Agent Zero model configuration reported {actual_model!r}; "
+                f"Contract subject requires {expected_model!r}."
+            ),
+        )
+
+    configuration = subject.get("configuration", {})
+    if not isinstance(configuration, dict):
+        configuration = {}
+    expected_context = configuration.get("llm_requested_context_window")
+    if expected_context is None:
+        expected_context = configuration.get("context_window")
+    actual_context = observed.get("reported_context_window")
+    if (
+        isinstance(expected_context, int)
+        and not isinstance(expected_context, bool)
+        and actual_context != expected_context
+    ):
+        return execution_failure(
+            kind="subject_context_mismatch",
+            message=(
+                f"Agent Zero model configuration reported context "
+                f"{actual_context!r}; runtime baseline requests "
+                f"{expected_context!r}."
+            ),
+        )
+
+    expected_utility = configuration.get("llm_utility_model")
+    actual_utility = observed.get("reported_utility_model")
+    if isinstance(expected_utility, str) and actual_utility != expected_utility:
+        return execution_failure(
+            kind="subject_utility_model_mismatch",
+            message=(
+                f"Agent Zero utility model configuration reported "
+                f"{actual_utility!r}; runtime baseline requires "
+                f"{expected_utility!r}."
+            ),
+        )
+
+    expected_utility_context = configuration.get(
+        "llm_utility_requested_context_window"
+    )
+    actual_utility_context = observed.get("reported_utility_context_window")
+    if (
+        isinstance(expected_utility_context, int)
+        and not isinstance(expected_utility_context, bool)
+        and actual_utility_context != expected_utility_context
+    ):
+        return execution_failure(
+            kind="subject_utility_context_mismatch",
+            message=(
+                f"Agent Zero utility context configuration reported "
+                f"{actual_utility_context!r}; runtime baseline requests "
+                f"{expected_utility_context!r}."
+            ),
+        )
+    return None
+
+
+def _model_observation_fields(
+    response: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(response, dict):
+        return {}
+    config = response.get("config")
+    if not isinstance(config, dict):
+        return {}
+    chat = config.get("chat_model")
+    utility = config.get("utility_model")
+    if not isinstance(chat, dict):
+        chat = {}
+    if not isinstance(utility, dict):
+        utility = {}
+    return {
+        "reported_model": chat.get("name"),
+        "reported_context_window": chat.get("ctx_length"),
+        "reported_utility_model": utility.get("name"),
+        "reported_utility_context_window": utility.get("ctx_length"),
+        "reported_model_source": "agent_zero_model_config_api",
+    }
+
+
 def _subject_provenance(
     *,
     subject: dict[str, Any],
     context_id: str,
     agent_profile: str,
+    model_observation: dict[str, Any] | None,
 ) -> dict[str, Any]:
     agent = dict(subject.get("agent", {}))
     model = dict(subject.get("model", {}))
@@ -557,6 +678,8 @@ def _subject_provenance(
             "execution_interface": "external_api_with_webui_setup",
         }
     )
+    observed = _model_observation_fields(model_observation)
+    configuration.update(observed)
     return {
         "agent": agent,
         "model": model,

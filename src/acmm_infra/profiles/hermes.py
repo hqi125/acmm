@@ -13,6 +13,7 @@ from acmm_infra.profiles.common import (
     _string_tuple,
     profile_error,
 )
+from acmm_infra.profiles.llm import load_llm_baseline
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,9 @@ class hermes_profile:
     gateway_port: int
     deployment_directory: Path
     data_directory: Path
+    llm_baseline_id: str
+    llm_logical_provider: str
+    llm_minimum_context_window: int
     model_provider: str
     model_base_url: str
     model_api_mode: str
@@ -69,8 +73,10 @@ class hermes_profile:
 
 def load_hermes_profile(
     repo_root: str | Path,
+    llm_baseline_id: str | None = None,
 ) -> hermes_profile:
     root = Path(repo_root).resolve()
+    llm = load_llm_baseline(root, llm_baseline_id)
     path = root / "infrastructure" / "hermes" / "profile.yaml"
 
     try:
@@ -155,12 +161,8 @@ def load_hermes_profile(
         )
 
     gateway_port = container.get("gateway_port")
-    context_window = baseline.get("context_window")
     if not isinstance(gateway_port, int) or isinstance(gateway_port, bool):
         raise profile_error("container.gateway_port must be an integer.")
-
-    if not isinstance(context_window, int) or isinstance(context_window, bool):
-        raise profile_error("baseline.context_window must be an integer.")
 
     blank_slate = _load_blank_slate_profile(blank_slate_data)
     experiment_isolation = _load_experiment_isolation_profile(
@@ -181,27 +183,15 @@ def load_hermes_profile(
             runtime.get("data_directory"),
             "runtime.data_directory",
         ),
-        model_provider=_nonempty_string(
-            baseline.get("model_provider"),
-            "baseline.model_provider",
-        ),
-        model_base_url=_nonempty_string(
-            baseline.get("model_base_url"),
-            "baseline.model_base_url",
-        ),
-        model_api_mode=_nonempty_string(
-            baseline.get("model_api_mode"),
-            "baseline.model_api_mode",
-        ),
-        model_default=_nonempty_string(
-            baseline.get("model_default"),
-            "baseline.model_default",
-        ),
-        context_window=context_window,
-        reasoning_effort=_nonempty_string(
-            baseline.get("reasoning_effort"),
-            "baseline.reasoning_effort",
-        ),
+        llm_baseline_id=llm.id,
+        llm_logical_provider=llm.logical_provider,
+        llm_minimum_context_window=llm.minimum_context_window,
+        model_provider=llm.hermes.model_provider,
+        model_base_url=llm.hermes.model_base_url,
+        model_api_mode=llm.hermes.model_api_mode,
+        model_default=llm.model_name,
+        context_window=llm.hermes.requested_context_window,
+        reasoning_effort=llm.hermes.reasoning_effort,
         terminal_backend=_nonempty_string(
             baseline.get("terminal_backend"),
             "baseline.terminal_backend",

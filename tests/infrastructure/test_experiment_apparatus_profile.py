@@ -133,6 +133,12 @@ def test_hermes_experiment_rejects_plugin_without_manifest(tmp_path: Path) -> No
     (target_root / "profile.yaml").write_bytes(
         (baseline_root / "profile.yaml").read_bytes()
     )
+    llm_source = ROOT / "infrastructure" / "llm-baselines"
+    llm_target = repo_root / "infrastructure" / "llm-baselines"
+    llm_target.mkdir(parents=True)
+    for source in llm_source.iterdir():
+        if source.is_file():
+            (llm_target / source.name).write_bytes(source.read_bytes())
     apparatus_root = target_root / "experiments" / "missing_manifest"
     plugin_root = apparatus_root / "plugins" / "acmm-tools"
     plugin_root.mkdir(parents=True)

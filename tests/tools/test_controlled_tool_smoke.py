@@ -103,6 +103,39 @@ def test_shared_fixture_matches_controlled_success_case() -> None:
     assert "add_numbers" in scenario["task"]["prompt"]
 
 
+def test_subject_builder_uses_current_llm_baseline() -> None:
+    open_webui = controlled_tool_smoke.build_subject(
+        subject_id="open_webui_llm_smoke",
+        agent_name="Open WebUI",
+        agent_version="smoke",
+        infrastructure_subject="open-webui",
+        repo_root=_REPO_ROOT,
+    )
+    agent_zero = controlled_tool_smoke.build_subject(
+        subject_id="agent_zero_llm_smoke",
+        agent_name="Agent Zero",
+        agent_version="smoke",
+        infrastructure_subject="agent-zero",
+        repo_root=_REPO_ROOT,
+    )
+
+    assert open_webui["model"] == {
+        "name": "gpt-oss:120b-cloud",
+        "provider": "ollama_cloud",
+    }
+    assert open_webui["configuration"]["context_window"] == 64000
+    assert open_webui["configuration"]["llm_baseline_id"] == (
+        "gpt_oss_120b_cloud_v1"
+    )
+    assert open_webui["configuration"]["llm_requested_context_window"] is None
+
+    assert agent_zero["configuration"]["llm_requested_context_window"] == 64000
+    assert agent_zero["configuration"]["llm_utility_model"] == (
+        "gpt-oss:120b-cloud"
+    )
+    assert agent_zero["configuration"]["llm_utility_requested_context_window"] == 64000
+
+
 def test_successful_required_path_passes(capsys) -> None:
     assert controlled_tool_smoke.print_and_check_result(_successful_result()) == 0
     output = capsys.readouterr().out

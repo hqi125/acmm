@@ -11,6 +11,7 @@ from acmm_infra.docker import docker_client, require_success
 from acmm_infra.open_webui import open_webui_manager
 from acmm_infra.profiles.experiments import with_open_webui_experiment
 from acmm_infra.profiles.open_webui import load_open_webui_profile
+from acmm_infra.subject_managers import experiment_llm_baseline_id
 
 
 class open_webui_cli(agent_cli):
@@ -29,7 +30,12 @@ class open_webui_cli(agent_cli):
     ):
         repo_root = Path(args.repo_root).expanduser().resolve()
         runtime_root = Path(args.runtime_root).expanduser().resolve()
-        profile = load_open_webui_profile(repo_root)
+        llm_baseline_id = (
+            experiment_llm_baseline_id(repo_root, experiment_id, "open-webui")
+            if experiment_id is not None
+            else None
+        )
+        profile = load_open_webui_profile(repo_root, llm_baseline_id)
         if experiment_id is not None:
             profile = with_open_webui_experiment(repo_root, profile, experiment_id)
         docker = docker_client(repo_root, runtime_root, profile)

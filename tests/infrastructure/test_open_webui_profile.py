@@ -15,7 +15,7 @@ def test_open_webui_profile_loads_repository_baseline() -> None:
         "sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f"
     )
     assert profile.ollama_base_url == "http://host.docker.internal:11434"
-    assert profile.model_default == "nemotron-3-nano:30b-cloud"
+    assert profile.model_default == "gpt-oss:120b-cloud"
     assert profile.webui_auth is False
     assert profile.secret_key_file == "/app/backend/data/.webui_secret_key"
     assert profile.ollama_api_enabled is True

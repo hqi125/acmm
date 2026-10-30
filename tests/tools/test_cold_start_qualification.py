@@ -90,3 +90,15 @@ def test_preview_command_is_passive_and_preserves_selection(tmp_path: Path) -> N
     assert "--start-if-needed" not in command
     assert "--capture-runtime-logs" not in command
     assert command[command.index("--run-index") + 1] == "120-123"
+
+
+def test_status_command_is_comprehensive_and_has_no_subject_selector(tmp_path: Path) -> None:
+    command = cold_start._build_status_command(
+        "acmm",
+        tmp_path,
+        tmp_path / "runtime",
+    )
+
+    assert command[:3] == ["acmm", "env", "status"]
+    assert "--subject" not in command
+    assert "--json" in command

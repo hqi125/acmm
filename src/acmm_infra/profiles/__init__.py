@@ -18,6 +18,15 @@ from acmm_infra.profiles.hermes import (
     load_hermes_profile,
     managed_hermes_plugin,
 )
+from acmm_infra.profiles.llm import (
+    agent_zero_llm_settings,
+    current_llm_baseline_id,
+    hermes_llm_settings,
+    llm_baseline,
+    load_llm_baseline,
+    open_webui_llm_settings,
+    registered_llm_baseline_ids,
+)
 from acmm_infra.profiles.open_webui import (
     load_open_webui_profile,
     managed_open_webui_tool,
@@ -26,6 +35,13 @@ from acmm_infra.profiles.open_webui import (
 )
 
 __all__ = [
+    "registered_llm_baseline_ids",
+    "open_webui_llm_settings",
+    "load_llm_baseline",
+    "llm_baseline",
+    "hermes_llm_settings",
+    "current_llm_baseline_id",
+    "agent_zero_llm_settings",
     "agent_zero_isolation_profile",
     "agent_zero_profile",
     "blank_slate_profile",

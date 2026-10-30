@@ -1,0 +1,10 @@
+schema_version: "0.1"
+current: gpt_oss_120b_cloud_v1
+
+baselines:
+  nemotron_3_nano_30b_cloud_v1:
+    definition: nemotron_3_nano_30b_cloud_v1.yaml
+  gpt_oss_120b_cloud_candidate_v1:
+    definition: gpt_oss_120b_cloud_candidate_v1.yaml
+  gpt_oss_120b_cloud_v1:
+    definition: gpt_oss_120b_cloud_v1.yaml

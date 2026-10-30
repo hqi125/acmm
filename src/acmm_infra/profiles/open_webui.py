@@ -12,6 +12,7 @@ from acmm_infra.profiles.common import (
     _safe_relative_path,
     profile_error,
 )
+from acmm_infra.profiles.llm import load_llm_baseline
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,10 @@ class open_webui_profile:
     web_port: int
     deployment_directory: Path
     data_directory: Path
+    llm_baseline_id: str
+    llm_logical_provider: str
+    llm_minimum_context_window: int
+    llm_requested_context_window: int | None
     ollama_base_url: str
     model_default: str
     webui_auth: bool
@@ -69,8 +74,10 @@ class open_webui_profile:
 
 def load_open_webui_profile(
     repo_root: str | Path,
+    llm_baseline_id: str | None = None,
 ) -> open_webui_profile:
     root = Path(repo_root).resolve()
+    llm = load_llm_baseline(root, llm_baseline_id)
     path = root / "infrastructure" / "open-webui" / "profile.yaml"
 
     try:
@@ -177,14 +184,12 @@ def load_open_webui_profile(
             runtime.get("data_directory"),
             "runtime.data_directory",
         ),
-        ollama_base_url=_nonempty_string(
-            baseline.get("ollama_base_url"),
-            "baseline.ollama_base_url",
-        ),
-        model_default=_nonempty_string(
-            baseline.get("model_default"),
-            "baseline.model_default",
-        ),
+        llm_baseline_id=llm.id,
+        llm_logical_provider=llm.logical_provider,
+        llm_minimum_context_window=llm.minimum_context_window,
+        llm_requested_context_window=llm.open_webui.requested_context_window,
+        ollama_base_url=llm.open_webui.ollama_base_url,
+        model_default=llm.model_name,
         webui_auth=_boolean(baseline.get("webui_auth"), "baseline.webui_auth"),
         secret_key_file=_nonempty_string(
             baseline.get("secret_key_file"),

@@ -87,6 +87,26 @@ This produces 15 independent runtime starts and four Experiment 3 conditions per
 qualification runs total. It does not merge those runs into one execution; each cold start remains an
 independent ACMM execution session, which is important when startup itself is the unit under study.
 
+
+### LLM Rebasing behavioral qualification
+
+After a replacement LLM baseline has been applied and passes `acmm env doctor --start-if-needed`,
+run the engineering-only three-agent Tool gate:
+
+```text
+python tools/qualify_llm_behavior.py --iterations 5
+```
+
+The runner discovers the deployed LLM baseline rather than selecting one. All three runtimes must
+be stopped and free of experiment apparatus before it starts. It temporarily installs the frozen
+magic-number Tool fixture, runs the same controlled dependency path repeatedly through Hermes,
+Open WebUI, and Agent Zero, stores engineering artifacts under
+`results/_llm_rebasing_qualifications/`, and restores the experiment-independent Tool policy after
+each subject. These artifacts are qualification evidence, not scientific experiment results.
+
+Use this runner for LLM Rebasing. The standalone adapter smoke programs below remain useful for
+focused adapter development when their required Tool apparatus is already present.
+
 ## Controlled-tool smoke programs
 
 `smoke_agent_zero.py` and `smoke_open_webui.py` exercise the same controlled success fixture:

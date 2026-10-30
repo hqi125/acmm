@@ -11,6 +11,7 @@ from acmm_infra.deployment import active_experiment_id
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.profiles.agent_zero import load_agent_zero_profile
 from acmm_infra.profiles.experiments import with_agent_zero_experiment
+from acmm_infra.subject_managers import experiment_llm_baseline_id
 
 
 class agent_zero_cli(agent_cli):
@@ -29,7 +30,12 @@ class agent_zero_cli(agent_cli):
     ):
         repo_root = Path(args.repo_root).expanduser().resolve()
         runtime_root = Path(args.runtime_root).expanduser().resolve()
-        profile = load_agent_zero_profile(repo_root)
+        llm_baseline_id = (
+            experiment_llm_baseline_id(repo_root, experiment_id, "agent-zero")
+            if experiment_id is not None
+            else None
+        )
+        profile = load_agent_zero_profile(repo_root, llm_baseline_id)
         if experiment_id is not None:
             profile = with_agent_zero_experiment(repo_root, profile, experiment_id)
         docker = docker_client(repo_root, runtime_root, profile)

@@ -22,6 +22,7 @@ from acmm_infra.deployment import (
     read_experiment_apparatus_state,
     write_env,
     write_experiment_apparatus_state,
+    write_llm_baseline_state,
 )
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.profiles.agent_zero import agent_zero_profile, managed_agent_zero_plugin
@@ -215,6 +216,13 @@ class agent_zero_manager:
                     for plugin in self.profile.plugins
                 ],
             )
+
+        write_llm_baseline_state(
+            self.deployment_root,
+            llm_baseline_id=self.profile.llm_baseline_id,
+            model_name=self.profile.model_default,
+            logical_provider=self.profile.llm_logical_provider,
+        )
 
         return {
             "image": self.profile.image,
@@ -667,7 +675,7 @@ class agent_zero_manager:
                 )
                 checks.append(
                     doctor_check(
-                        "experiment_model",
+                        "provider_model_available",
                         bool(live["model_available"]),
                         (
                             f"model {self.profile.model_default!r} is available"
@@ -682,7 +690,7 @@ class agent_zero_manager:
                     detail += f": {live['error']}"
                 checks.append(doctor_check("persistent_settings", False, detail))
                 checks.append(doctor_check("model_config", False, detail))
-                checks.append(doctor_check("experiment_model", False, detail))
+                checks.append(doctor_check("provider_model_available", False, detail))
 
         return doctor_report(tuple(checks))
 
@@ -1113,6 +1121,15 @@ class agent_zero_manager:
                 agent_profile=self.profile.agent_profile
             )
             model_config_exact = self._model_config_matches(model_response)
+            model_config = model_response.get("config")
+            if not isinstance(model_config, dict):
+                model_config = {}
+            chat_model = model_config.get("chat_model")
+            utility_model = model_config.get("utility_model")
+            if not isinstance(chat_model, dict):
+                chat_model = {}
+            if not isinstance(utility_model, dict):
+                utility_model = {}
 
             search = client.search_models(
                 provider=self.profile.model_provider,
@@ -1148,6 +1165,10 @@ class agent_zero_manager:
                 "configured_preset": model_response.get("configured_preset"),
                 "selected_preset": model_response.get("selected_preset"),
                 "model_label": model_response.get("model_configured_label"),
+                "observed_model": chat_model.get("name"),
+                "observed_context_window": chat_model.get("ctx_length"),
+                "observed_utility_model": utility_model.get("name"),
+                "observed_utility_context_window": utility_model.get("ctx_length"),
                 "model_available": model_available,
                 "models_observed": model_names,
                 "model_availability_detail": availability_detail,
@@ -1157,6 +1178,10 @@ class agent_zero_manager:
             return {
                 "settings_exact": False,
                 "model_config_exact": False,
+                "observed_model": None,
+                "observed_context_window": None,
+                "observed_utility_model": None,
+                "observed_utility_context_window": None,
                 "model_available": False,
                 "models_observed": [],
                 "model_availability_detail": str(exc),

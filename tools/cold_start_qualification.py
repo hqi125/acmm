@@ -207,7 +207,6 @@ def _build_stop_command(
 
 def _build_status_command(
     acmm_command: str,
-    subject_id: str,
     repo_root: Path,
     runtime_root: Path,
 ) -> list[str]:
@@ -215,8 +214,6 @@ def _build_status_command(
         acmm_command,
         "env",
         "status",
-        "--subject",
-        subject_id,
         "--repo-root",
         str(repo_root),
         "--runtime-root",
@@ -350,7 +347,6 @@ def run_qualification(args: argparse.Namespace) -> int:
     )
     status_command = _build_status_command(
         args.acmm_command,
-        args.subject,
         repo_root,
         runtime_root,
     )

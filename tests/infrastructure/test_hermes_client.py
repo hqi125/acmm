@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from acmm_infra.hermes_client import hermes_client
+from acmm_infra.hermes_client import (
+    _provider_model_catalog_python,
+    hermes_client,
+)
 from acmm_infra.process import command_result
 from acmm_infra.profiles.experiments import with_hermes_experiment
 from acmm_infra.profiles.hermes import load_hermes_profile
@@ -112,3 +115,17 @@ def test_client_observes_and_parses_hermes_state() -> None:
     assert observation.values["plugin_tool_overrides"] == {
         "acmm-tools": False,
     }
+
+
+def test_provider_model_catalog_probe_is_valid_python() -> None:
+    profile = load_hermes_profile(
+        ROOT,
+        "gpt_oss_120b_cloud_candidate_v1",
+    )
+
+    code = _provider_model_catalog_python(profile)
+
+    compile(code, "<hermes-provider-model-probe>", "exec")
+    assert "http://host.docker.internal:11434" in code
+    assert "api/tags" in code
+    assert "gpt-oss:120b-cloud" in code

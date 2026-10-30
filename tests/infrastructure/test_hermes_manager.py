@@ -24,7 +24,7 @@ class fake_docker:
         self.model_base_url = "http://host.docker.internal:11434/v1"
         self.model_api_mode = "chat_completions"
         self.context_window = 64000
-        self.model_default = "nemotron-3-nano:30b-cloud"
+        self.model_default = "gpt-oss:120b-cloud"
         self.reasoning_effort = "medium"
         self.terminal_backend = "local"
         self.platform_toolsets_cli = [
@@ -58,6 +58,7 @@ class fake_docker:
         self.bundled_skill_manifest = ["hermes-agent"]
         self.essential_skills = ["hermes-agent"]
         self.plugins_enabled = []
+        self.available_models = ["gpt-oss:120b-cloud", "nemotron-3-nano:30b-cloud"]
         self.image = "nousresearch/hermes-agent:v2026.9.14"
         self.exec_calls: list[tuple[str, ...]] = []
         self.exec_script_calls: list[tuple[str, float]] = []
@@ -321,6 +322,16 @@ class fake_docker:
                 "__ACMM__config_path=/opt/data/config.yaml",
                 "__ACMM__env_path=/opt/data/.env",
                 f"__ACMM__plugins_enabled={json.dumps(self.plugins_enabled)}",
+                (
+                    "__ACMM__provider_model_catalog="
+                    + json.dumps(
+                        {
+                            "available": self.model_default in self.available_models,
+                            "models": self.available_models,
+                            "error": None,
+                        }
+                    )
+                ),
                 "__ACMM__plugin_override:acmm-tools=false",
             ]
         )
@@ -365,7 +376,10 @@ class fake_docker:
             self.model_base_url = "http://host.docker.internal:11434/v1"
             self.model_api_mode = "chat_completions"
             self.context_window = 64000
-            self.model_default = "nemotron-3-nano:30b-cloud"
+            if "gpt-oss:120b-cloud" in script:
+                self.model_default = "gpt-oss:120b-cloud"
+            elif "nemotron-3-nano:30b-cloud" in script:
+                self.model_default = "nemotron-3-nano:30b-cloud"
             self.reasoning_effort = "medium"
             self.terminal_backend = "local"
             self.platform_toolsets_cli = [
@@ -403,6 +417,10 @@ class fake_docker:
             ]
             if "acmm" not in self.disabled_toolsets:
                 self.disabled_toolsets.append("acmm")
+        if "purge disabled plugin toolset residue" in script:
+            self.disabled_toolsets = [
+                item for item in self.disabled_toolsets if item != "acmm"
+            ]
         return _ok(("provision",), "")
 
 
@@ -454,7 +472,7 @@ def test_apply_configures_experiment_independent_hermes_baseline(
     assert not deployed.exists()
     assert result["plugins_synchronized"] == []
     assert result["model_provider"] == "custom"
-    assert result["model_default"] == "nemotron-3-nano:30b-cloud"
+    assert result["model_default"] == "gpt-oss:120b-cloud"
     assert result["blank_slate"] is True
     assert result["blank_slate_toolsets"] == (
         "file",
@@ -480,7 +498,7 @@ def test_status_reports_desired_and_observed_state(tmp_path: Path) -> None:
 
     assert status["desired"]["hermes_version"] == "0.21.3"
     assert status["observed"]["container_running"] is True
-    assert status["observed"]["model_default"] == "nemotron-3-nano:30b-cloud"
+    assert status["observed"]["model_default"] == "gpt-oss:120b-cloud"
     assert status["observed"]["terminal_backend"] == "local"
     assert status["observed"]["platform_toolsets_cli"] == [
         "file",
@@ -592,6 +610,23 @@ def test_doctor_detects_wrong_model(tmp_path: Path) -> None:
     assert not report.is_ready
     check = next(item for item in report.checks if item.name == "model_default")
     assert not check.ok
+
+
+def test_doctor_detects_model_missing_from_ollama_host(tmp_path: Path) -> None:
+    manager, docker = _manager(tmp_path)
+    manager.initialize_deployment()
+    manager.apply()
+    docker.running = True
+    docker.available_models = []
+
+    report = manager.doctor()
+
+    check = next(
+        item for item in report.checks if item.name == "provider_model_available"
+    )
+    assert check.ok is False
+    assert "ollama pull" in check.detail
+    assert report.is_ready is False
 
 
 def test_reset_refuses_while_container_is_running(tmp_path: Path) -> None:
@@ -741,7 +776,7 @@ def test_apply_tools_without_experiment_restores_baseline_tool_policy(
     baseline.apply_tools(None)
 
     assert "acmm-tools" not in docker.plugins_enabled
-    assert "acmm" in docker.disabled_toolsets
+    assert "acmm" not in docker.disabled_toolsets
     assert not (
         baseline.deployment_root / ".acmm-experiment-apparatus.json"
     ).exists()
@@ -812,10 +847,45 @@ def test_baseline_apply_removes_active_experiment_apparatus(
 
     assert not plugin_root.exists()
     assert "acmm-tools" not in docker.plugins_enabled
-    assert "acmm" in docker.disabled_toolsets
+    assert "acmm" not in docker.disabled_toolsets
     assert not (
         baseline.deployment_root / ".acmm-experiment-apparatus.json"
     ).exists()
+
+def test_baseline_apply_clears_orphaned_disabled_toolset_residue(
+    tmp_path: Path,
+) -> None:
+    manager, docker = _manager(tmp_path)
+    docker.disabled_toolsets.append("acmm")
+
+    manager.apply()
+    docker.running = True
+
+    assert "acmm" not in docker.disabled_toolsets
+    assert manager.doctor().is_ready
+
+
+def test_baseline_doctor_is_ready_after_removing_experiment_apparatus(
+    tmp_path: Path,
+) -> None:
+    baseline, docker = _manager(tmp_path)
+    baseline.apply()
+    experiment = _experiment_manager(tmp_path, docker)
+    experiment.apply_experiment(EXPERIMENT_ID)
+
+    baseline.apply()
+    docker.running = True
+    report = baseline.doctor()
+
+    assert report.is_ready
+    disabled_check = next(
+        item
+        for item in report.checks
+        if item.name == "blank_slate_disabled_toolsets"
+    )
+    assert disabled_check.ok
+    assert "acmm" not in docker.disabled_toolsets
+
 
 def test_baseline_apply_removes_unmarked_legacy_experiment_apparatus(
     tmp_path: Path,
@@ -835,7 +905,7 @@ def test_baseline_apply_removes_unmarked_legacy_experiment_apparatus(
 
     assert not plugin_root.exists()
     assert "acmm-tools" not in docker.plugins_enabled
-    assert "acmm" in docker.disabled_toolsets
+    assert "acmm" not in docker.disabled_toolsets
 
 
 def test_doctor_detects_experiment_isolation_drift(

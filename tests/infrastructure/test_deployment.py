@@ -9,7 +9,9 @@ from acmm_infra.deployment import (
     install_default_if_missing,
     read_env,
     read_experiment_apparatus_state,
+    read_llm_baseline_state,
     write_experiment_apparatus_state,
+    write_llm_baseline_state,
     write_env,
 )
 
@@ -88,6 +90,23 @@ def test_bool_text_uses_lowercase_boolean_literals() -> None:
     assert bool_text(True) == "true"
     assert bool_text(False) == "false"
 
+
+
+def test_llm_baseline_state_records_deployed_baseline(tmp_path: Path) -> None:
+    write_llm_baseline_state(
+        tmp_path,
+        llm_baseline_id="gpt_oss_120b_cloud_candidate_v1",
+        model_name="gpt-oss:120b-cloud",
+        logical_provider="ollama_cloud",
+    )
+
+    state = read_llm_baseline_state(tmp_path)
+
+    assert state is not None
+    assert state["schema_version"] == "0.1"
+    assert state["llm_baseline_id"] == "gpt_oss_120b_cloud_candidate_v1"
+    assert state["model_name"] == "gpt-oss:120b-cloud"
+    assert state["logical_provider"] == "ollama_cloud"
 
 def test_experiment_apparatus_state_records_application_scope(
     tmp_path: Path,

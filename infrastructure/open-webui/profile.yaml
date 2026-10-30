@@ -15,8 +15,6 @@ runtime:
   data_directory: data
 
 baseline:
-  ollama_base_url: http://host.docker.internal:11434
-  model_default: nemotron-3-nano:30b-cloud
   webui_auth: false
   secret_key_file: /app/backend/data/.webui_secret_key
   ollama_api_enabled: true
@@ -44,7 +42,6 @@ experiment_isolation:
   retrieval_query_generation_enabled: false
   external_tool_servers_enabled: false
   terminal_servers_enabled: false
-
 
 tools:
   managed: []

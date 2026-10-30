@@ -11,6 +11,7 @@ from acmm_infra.docker import docker_client, require_success
 from acmm_infra.hermes import hermes_manager
 from acmm_infra.profiles.experiments import with_hermes_experiment
 from acmm_infra.profiles.hermes import load_hermes_profile
+from acmm_infra.subject_managers import experiment_llm_baseline_id
 
 
 class hermes_cli(agent_cli):
@@ -39,7 +40,12 @@ class hermes_cli(agent_cli):
     ):
         repo_root = Path(args.repo_root).expanduser().resolve()
         runtime_root = Path(args.runtime_root).expanduser().resolve()
-        profile = load_hermes_profile(repo_root)
+        llm_baseline_id = (
+            experiment_llm_baseline_id(repo_root, experiment_id, "hermes")
+            if experiment_id is not None
+            else None
+        )
+        profile = load_hermes_profile(repo_root, llm_baseline_id)
         if experiment_id is not None:
             profile = with_hermes_experiment(repo_root, profile, experiment_id)
         docker = docker_client(repo_root, runtime_root, profile)

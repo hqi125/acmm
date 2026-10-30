@@ -27,10 +27,11 @@ class subject_execution_binding:
     adapter_builder: Callable[[], subject_adapter]
     runtime_details: tuple[tuple[str, str], ...]
     infrastructure_subject: str
+    llm_baseline_id: str
     termination_support: subject_termination_support
 
 
-def _build_hermes_nemotron30b_adapter() -> subject_adapter:
+def _build_hermes_adapter() -> subject_adapter:
     return hermes_adapter(
         hermes_adapter_config(
             docker_container="acmm-hermes",
@@ -39,48 +40,91 @@ def _build_hermes_nemotron30b_adapter() -> subject_adapter:
     )
 
 
-def _build_open_webui_nemotron30b_adapter() -> subject_adapter:
+def _build_open_webui_adapter() -> subject_adapter:
     return open_webui_adapter(open_webui_runtime_api_client())
 
 
-def _build_agent_zero_nemotron30b_adapter() -> subject_adapter:
+def _build_agent_zero_adapter() -> subject_adapter:
     return agent_zero_adapter(agent_zero_runtime_api_client())
 
 
 def _build_catalog() -> Mapping[str, subject_execution_binding]:
     bindings = {
         "hermes_nemotron30b": subject_execution_binding(
-            adapter_builder=_build_hermes_nemotron30b_adapter,
+            adapter_builder=_build_hermes_adapter,
             runtime_details=(
                 ("container", "acmm-hermes"),
                 ("toolset overlay", "acmm"),
             ),
             infrastructure_subject="hermes",
+            llm_baseline_id="nemotron_3_nano_30b_cloud_v1",
             termination_support=subject_termination_support(
                 max_steps=True,
                 timeout_seconds=True,
             ),
         ),
         "open_webui_nemotron30b": subject_execution_binding(
-            adapter_builder=_build_open_webui_nemotron30b_adapter,
+            adapter_builder=_build_open_webui_adapter,
             runtime_details=(
                 ("API", "http://127.0.0.1:3000"),
                 ("experiment Tool apparatus", "selected separately"),
             ),
             infrastructure_subject="open-webui",
+            llm_baseline_id="nemotron_3_nano_30b_cloud_v1",
             termination_support=subject_termination_support(
                 max_steps=False,
                 timeout_seconds=True,
             ),
         ),
         "agent_zero_nemotron30b": subject_execution_binding(
-            adapter_builder=_build_agent_zero_nemotron30b_adapter,
+            adapter_builder=_build_agent_zero_adapter,
             runtime_details=(
                 ("API", "http://127.0.0.1:50080"),
                 ("profile", "acmm"),
                 ("experiment plugin apparatus", "selected separately"),
             ),
             infrastructure_subject="agent-zero",
+            llm_baseline_id="nemotron_3_nano_30b_cloud_v1",
+            termination_support=subject_termination_support(
+                max_steps=False,
+                timeout_seconds=True,
+            ),
+        ),
+        "hermes_gpt_oss120b": subject_execution_binding(
+            adapter_builder=_build_hermes_adapter,
+            runtime_details=(
+                ("container", "acmm-hermes"),
+                ("toolset overlay", "acmm"),
+            ),
+            infrastructure_subject="hermes",
+            llm_baseline_id="gpt_oss_120b_cloud_v1",
+            termination_support=subject_termination_support(
+                max_steps=True,
+                timeout_seconds=True,
+            ),
+        ),
+        "open_webui_gpt_oss120b": subject_execution_binding(
+            adapter_builder=_build_open_webui_adapter,
+            runtime_details=(
+                ("API", "http://127.0.0.1:3000"),
+                ("experiment Tool apparatus", "selected separately"),
+            ),
+            infrastructure_subject="open-webui",
+            llm_baseline_id="gpt_oss_120b_cloud_v1",
+            termination_support=subject_termination_support(
+                max_steps=False,
+                timeout_seconds=True,
+            ),
+        ),
+        "agent_zero_gpt_oss120b": subject_execution_binding(
+            adapter_builder=_build_agent_zero_adapter,
+            runtime_details=(
+                ("API", "http://127.0.0.1:50080"),
+                ("profile", "acmm"),
+                ("experiment plugin apparatus", "selected separately"),
+            ),
+            infrastructure_subject="agent-zero",
+            llm_baseline_id="gpt_oss_120b_cloud_v1",
             termination_support=subject_termination_support(
                 max_steps=False,
                 timeout_seconds=True,
@@ -102,10 +146,18 @@ def lookup_subject_execution_binding(
     return _SUBJECT_CATALOG.get(subject_id)
 
 
-def registered_subject_ids() -> tuple[str, ...]:
+def registered_subject_ids(
+    llm_baseline_id: str | None = None,
+) -> tuple[str, ...]:
     """Return qualified subject IDs in catalog declaration order."""
 
-    return tuple(_SUBJECT_CATALOG)
+    if llm_baseline_id is None:
+        return tuple(_SUBJECT_CATALOG)
+    return tuple(
+        subject_id
+        for subject_id, binding in _SUBJECT_CATALOG.items()
+        if binding.llm_baseline_id == llm_baseline_id
+    )
 
 
 def unsupported_termination_controls(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from dataclasses import replace
 from datetime import datetime, timezone
 import json
 from importlib.metadata import PackageNotFoundError, version
@@ -55,6 +56,10 @@ from acmm.runtime.result_store import result_write_error
 from acmm.validation import validation_result
 from acmm_infra.common import infrastructure_error
 from acmm_infra.docker import docker_error
+from acmm_infra.profiles.llm import (
+    load_llm_baseline,
+    runtime_provenance_configuration,
+)
 from acmm_infra.profiles.common import (
     default_repo_root,
     default_runtime_root,
@@ -1021,6 +1026,19 @@ def _run_experiment(args: argparse.Namespace) -> int:
         for subject_id in selected_subject_ids
     }
     registry = binding.registry_builder(subject_adapters)
+    registry = replace(
+        registry,
+        subject_configuration_overlays={
+            subject_id: runtime_provenance_configuration(
+                load_llm_baseline(
+                    repo_root,
+                    subject_bindings[subject_id].llm_baseline_id,
+                ),
+                subject_bindings[subject_id].infrastructure_subject,
+            )
+            for subject_id in selected_subject_ids
+        },
+    )
 
     pacing = contract["run_protocol"].get("pacing", {})
     inter_run_delay = pacing.get("inter_run_delay_seconds", 0)

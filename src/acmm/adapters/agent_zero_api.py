@@ -46,6 +46,13 @@ class agent_zero_runtime_api_client:
             )
         return token
 
+    def get_model_config(self, *, agent_profile: str) -> dict[str, Any]:
+        return self._protected_json(
+            "POST",
+            "/api/plugins/_model_config/model_config_get",
+            payload={"agent_profile": agent_profile},
+        )
+
     def update_plugin_config(
         self,
         plugin_name: str,

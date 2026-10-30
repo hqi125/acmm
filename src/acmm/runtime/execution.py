@@ -53,8 +53,12 @@ def execute_planned_run(
         provenance["environment"] = environment_provenance
 
         adapter = registry.subject_adapters[planned.subject_id]
-        adapter_result = adapter.execute(
+        adapter_subject = _subject_with_configuration_overlay(
             subject,
+            registry.subject_configuration_overlays.get(planned.subject_id),
+        )
+        adapter_result = adapter.execute(
+            adapter_subject,
             scenario,
             environment_handle,
             contract["run_protocol"]["termination"],
@@ -171,6 +175,19 @@ def execute_planned_run(
             provenance,
             captured,
         )
+
+
+def _subject_with_configuration_overlay(
+    subject: dict[str, Any],
+    overlay: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not overlay:
+        return subject
+    realized = dict(subject)
+    configuration = dict(subject.get("configuration", {}))
+    configuration.update(overlay)
+    realized["configuration"] = configuration
+    return realized
 
 
 def _prepare_environment(

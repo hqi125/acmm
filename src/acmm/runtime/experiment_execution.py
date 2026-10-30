@@ -180,6 +180,10 @@ def execute_experiment(
     plan = build_experiment_plan(contract)
     selected_runs = _select_runs(plan.runs, run_indices)
     selected_run_indices = tuple(run.run_index for run in selected_runs)
+    subject_llm_baselines = _selected_subject_llm_baselines(
+        selected_runs,
+        registry,
+    )
 
     _validate_directory_component("experiment ID", experiment_id)
     _validate_directory_component("execution ID", execution_id)
@@ -315,6 +319,7 @@ def execute_experiment(
             inter_run_delay_seconds=inter_run_delay_seconds,
             contract_run_count=plan.run_count,
             selected_run_indices=selected_run_indices,
+            subject_llm_baselines=subject_llm_baselines,
             slots=tuple(slots),
             session_dir=session_dir,
         )
@@ -355,6 +360,7 @@ def execute_experiment(
             inter_run_delay_seconds=inter_run_delay_seconds,
             contract_run_count=plan.run_count,
             selected_run_indices=selected_run_indices,
+            subject_llm_baselines=subject_llm_baselines,
             slots=tuple(interruption_slots),
             interrupted_run_index=(
                 active_planned.run_index
@@ -456,6 +462,21 @@ def _select_runs(
     return tuple(selected)
 
 
+def _selected_subject_llm_baselines(
+    selected_runs: tuple[planned_run, ...],
+    registry: execution_registry,
+) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for planned in selected_runs:
+        if planned.subject_id in result:
+            continue
+        overlay = registry.subject_configuration_overlays.get(planned.subject_id, {})
+        baseline_id = overlay.get("llm_baseline_id")
+        if isinstance(baseline_id, str) and baseline_id:
+            result[planned.subject_id] = baseline_id
+    return result
+
+
 def _build_interruption_manifest(
     execution_id: str,
     experiment_id: str,
@@ -467,6 +488,7 @@ def _build_interruption_manifest(
     inter_run_delay_seconds: float,
     contract_run_count: int,
     selected_run_indices: tuple[int, ...],
+    subject_llm_baselines: dict[str, str],
     slots: tuple[slot_execution, ...],
     interrupted_run_index: int | None,
     interrupted_attempt: int | None,
@@ -498,6 +520,7 @@ def _build_interruption_manifest(
             "experiment_id": experiment_id,
             "contract_sha256": contract_sha256,
             "harness_version": harness_version,
+            "subject_llm_baselines": dict(subject_llm_baselines),
             "status": "interrupted",
             "interrupt_kind": "keyboard_interrupt",
             "started_at": _format_timestamp(started_at),
@@ -535,6 +558,7 @@ def _build_manifest(
     inter_run_delay_seconds: float,
     contract_run_count: int,
     selected_run_indices: tuple[int, ...],
+    subject_llm_baselines: dict[str, str],
     slots: tuple[slot_execution, ...],
     session_dir: Path,
 ) -> dict:
@@ -553,6 +577,7 @@ def _build_manifest(
             "experiment_id": experiment_id,
             "contract_sha256": contract_sha256,
             "harness_version": harness_version,
+            "subject_llm_baselines": dict(subject_llm_baselines),
             "started_at": _format_timestamp(started_at),
             "ended_at": _format_timestamp(ended_at),
             "max_attempts_per_run": max_attempts_per_run,
