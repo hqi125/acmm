@@ -28,3 +28,6 @@ pythonpath = ["src"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"acmm.experiment_package" = ["schemas/*.json"]

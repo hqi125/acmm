@@ -24,6 +24,9 @@ The repository currently contains Experiment Contract v0.1, including:
 - the `acmm validate` and `acmm plan` commands;
 - the separate `acmm-infra` deployment/inspection command.
 
+The external Experiment Package architecture is specified in `docs/experiments/package.md`; the
+package loader/staging implementation is the next framework milestone.
+
 ## Development environment
 
 The current development layout keeps the Git repository on the Windows side while running
