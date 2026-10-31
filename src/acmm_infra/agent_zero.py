@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 import yaml
 
 from acmm_infra.agent_zero_api import agent_zero_api_client, agent_zero_api_error
+from acmm.experiment_package.provenance import experiment_deployment_provenance
 from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
 from acmm_infra.deployment import (
     bool_text,
@@ -58,12 +59,15 @@ class agent_zero_manager:
         docker: docker_client,
         api: agent_zero_api_client | None = None,
         experiment_id: str | None = None,
+        deployment_provenance: experiment_deployment_provenance | None = None,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.runtime_root = Path(runtime_root).expanduser().resolve()
         self.profile = profile
         self.docker = docker
         self.experiment_id = experiment_id
+        self.deployment_provenance = deployment_provenance
+        self._validate_deployment_provenance("agent-zero")
         self.deployment_root = (
             self.runtime_root / profile.deployment_directory
         ).resolve()
@@ -77,6 +81,40 @@ class agent_zero_manager:
         self.api = api or agent_zero_api_client(
             f"http://127.0.0.1:{profile.web_port}",
             timeout_seconds=10.0,
+        )
+
+    def _validate_deployment_provenance(self, infrastructure_subject: str) -> None:
+        provenance = self.deployment_provenance
+        if provenance is None:
+            return
+        if self.experiment_id is None:
+            raise infrastructure_error(
+                "Experiment Package deployment provenance requires an experiment ID."
+            )
+        if provenance.package.experiment_id != self.experiment_id:
+            raise infrastructure_error(
+                "Experiment Package provenance experiment ID does not match manager "
+                "experiment ID."
+            )
+        if provenance.infrastructure_subject != infrastructure_subject:
+            raise infrastructure_error(
+                "Experiment Package deployment provenance targets infrastructure "
+                f"'{provenance.infrastructure_subject}', expected "
+                f"'{infrastructure_subject}'."
+            )
+
+    def _apparatus_source_sha256(
+        self,
+        infrastructure_subject: str,
+        experiment_id: str,
+    ) -> str | None:
+        provenance = self.deployment_provenance
+        if provenance is not None:
+            return provenance.apparatus_sha256
+        return experiment_apparatus_sha256(
+            self.repo_root,
+            infrastructure_subject,
+            experiment_id,
         )
 
     def initialize_deployment(self) -> dict[str, str]:
@@ -197,8 +235,7 @@ class agent_zero_manager:
         if experiment_id is None:
             clear_experiment_apparatus_state(self.deployment_root)
         else:
-            source_sha256 = experiment_apparatus_sha256(
-                self.repo_root,
+            source_sha256 = self._apparatus_source_sha256(
                 "agent-zero",
                 experiment_id,
             )
@@ -215,6 +252,7 @@ class agent_zero_manager:
                     }
                     for plugin in self.profile.plugins
                 ],
+                package_provenance=self.deployment_provenance,
             )
 
         write_llm_baseline_state(
@@ -292,8 +330,7 @@ class agent_zero_manager:
                 "Stopping Agent Zero experiment provisioning service",
             )
 
-        source_sha256 = experiment_apparatus_sha256(
-            self.repo_root,
+        source_sha256 = self._apparatus_source_sha256(
             "agent-zero",
             experiment_id,
         )
@@ -310,6 +347,7 @@ class agent_zero_manager:
                 }
                 for plugin in self.profile.plugins
             ],
+            package_provenance=self.deployment_provenance,
         )
         return {
             "experiment_id": experiment_id,
@@ -409,8 +447,7 @@ class agent_zero_manager:
                 "Stopping Agent Zero tool-policy provisioning service",
             )
 
-        source_sha256 = experiment_apparatus_sha256(
-            self.repo_root,
+        source_sha256 = self._apparatus_source_sha256(
             "agent-zero",
             experiment_id,
         )
@@ -427,6 +464,7 @@ class agent_zero_manager:
                 }
                 for plugin in self.profile.plugins
             ],
+            package_provenance=self.deployment_provenance,
         )
         return {
             "experiment_id": experiment_id,

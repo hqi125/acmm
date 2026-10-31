@@ -209,6 +209,8 @@ def run_environment_status(args: argparse.Namespace) -> int:
     print("  experiment context:")
     print(f"    state:      {context.state}")
     print(f"    experiment: {context.experiment_id or 'none'}")
+    if context.package_sha256 is not None:
+        print(f"    package:    {context.package_sha256}")
     print("  subjects:")
     for item in statuses:
         print(f"    {item.subject_id}:")
@@ -221,6 +223,8 @@ def run_environment_status(args: argparse.Namespace) -> int:
             continue
         print(f"      running:           {item.running}")
         print(f"      experiment:        {item.experiment_id or 'none'}")
+        if item.package_sha256 is not None:
+            print(f"      package SHA-256:   {item.package_sha256}")
         print(f"      application scope: {item.application_scope or 'none'}")
         print(f"      apparatus:         {item.apparatus_state}")
         if item.source_sha256 is not None:
@@ -339,6 +343,8 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
     print("  experiment context:")
     print(f"    state:      {context.state}")
     print(f"    experiment: {context.experiment_id or 'none'}")
+    if context.package_sha256 is not None:
+        print(f"    package:    {context.package_sha256}")
     print("  subjects:")
     for item in doctor_results:
         subject = item.subject
@@ -360,6 +366,11 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         if item.started_by_acmm:
             print("      temporary startup: started and restored")
         if isinstance(state, dict):
+            package = state.get("package")
+            if isinstance(package, dict):
+                package_sha256 = package.get("sha256")
+                if isinstance(package_sha256, str):
+                    print(f"      package SHA-256:   {package_sha256}")
             print(
                 "      application scope: "
                 f"{state.get('application_scope', 'unknown')}"

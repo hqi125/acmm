@@ -12,6 +12,14 @@ from acmm.experiment_package.model import (
     experiment_package,
     experiment_runtime_component,
 )
+from acmm.experiment_package.provenance import (
+    apparatus_provenance,
+    deployment_provenance,
+    experiment_deployment_provenance,
+    experiment_package_provenance,
+    experiment_provenance_error,
+    package_provenance,
+)
 from acmm.experiment_package.runtime import (
     compose_execution_registry,
     experiment_runtime_error,
@@ -27,6 +35,12 @@ from acmm.experiment_package.staging import (
 
 
 __all__ = [
+    "apparatus_provenance",
+    "deployment_provenance",
+    "experiment_deployment_provenance",
+    "experiment_package_provenance",
+    "experiment_provenance_error",
+    "package_provenance",
     "acquire_experiment_package",
     "compose_execution_registry",
     "experiment_analysis_component",

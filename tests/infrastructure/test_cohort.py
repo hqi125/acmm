@@ -251,7 +251,11 @@ def test_apply_cohort_checks_all_runtimes_before_mutating(monkeypatch, tmp_path:
 
 
 def test_summarize_context_distinguishes_convergence_states() -> None:
-    def status(subject_id: str, experiment_id: str | None):
+    def status(
+        subject_id: str,
+        experiment_id: str | None,
+        package_sha256: str | None = None,
+    ):
         return cohort_subject_status(
             subject_id=subject_id,
             infrastructure_subject=subject_id,
@@ -260,6 +264,7 @@ def test_summarize_context_distinguishes_convergence_states() -> None:
             application_scope="experiment" if experiment_id else None,
             apparatus_state="match" if experiment_id else "none",
             source_sha256=None,
+            package_sha256=package_sha256,
         )
 
     assert summarize_context((status("a", None), status("b", None))).state == "baseline"
@@ -268,6 +273,27 @@ def test_summarize_context_distinguishes_convergence_states() -> None:
     assert converged.experiment_id == "x"
     assert summarize_context((status("a", "x"), status("b", None))).state == "partial"
     assert summarize_context((status("a", "x"), status("b", "y"))).state == "divergent"
+
+    packaged = summarize_context(
+        (
+            status("a", "x", "a" * 64),
+            status("b", "x", "a" * 64),
+        )
+    )
+    assert packaged.state == "converged"
+    assert packaged.package_sha256 == "a" * 64
+    assert summarize_context(
+        (
+            status("a", "x", "a" * 64),
+            status("b", "x", "b" * 64),
+        )
+    ).state == "divergent"
+    assert summarize_context(
+        (
+            status("a", "x", "a" * 64),
+            status("b", "x"),
+        )
+    ).state == "divergent"
 
 
 def test_apply_cohort_reports_partial_failure_without_rollback(monkeypatch, tmp_path: Path) -> None:

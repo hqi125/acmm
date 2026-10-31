@@ -1,6 +1,13 @@
 from pathlib import Path
 
-from acmm.deployment_preflight import inspect_deployment_contexts
+from acmm.deployment_preflight import (
+    discover_deployment_contexts,
+    inspect_deployment_contexts,
+)
+from acmm.experiment_package.provenance import (
+    experiment_deployment_provenance,
+    experiment_package_provenance,
+)
 from acmm.subjects.catalog import lookup_subject_execution_binding
 from acmm_infra.deployment import write_experiment_apparatus_state
 from acmm_infra.profiles.experiments import experiment_apparatus_sha256
@@ -132,3 +139,37 @@ def test_preflight_checks_only_selected_subject_bindings(tmp_path: Path) -> None
     assert [subject.subject_id for subject in result.subjects] == [
         "open_webui_nemotron30b"
     ]
+
+
+def test_discovery_accepts_package_context_without_apparatus(tmp_path: Path) -> None:
+    binding = _hermes_binding()
+    package_sha256 = "a" * 64
+    provenance = experiment_deployment_provenance(
+        package=experiment_package_provenance(
+            experiment_id=EXPERIMENT_ID,
+            package_schema_version="0.1",
+            package_sha256=package_sha256,
+            contract_sha256="b" * 64,
+            runtime_sha256=None,
+        ),
+        infrastructure_subject="hermes",
+        apparatus_sha256=None,
+    )
+    write_experiment_apparatus_state(
+        tmp_path / "hermes",
+        experiment_id=EXPERIMENT_ID,
+        source_sha256=None,
+        application_scope="experiment",
+        resources=[],
+        package_provenance=provenance,
+    )
+
+    result = discover_deployment_contexts(
+        runtime_root=tmp_path,
+        subject_bindings={"hermes_nemotron30b": binding},
+    )
+
+    assert result.experiment_ids == (EXPERIMENT_ID,)
+    assert result.package_sha256s == (package_sha256,)
+    assert result.subjects[0].issues == ()
+    assert result.subjects[0].observed_apparatus_sha256 is None

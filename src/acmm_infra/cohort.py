@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from acmm.contract.loader import load_contract
+from acmm.experiment_package import open_staged_experiment_package
 from acmm.experiments.catalog import lookup_experiment_execution_binding
 from acmm.subjects.catalog import (
     lookup_subject_execution_binding,
@@ -80,6 +81,7 @@ class cohort_subject_status:
     application_scope: str | None
     apparatus_state: str
     source_sha256: str | None
+    package_sha256: str | None = None
     llm: cohort_llm_observation | None = None
     error: str | None = None
 
@@ -88,6 +90,7 @@ class cohort_subject_status:
 class cohort_context_summary:
     state: str
     experiment_id: str | None
+    package_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -181,28 +184,34 @@ def resolve_deployed_cohort(
     subjects: list[cohort_subject] = []
 
     for infrastructure_subject in _INFRASTRUCTURE_SUBJECTS:
-        probe = build_subject_manager(
+        context = build_deployed_subject_manager(
             repo,
             runtime,
             infrastructure_subject,
-            None,
             current_baseline,
         )
-        deployment_root = probe.manager.deployment_root
-        apparatus = read_experiment_apparatus_state(deployment_root)
-        experiment_id = None
-        if apparatus is not None:
-            value = apparatus.get("experiment_id")
-            if isinstance(value, str) and value.strip():
-                experiment_id = value
-
+        experiment_id = context.experiment_id
         if experiment_id is not None:
-            experiment = resolve_experiment_cohort(repo, experiment_id)
-            matches = tuple(
-                item
-                for item in experiment.subjects
-                if item.infrastructure_subject == infrastructure_subject
-            )
+            if context.package_sha256 is not None:
+                package = open_staged_experiment_package(
+                    runtime,
+                    experiment_id,
+                    context.package_sha256,
+                    contract_schema_path=(
+                        repo / "contracts" / "v0_1" / "contract.schema.json"
+                    ),
+                )
+                matches = _package_cohort_subjects(
+                    package.contract.get("subjects", []),
+                    infrastructure_subject,
+                )
+            else:
+                experiment = resolve_experiment_cohort(repo, experiment_id)
+                matches = tuple(
+                    item
+                    for item in experiment.subjects
+                    if item.infrastructure_subject == infrastructure_subject
+                )
             if len(matches) != 1:
                 raise infrastructure_error(
                     f"Deployed experiment '{experiment_id}' does not resolve exactly "
@@ -211,8 +220,8 @@ def resolve_deployed_cohort(
             subjects.append(matches[0])
             continue
 
-        llm_state = read_llm_baseline_state(deployment_root)
-        baseline_id = current_baseline
+        baseline_id = context.llm_baseline_id
+        llm_state = read_llm_baseline_state(context.manager.deployment_root)
         if llm_state is not None:
             value = llm_state.get("llm_baseline_id")
             if isinstance(value, str) and value.strip():
@@ -350,6 +359,7 @@ def inspect_subject_context(
         )
         marker = read_experiment_apparatus_state(context.manager.deployment_root)
         experiment_id = context.experiment_id
+        package_sha256 = context.package_sha256
         scope = None
         source_sha256 = None
         apparatus_state = "none"
@@ -363,6 +373,14 @@ def inspect_subject_context(
                 subject.infrastructure_subject,
                 experiment_id,
                 source_sha256,
+                package_expected_sha256=(
+                    context.manager.deployment_provenance.apparatus_sha256
+                    if getattr(context.manager, "deployment_provenance", None) is not None
+                    else None
+                ),
+                package_managed=(
+                    getattr(context.manager, "deployment_provenance", None) is not None
+                ),
             )
         running = None
         if status is not None:
@@ -375,6 +393,7 @@ def inspect_subject_context(
             application_scope=scope,
             apparatus_state=apparatus_state,
             source_sha256=source_sha256,
+            package_sha256=package_sha256,
             llm=llm,
         )
     except (infrastructure_error, profile_error, OSError, ValueError) as exc:
@@ -386,6 +405,7 @@ def inspect_subject_context(
             application_scope=None,
             apparatus_state="unknown",
             source_sha256=None,
+            package_sha256=None,
             llm=None,
             error=str(exc),
         )
@@ -518,9 +538,25 @@ def summarize_context(
         return cohort_context_summary(state="baseline", experiment_id=None)
     if len(experiment_ids) > 1:
         return cohort_context_summary(state="divergent", experiment_id=None)
+
     experiment_id = next(iter(experiment_ids))
     if missing:
         return cohort_context_summary(state="partial", experiment_id=experiment_id)
+
+    package_values = tuple(item.package_sha256 for item in items)
+    package_sha256s = {value for value in package_values if value is not None}
+    if package_sha256s:
+        if len(package_sha256s) > 1 or any(value is None for value in package_values):
+            return cohort_context_summary(
+                state="divergent",
+                experiment_id=experiment_id,
+            )
+        return cohort_context_summary(
+            state="converged",
+            experiment_id=experiment_id,
+            package_sha256=next(iter(package_sha256s)),
+        )
+
     return cohort_context_summary(state="converged", experiment_id=experiment_id)
 
 
@@ -751,6 +787,35 @@ def _deployed_subject_id(
     return _QUALIFICATION_SUBJECT_IDS[infrastructure_subject]
 
 
+def _package_cohort_subjects(
+    contract_subjects: object,
+    infrastructure_subject: str,
+) -> tuple[cohort_subject, ...]:
+    if not isinstance(contract_subjects, list):
+        raise infrastructure_error("Experiment Package Contract subjects must be a list.")
+
+    matches: list[cohort_subject] = []
+    for subject in contract_subjects:
+        subject_id = subject.get("id") if isinstance(subject, dict) else None
+        if not isinstance(subject_id, str):
+            continue
+        binding = lookup_subject_execution_binding(subject_id)
+        if binding is None:
+            raise infrastructure_error(
+                f"Subject '{subject_id}' has no registered execution binding."
+            )
+        if binding.infrastructure_subject != infrastructure_subject:
+            continue
+        matches.append(
+            cohort_subject(
+                subject_id=subject_id,
+                infrastructure_subject=binding.infrastructure_subject,
+                llm_baseline_id=binding.llm_baseline_id,
+            )
+        )
+    return tuple(matches)
+
+
 def _resolve_subjects(
     available_subject_ids: Iterable[str],
     selected_subject_ids: Iterable[str],
@@ -827,7 +892,16 @@ def _apparatus_state(
     infrastructure_subject: str,
     experiment_id: str | None,
     observed_sha256: str | None,
+    *,
+    package_expected_sha256: str | None = None,
+    package_managed: bool = False,
 ) -> str:
+    if package_managed:
+        return (
+            "match"
+            if observed_sha256 == package_expected_sha256
+            else "mismatch"
+        )
     if experiment_id is None or observed_sha256 is None:
         return "none"
     try:

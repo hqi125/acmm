@@ -849,3 +849,74 @@ the original package source directory.
 EP-3 intentionally does not yet make `acmm env`, `status`, `doctor`, or `acmm run` discover an
 external package automatically. It also does not yet persist package identity in deployment state.
 Those higher-level lifecycle/provenance changes belong to the next package milestones.
+
+## EP-4 implementation checkpoint
+
+EP-4 establishes digest-bearing Experiment Package provenance in deployed subject state and makes
+passive deployment reconstruction package-aware without introducing package-oriented CLI commands
+yet.
+
+Package provenance is represented explicitly by:
+
+- `experiment_package_provenance`, which records experiment ID, package schema version, package
+  SHA-256, Contract SHA-256, and runtime SHA-256 when runtime code exists; and
+- `experiment_deployment_provenance`, which binds that package identity to one infrastructure
+  subject and records its apparatus component SHA-256 when the package declares apparatus for that
+  subject.
+
+There is intentionally still no independent semantic package version. The experiment ID remains the
+human-readable scientific identity and the package SHA-256 remains the exact package revision.
+
+The existing `.acmm-experiment-apparatus.json` deployment marker advances to schema `0.3`. The file
+name is retained for backward compatibility even though schema `0.3` now serves as the broader
+experiment deployment-context marker. Legacy schema `0.1` and `0.2` markers remain readable.
+Package-backed markers can additionally persist:
+
+```text
+package schema version
+package SHA-256
+Contract SHA-256
+runtime SHA-256, when present
+infrastructure subject
+apparatus SHA-256, when present
+```
+
+The marker validates that an apparatus SHA-256, when present, agrees with the existing
+`source_sha256` field. A package deployment may also legitimately record no apparatus SHA-256 and no
+`source_sha256`. This is required for realistic no-apparatus studies such as the planned minimal
+agent baseline; ACMM does not require a dummy tool merely to give that experiment a deployable
+identity.
+
+Package-aware subject-manager construction now:
+
+1. resolves the subject's LLM baseline from qualified subject IDs in the package Contract;
+2. applies staged package apparatus when that subject declares apparatus;
+3. otherwise retains the qualified baseline profile unchanged;
+4. carries package deployment provenance into the normal agent manager; and
+5. persists the package/component identity when experiment state is written.
+
+Passive manager reconstruction reads the persisted package digest, reopens the corresponding staged
+snapshot from `<runtime-root>/_experiment_packages/`, and revalidates the package schema identity,
+Contract digest, runtime digest, infrastructure subject, apparatus digest, and deployed source
+digest before rebuilding the manager. The original external package source directory is therefore
+not required by `status`, `doctor`, or runtime lifecycle reconstruction.
+
+Cohort status now carries package SHA-256 in addition to experiment ID. Context convergence requires
+subjects to agree on package revision whenever package provenance is present. Two subjects reporting
+the same `experiment_id` but different package SHA-256 values are `divergent`; mixing package-backed
+and legacy deployments under the same experiment ID is also divergent. A package-backed subject
+with no apparatus is considered apparatus-matched when both its expected and observed apparatus
+identities are absent.
+
+Deployment-context discovery also exposes observed package digests and accepts package-backed
+subjects that intentionally declare no apparatus. Existing legacy ID-based apparatus preflight is
+left intact; package-aware run preflight and package-path command selection belong to EP-5.
+
+As a proof of independence, EP-4 tests reconstruct a staged package using an experiment ID that is
+not registered in the built-in experiment catalog. This demonstrates that deployed package identity
+is now sufficient for passive reconstruction rather than merely annotating the historical catalog
+path.
+
+EP-4 does not yet add `acmm env apply <package-path>`, `acmm run <package-path>`, package discovery,
+or package provenance to execution result manifests. Those are integration responsibilities for the
+next milestone rather than deployment-state concerns.

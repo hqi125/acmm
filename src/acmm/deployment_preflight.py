@@ -20,6 +20,7 @@ class subject_deployment_observation:
     application_scope: str | None
     observed_apparatus_sha256: str | None
     issues: tuple[str, ...]
+    package_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,18 @@ class deployment_context_discovery:
 
         return tuple(ordered)
 
+    @property
+    def package_sha256s(self) -> tuple[str, ...]:
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for subject in self.subjects:
+            value = subject.package_sha256
+            if value is None or value in seen:
+                continue
+            ordered.append(value)
+            seen.add(value)
+        return tuple(ordered)
+
 
 @dataclass(frozen=True)
 class subject_deployment_context:
@@ -51,6 +64,7 @@ class subject_deployment_context:
     observed_apparatus_sha256: str | None
     expected_apparatus_sha256: str | None
     issues: tuple[str, ...]
+    package_sha256: str | None = None
 
     @property
     def is_ready(self) -> bool:
@@ -127,8 +141,27 @@ def _observe_subject_deployment_context(
         application_scope = None
         issues.append("deployment context has an invalid application scope")
 
+    package_sha256 = None
+    package = state.get("package")
+    expected_package_apparatus_sha256 = None
+    package_managed = isinstance(package, dict)
+    if package_managed:
+        value = package.get("sha256")
+        if isinstance(value, str) and value:
+            package_sha256 = value
+        apparatus_value = package.get("apparatus_sha256")
+        if isinstance(apparatus_value, str) and apparatus_value:
+            expected_package_apparatus_sha256 = apparatus_value
+
     observed_sha256 = state.get("source_sha256")
-    if not isinstance(observed_sha256, str) or not observed_sha256:
+    if package_managed and expected_package_apparatus_sha256 is None:
+        if observed_sha256 is not None:
+            issues.append(
+                "deployment context records apparatus for a package that declares "
+                "none for this subject"
+            )
+            observed_sha256 = None
+    elif not isinstance(observed_sha256, str) or not observed_sha256:
         observed_sha256 = None
         issues.append("deployment context has an invalid apparatus SHA-256")
 
@@ -140,6 +173,7 @@ def _observe_subject_deployment_context(
         application_scope=application_scope,
         observed_apparatus_sha256=observed_sha256,
         issues=tuple(issues),
+        package_sha256=package_sha256,
     )
 
 
@@ -244,6 +278,13 @@ def _inspect_subject_deployment_context(
             f"apparatus SHA-256 is {observed_sha256}, expected {expected_sha256}"
         )
 
+    package_sha256 = None
+    package = state.get("package")
+    if isinstance(package, dict):
+        value = package.get("sha256")
+        if isinstance(value, str) and value:
+            package_sha256 = value
+
     return subject_deployment_context(
         subject_id=subject_id,
         infrastructure_subject=binding.infrastructure_subject,
@@ -253,4 +294,5 @@ def _inspect_subject_deployment_context(
         observed_apparatus_sha256=observed_sha256,
         expected_apparatus_sha256=expected_sha256,
         issues=tuple(issues),
+        package_sha256=package_sha256,
     )

@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 from typing import Iterable, Literal
 
+from acmm.experiment_package.provenance import experiment_deployment_provenance
 from acmm_infra.common import infrastructure_error
 
 
@@ -118,7 +119,7 @@ def write_llm_baseline_state(
     temporary.replace(path)
 EXPERIMENT_APPARATUS_STATE_FILE = ".acmm-experiment-apparatus.json"
 experiment_application_scope = Literal["experiment", "tools"]
-EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION = "0.2"
+EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION = "0.3"
 
 
 def read_experiment_apparatus_state(deployment_root: Path) -> dict[str, object] | None:
@@ -142,9 +143,15 @@ def read_experiment_apparatus_state(deployment_root: Path) -> dict[str, object] 
     if schema_version == "0.1":
         value = dict(value)
         value["application_scope"] = "experiment"
+        value["package"] = None
         return value
 
-    if schema_version != EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION:
+    if schema_version == "0.2":
+        value = dict(value)
+        value["package"] = None
+    elif schema_version == EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION:
+        value = dict(value)
+    else:
         raise infrastructure_error(
             f"Experiment apparatus state '{path}' has an unsupported format."
         )
@@ -154,6 +161,10 @@ def read_experiment_apparatus_state(deployment_root: Path) -> dict[str, object] 
         raise infrastructure_error(
             f"Experiment apparatus state '{path}' has an invalid application scope."
         )
+
+    package = value.get("package")
+    if package is not None:
+        _validate_experiment_package_state(path, value, package)
     return value
 
 
@@ -176,18 +187,34 @@ def write_experiment_apparatus_state(
     deployment_root: Path,
     *,
     experiment_id: str,
-    source_sha256: str,
+    source_sha256: str | None,
     application_scope: experiment_application_scope,
     resources: list[dict[str, str]],
+    package_provenance: experiment_deployment_provenance | None = None,
 ) -> None:
     path = deployment_root / EXPERIMENT_APPARATUS_STATE_FILE
-    payload = {
+    payload: dict[str, object] = {
         "schema_version": EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION,
         "experiment_id": experiment_id,
         "source_sha256": source_sha256,
         "application_scope": application_scope,
         "resources": resources,
     }
+    if package_provenance is not None:
+        _validate_write_package_provenance(
+            experiment_id,
+            source_sha256,
+            package_provenance,
+        )
+        package = package_provenance.package
+        payload["package"] = {
+            "schema_version": package.package_schema_version,
+            "sha256": package.package_sha256,
+            "contract_sha256": package.contract_sha256,
+            "runtime_sha256": package.runtime_sha256,
+            "apparatus_subject": package_provenance.infrastructure_subject,
+            "apparatus_sha256": package_provenance.apparatus_sha256,
+        }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(
@@ -203,3 +230,89 @@ def clear_experiment_apparatus_state(deployment_root: Path) -> None:
     if path.exists():
         path.unlink()
 
+
+def _validate_experiment_package_state(
+    path: Path,
+    state: dict[str, object],
+    package: object,
+) -> None:
+    if not isinstance(package, dict):
+        raise infrastructure_error(
+            f"Experiment apparatus state '{path}' has invalid package provenance."
+        )
+
+    experiment_id = state.get("experiment_id")
+    source_sha256 = state.get("source_sha256")
+    required_strings = (
+        "schema_version",
+        "sha256",
+        "contract_sha256",
+        "apparatus_subject",
+    )
+    for field in required_strings:
+        value = package.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise infrastructure_error(
+                f"Experiment apparatus state '{path}' has invalid package "
+                f"provenance field '{field}'."
+            )
+
+    for field in ("sha256", "contract_sha256"):
+        value = package[field]
+        assert isinstance(value, str)
+        if not _is_sha256(value):
+            raise infrastructure_error(
+                f"Experiment apparatus state '{path}' has invalid package "
+                f"SHA-256 field '{field}'."
+            )
+
+    apparatus_sha256 = package.get("apparatus_sha256")
+    if apparatus_sha256 is not None and (
+        not isinstance(apparatus_sha256, str) or not _is_sha256(apparatus_sha256)
+    ):
+        raise infrastructure_error(
+            f"Experiment apparatus state '{path}' has invalid package "
+            "apparatus_sha256."
+        )
+
+    runtime_sha256 = package.get("runtime_sha256")
+    if runtime_sha256 is not None and (
+        not isinstance(runtime_sha256, str) or not _is_sha256(runtime_sha256)
+    ):
+        raise infrastructure_error(
+            f"Experiment apparatus state '{path}' has invalid package "
+            "runtime_sha256."
+        )
+
+    if source_sha256 != apparatus_sha256:
+        raise infrastructure_error(
+            f"Experiment apparatus state '{path}' package apparatus SHA-256 "
+            "does not match source_sha256."
+        )
+    if not isinstance(experiment_id, str) or not experiment_id.strip():
+        raise infrastructure_error(
+            f"Experiment apparatus state '{path}' has an invalid experiment ID."
+        )
+
+
+def _validate_write_package_provenance(
+    experiment_id: str,
+    source_sha256: str | None,
+    provenance: experiment_deployment_provenance,
+) -> None:
+    if provenance.package.experiment_id != experiment_id:
+        raise infrastructure_error(
+            "Experiment Package provenance experiment ID does not match the active "
+            "experiment."
+        )
+    if provenance.apparatus_sha256 != source_sha256:
+        raise infrastructure_error(
+            "Experiment Package apparatus provenance does not match source_sha256."
+        )
+
+
+def _is_sha256(value: str) -> bool:
+    return len(value) == 64 and all(
+        character in "0123456789abcdef"
+        for character in value
+    )

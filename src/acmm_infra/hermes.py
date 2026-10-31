@@ -9,6 +9,7 @@ from typing import Any, Callable, Literal
 
 import yaml
 
+from acmm.experiment_package.provenance import experiment_deployment_provenance
 from acmm_infra.common import doctor_check, doctor_report, infrastructure_error
 from acmm_infra.deployment import (
     clear_experiment_apparatus_state,
@@ -43,12 +44,15 @@ class hermes_manager:
         profile: hermes_profile,
         docker: docker_client,
         experiment_id: str | None = None,
+        deployment_provenance: experiment_deployment_provenance | None = None,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.runtime_root = Path(runtime_root).expanduser().resolve()
         self.profile = profile
         self.docker = docker
         self.experiment_id = experiment_id
+        self.deployment_provenance = deployment_provenance
+        self._validate_deployment_provenance("hermes")
         self.client = hermes_client(docker)
         self.deployment_root = (
             self.runtime_root / profile.deployment_directory
@@ -62,6 +66,40 @@ class hermes_manager:
             / "hermes"
             / "defaults"
         ).resolve()
+
+    def _validate_deployment_provenance(self, infrastructure_subject: str) -> None:
+        provenance = self.deployment_provenance
+        if provenance is None:
+            return
+        if self.experiment_id is None:
+            raise infrastructure_error(
+                "Experiment Package deployment provenance requires an experiment ID."
+            )
+        if provenance.package.experiment_id != self.experiment_id:
+            raise infrastructure_error(
+                "Experiment Package provenance experiment ID does not match manager "
+                "experiment ID."
+            )
+        if provenance.infrastructure_subject != infrastructure_subject:
+            raise infrastructure_error(
+                "Experiment Package deployment provenance targets infrastructure "
+                f"'{provenance.infrastructure_subject}', expected "
+                f"'{infrastructure_subject}'."
+            )
+
+    def _apparatus_source_sha256(
+        self,
+        infrastructure_subject: str,
+        experiment_id: str,
+    ) -> str | None:
+        provenance = self.deployment_provenance
+        if provenance is not None:
+            return provenance.apparatus_sha256
+        return experiment_apparatus_sha256(
+            self.repo_root,
+            infrastructure_subject,
+            experiment_id,
+        )
 
     def init_runtime(self) -> None:
         self.deployment_root.mkdir(parents=True, exist_ok=True)
@@ -189,8 +227,7 @@ class hermes_manager:
         if experiment_id is None:
             clear_experiment_apparatus_state(self.deployment_root)
         else:
-            source_sha256 = experiment_apparatus_sha256(
-                self.repo_root,
+            source_sha256 = self._apparatus_source_sha256(
                 "hermes",
                 experiment_id,
             )
@@ -208,6 +245,7 @@ class hermes_manager:
                     }
                     for plugin in self.profile.plugins
                 ],
+                package_provenance=self.deployment_provenance,
             )
 
         write_llm_baseline_state(
@@ -317,8 +355,7 @@ class hermes_manager:
         for plugin in stale_plugins:
             self._remove_plugin_destination(plugin.destination)
 
-        source_sha256 = experiment_apparatus_sha256(
-            self.repo_root,
+        source_sha256 = self._apparatus_source_sha256(
             "hermes",
             experiment_id,
         )
@@ -336,6 +373,7 @@ class hermes_manager:
                 }
                 for plugin in self.profile.plugins
             ],
+            package_provenance=self.deployment_provenance,
         )
         if output_mode != "quiet":
             report("[3/3] Hermes experiment apparatus applied successfully.")
