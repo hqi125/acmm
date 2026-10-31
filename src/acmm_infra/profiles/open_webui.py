@@ -21,6 +21,7 @@ class managed_open_webui_tool:
     name: str
     description: str
     source: Path
+    source_root: Path | None = None
 
 
 @dataclass(frozen=True)

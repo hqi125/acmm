@@ -837,10 +837,11 @@ class open_webui_manager:
         return state
 
     def _tool_payload(self, tool: managed_open_webui_tool) -> dict[str, Any]:
-        source = (self.open_webui_root / tool.source).resolve()
-        if not source.is_relative_to(self.open_webui_root):
+        source_root = (tool.source_root or self.open_webui_root).resolve()
+        source = (source_root / tool.source).resolve()
+        if not source.is_relative_to(source_root):
             raise infrastructure_error(
-                f"Managed Open WebUI tool source escapes infrastructure root: '{source}'."
+                f"Managed Open WebUI tool source escapes its source root: '{source}'."
             )
         if not source.is_file():
             raise infrastructure_error(

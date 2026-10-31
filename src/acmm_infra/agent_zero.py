@@ -748,11 +748,20 @@ class agent_zero_manager:
             synchronized.append(plugin.name)
         return tuple(synchronized)
 
+    def _plugin_source(self, plugin: managed_agent_zero_plugin) -> Path:
+        root = (plugin.source_root or self.agent_zero_root).resolve()
+        source = (root / plugin.source).resolve()
+        if not source.is_relative_to(root):
+            raise infrastructure_error(
+                f"Agent Zero managed plugin source escapes its source root: '{source}'."
+            )
+        return source
+
     def _sync_plugin(self, plugin: managed_agent_zero_plugin) -> None:
-        source = (self.agent_zero_root / plugin.source).resolve()
+        source = self._plugin_source(plugin)
         destination = (self.data_root / plugin.destination).resolve()
 
-        if not source.is_relative_to(self.agent_zero_root) or not source.is_dir():
+        if not source.is_dir():
             raise infrastructure_error(
                 f"Agent Zero managed plugin source is invalid: '{source}'."
             )
@@ -774,7 +783,7 @@ class agent_zero_manager:
         )
 
     def _plugin_status(self, plugin: managed_agent_zero_plugin) -> dict[str, Any]:
-        source = (self.agent_zero_root / plugin.source).resolve()
+        source = self._plugin_source(plugin)
         destination = (self.data_root / plugin.destination).resolve()
         present = destination.is_dir()
         return {
@@ -983,8 +992,8 @@ class agent_zero_manager:
     def _reconcile_plugins_live(self) -> tuple[str, ...]:
         synchronized: list[str] = []
         for plugin in self.profile.plugins:
-            source = (self.agent_zero_root / plugin.source).resolve()
-            if not source.is_relative_to(self.agent_zero_root) or not source.is_dir():
+            source = self._plugin_source(plugin)
+            if not source.is_dir():
                 raise infrastructure_error(
                     f"Agent Zero managed plugin source is invalid: '{source}'."
                 )

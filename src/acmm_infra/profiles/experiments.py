@@ -29,12 +29,50 @@ from acmm_infra.source_tree import iter_managed_source_files
 
 _EXPERIMENT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
 
+
+def with_hermes_apparatus(
+    apparatus_root: str | Path,
+    profile: hermes_profile,
+    experiment_id: str,
+) -> hermes_profile:
+    root = _resolve_apparatus_root(apparatus_root)
+    experiment_id = _validate_experiment_id(experiment_id)
+    data = _load_apparatus_root(root, "Hermes", experiment_id)
+    return _compose_hermes_apparatus(
+        profile,
+        data,
+        experiment_id,
+        source_base=root,
+        managed_source_root=root,
+    )
+
+
 def with_hermes_experiment(
     repo_root: str | Path,
     profile: hermes_profile,
     experiment_id: str,
 ) -> hermes_profile:
-    data = _load_apparatus(repo_root, "hermes", experiment_id)
+    repo = Path(repo_root).resolve()
+    experiment_id = _validate_experiment_id(experiment_id)
+    root = _legacy_apparatus_root(repo, "hermes", experiment_id)
+    data = _load_apparatus_root(root, "Hermes", experiment_id)
+    return _compose_hermes_apparatus(
+        profile,
+        data,
+        experiment_id,
+        source_base=repo,
+        managed_source_root=None,
+    )
+
+
+def _compose_hermes_apparatus(
+    profile: hermes_profile,
+    data: dict[str, Any],
+    experiment_id: str,
+    *,
+    source_base: Path,
+    managed_source_root: Path | None,
+) -> hermes_profile:
     plugins_data = _managed_list(data, "plugins", experiment_id, "Hermes")
     plugins: list[managed_hermes_plugin] = []
 
@@ -45,7 +83,7 @@ def with_hermes_experiment(
 
         name = _nonempty_string(plugin.get("name"), f"{path}.name")
         source = _safe_relative_path(plugin.get("source"), f"{path}.source")
-        _validate_hermes_plugin_package(repo_root, source, name, path)
+        _validate_hermes_plugin_package(source_base, source, name, path)
 
         plugins.append(
             managed_hermes_plugin(
@@ -60,7 +98,11 @@ def with_hermes_experiment(
                     plugin.get("allow_tool_override", False),
                     f"{path}.allow_tool_override",
                 ),
-                toolsets=_string_tuple(plugin.get("toolsets", []), f"{path}.toolsets"),
+                toolsets=_string_tuple(
+                    plugin.get("toolsets", []),
+                    f"{path}.toolsets",
+                ),
+                source_root=managed_source_root,
             )
         )
 
@@ -68,14 +110,16 @@ def with_hermes_experiment(
     return replace(profile, plugins=tuple(plugins))
 
 
-
 def _validate_hermes_plugin_package(
-    repo_root: str | Path,
+    source_base: str | Path,
     source: Path,
     expected_name: str,
     field_path: str,
 ) -> None:
-    root = (Path(repo_root).resolve() / source).resolve()
+    base = Path(source_base).resolve()
+    root = (base / source).resolve()
+    if not root.is_relative_to(base):
+        raise profile_error(f"{field_path}.source escapes its managed source root.")
     if not root.is_dir():
         raise profile_error(f"{field_path}.source does not exist: '{root}'.")
 
@@ -110,12 +154,47 @@ def _validate_hermes_plugin_package(
             f"'{expected_name}'."
         )
 
+
+def with_open_webui_apparatus(
+    apparatus_root: str | Path,
+    profile: open_webui_profile,
+    experiment_id: str,
+) -> open_webui_profile:
+    root = _resolve_apparatus_root(apparatus_root)
+    experiment_id = _validate_experiment_id(experiment_id)
+    data = _load_apparatus_root(root, "Open WebUI", experiment_id)
+    return _compose_open_webui_apparatus(
+        profile,
+        data,
+        experiment_id,
+        managed_source_root=root,
+    )
+
+
 def with_open_webui_experiment(
     repo_root: str | Path,
     profile: open_webui_profile,
     experiment_id: str,
 ) -> open_webui_profile:
-    data = _load_apparatus(repo_root, "open-webui", experiment_id)
+    repo = Path(repo_root).resolve()
+    experiment_id = _validate_experiment_id(experiment_id)
+    root = _legacy_apparatus_root(repo, "open-webui", experiment_id)
+    data = _load_apparatus_root(root, "Open WebUI", experiment_id)
+    return _compose_open_webui_apparatus(
+        profile,
+        data,
+        experiment_id,
+        managed_source_root=None,
+    )
+
+
+def _compose_open_webui_apparatus(
+    profile: open_webui_profile,
+    data: dict[str, Any],
+    experiment_id: str,
+    *,
+    managed_source_root: Path | None,
+) -> open_webui_profile:
     tools_data = _managed_list(data, "tools", experiment_id, "Open WebUI")
     tools: list[managed_open_webui_tool] = []
 
@@ -125,8 +204,14 @@ def with_open_webui_experiment(
             raise profile_error(f"{path} must be a mapping.")
         tool_id = _nonempty_string(tool.get("id"), f"{path}.id")
         if not tool_id.isidentifier() or tool_id.lower() != tool_id:
-            raise profile_error(
-                f"{path}.id must be a lowercase Python identifier."
+            raise profile_error(f"{path}.id must be a lowercase Python identifier.")
+        source = _safe_relative_path(tool.get("source"), f"{path}.source")
+        if managed_source_root is not None:
+            _validate_managed_source(
+                managed_source_root,
+                source,
+                f"{path}.source",
+                require_directory=False,
             )
         tools.append(
             managed_open_webui_tool(
@@ -136,7 +221,8 @@ def with_open_webui_experiment(
                     tool.get("description"),
                     f"{path}.description",
                 ),
-                source=_safe_relative_path(tool.get("source"), f"{path}.source"),
+                source=source,
+                source_root=managed_source_root,
             )
         )
 
@@ -144,12 +230,46 @@ def with_open_webui_experiment(
     return replace(profile, tools=tuple(tools))
 
 
+def with_agent_zero_apparatus(
+    apparatus_root: str | Path,
+    profile: agent_zero_profile,
+    experiment_id: str,
+) -> agent_zero_profile:
+    root = _resolve_apparatus_root(apparatus_root)
+    experiment_id = _validate_experiment_id(experiment_id)
+    data = _load_apparatus_root(root, "Agent Zero", experiment_id)
+    return _compose_agent_zero_apparatus(
+        profile,
+        data,
+        experiment_id,
+        managed_source_root=root,
+    )
+
+
 def with_agent_zero_experiment(
     repo_root: str | Path,
     profile: agent_zero_profile,
     experiment_id: str,
 ) -> agent_zero_profile:
-    data = _load_apparatus(repo_root, "agent-zero", experiment_id)
+    repo = Path(repo_root).resolve()
+    experiment_id = _validate_experiment_id(experiment_id)
+    root = _legacy_apparatus_root(repo, "agent-zero", experiment_id)
+    data = _load_apparatus_root(root, "Agent Zero", experiment_id)
+    return _compose_agent_zero_apparatus(
+        profile,
+        data,
+        experiment_id,
+        managed_source_root=None,
+    )
+
+
+def _compose_agent_zero_apparatus(
+    profile: agent_zero_profile,
+    data: dict[str, Any],
+    experiment_id: str,
+    *,
+    managed_source_root: Path | None,
+) -> agent_zero_profile:
     plugins_data = _managed_list(data, "plugins", experiment_id, "Agent Zero")
     tool_policy = data.get("tool_policy")
     if not isinstance(tool_policy, dict):
@@ -161,14 +281,23 @@ def with_agent_zero_experiment(
         path = f"plugins.managed[{index}]"
         if not isinstance(plugin, dict):
             raise profile_error(f"{path} must be a mapping.")
+        source = _safe_relative_path(plugin.get("source"), f"{path}.source")
+        if managed_source_root is not None:
+            _validate_managed_source(
+                managed_source_root,
+                source,
+                f"{path}.source",
+                require_directory=True,
+            )
         plugins.append(
             managed_agent_zero_plugin(
                 name=_nonempty_string(plugin.get("name"), f"{path}.name"),
-                source=_safe_relative_path(plugin.get("source"), f"{path}.source"),
+                source=source,
                 destination=_safe_relative_path(
                     plugin.get("destination"),
                     f"{path}.destination",
                 ),
+                source_root=managed_source_root,
             )
         )
 
@@ -177,18 +306,11 @@ def with_agent_zero_experiment(
     return replace(profile, experiment_isolation=isolation, plugins=tuple(plugins))
 
 
-
-
 def registered_experiment_apparatus_ids(
     repo_root: str | Path,
     subject: str,
 ) -> tuple[str, ...]:
-    root = (
-        Path(repo_root).resolve()
-        / "infrastructure"
-        / subject
-        / "experiments"
-    )
+    root = Path(repo_root).resolve() / "infrastructure" / subject / "experiments"
     if not root.is_dir():
         return ()
 
@@ -199,23 +321,15 @@ def registered_experiment_apparatus_ids(
             experiment_ids.append(experiment_id)
     return tuple(experiment_ids)
 
+
 def experiment_apparatus_sha256(
     repo_root: str | Path,
     subject: str,
     experiment_id: str,
 ) -> str:
+    repo = Path(repo_root).resolve()
     experiment_id = _validate_experiment_id(experiment_id)
-    root = (
-        Path(repo_root).resolve()
-        / "infrastructure"
-        / subject
-        / "experiments"
-        / experiment_id
-    )
-    if not root.is_dir():
-        raise profile_error(
-            f"Experiment apparatus directory does not exist: '{root}'."
-        )
+    root = _legacy_apparatus_root(repo, subject, experiment_id)
 
     digest = hashlib.sha256()
     for path in iter_managed_source_files(root):
@@ -227,43 +341,80 @@ def experiment_apparatus_sha256(
         digest.update(payload)
     return digest.hexdigest()
 
-def _load_apparatus(
-    repo_root: str | Path,
+
+def _legacy_apparatus_root(
+    repo_root: Path,
     subject: str,
     experiment_id: str,
+) -> Path:
+    root = repo_root / "infrastructure" / subject / "experiments" / experiment_id
+    if not root.is_dir():
+        raise profile_error(f"Experiment apparatus directory does not exist: '{root}'.")
+    return root
+
+
+def _resolve_apparatus_root(apparatus_root: str | Path) -> Path:
+    unresolved = Path(apparatus_root).expanduser()
+    if unresolved.is_symlink():
+        raise profile_error("Experiment apparatus root must not be a symbolic link.")
+    root = unresolved.resolve()
+    if not root.is_dir():
+        raise profile_error(f"Experiment apparatus directory does not exist: '{root}'.")
+    return root
+
+
+def _load_apparatus_root(
+    apparatus_root: Path,
+    subject_name: str,
+    experiment_id: str,
 ) -> dict[str, Any]:
-    experiment_id = _validate_experiment_id(experiment_id)
-    path = (
-        Path(repo_root).resolve()
-        / "infrastructure"
-        / subject
-        / "experiments"
-        / experiment_id
-        / "apparatus.yaml"
-    )
+    path = apparatus_root / "apparatus.yaml"
     try:
         with path.open("r", encoding="utf-8") as file:
             data = yaml.safe_load(file)
     except OSError as exc:
         raise profile_error(
-            f"Could not read {subject} experiment apparatus '{path}': {exc}"
+            f"Could not read {subject_name} experiment apparatus '{path}': {exc}"
         ) from exc
     except yaml.YAMLError as exc:
         raise profile_error(
-            f"Could not parse {subject} experiment apparatus '{path}': {exc}"
+            f"Could not parse {subject_name} experiment apparatus '{path}': {exc}"
         ) from exc
 
     if not isinstance(data, dict):
-        raise profile_error(f"{subject} experiment apparatus must be a YAML mapping.")
+        raise profile_error(
+            f"{subject_name} experiment apparatus must be a YAML mapping."
+        )
     if data.get("schema_version") != "0.1":
         raise profile_error(
-            f"{subject} experiment apparatus schema_version must be '0.1'."
+            f"{subject_name} experiment apparatus schema_version must be '0.1'."
         )
     if data.get("experiment_id") != experiment_id:
         raise profile_error(
-            f"{subject} experiment apparatus experiment_id must be '{experiment_id}'."
+            f"{subject_name} experiment apparatus experiment_id must be "
+            f"'{experiment_id}'."
         )
     return data
+
+
+def _validate_managed_source(
+    source_root: Path,
+    source: Path,
+    field_path: str,
+    *,
+    require_directory: bool,
+) -> None:
+    root = source_root.resolve()
+    resolved = (root / source).resolve()
+    if not resolved.is_relative_to(root):
+        raise profile_error(f"{field_path} escapes its managed source root.")
+
+    valid = resolved.is_dir() if require_directory else resolved.is_file()
+    if not valid:
+        kind = "directory" if require_directory else "file"
+        raise profile_error(
+            f"{field_path} must identify a managed {kind}: '{resolved}'."
+        )
 
 
 def _validate_experiment_id(value: str) -> str:

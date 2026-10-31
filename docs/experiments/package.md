@@ -805,3 +805,47 @@ EP-2 does not yet make the CLI discover or run external packages, replace the bu
 catalog, or apply package-owned apparatus. Those remain later package milestones. The next major
 boundary is EP-3: make agent infrastructure consume resolved apparatus roots from staged packages
 instead of reconstructing main-repository experiment paths.
+
+
+## EP-3 implementation checkpoint
+
+EP-3 establishes the Experiment Apparatus boundary without replacing legacy experiment discovery
+or the existing agent lifecycle.
+
+Staged package apparatus is now resolved through `load_staged_experiment_apparatus()`. Resolution:
+
+1. requires the package to be in the ACMM staged-package layout;
+2. rechecks the full package digest;
+3. rechecks the selected apparatus component digest; and
+4. returns the already typed apparatus component/root from the validated package model.
+
+The agent infrastructure layer now accepts a resolved apparatus root through:
+
+- `with_hermes_apparatus()`;
+- `with_open_webui_apparatus()`; and
+- `with_agent_zero_apparatus()`.
+
+These functions validate the apparatus identity and interpret managed source paths relative to the
+apparatus root. Package apparatus therefore uses paths such as `plugins/acmm-tools` or
+`tools/acmm_tools.py` rather than paths rooted in the ACMM repository.
+
+Managed Hermes plugins, Open WebUI tools, and Agent Zero plugins now carry an optional explicit
+`source_root`. Their `source` remains a safe relative path. Agent managers resolve managed content
+against `source_root` when present and against their historical main-repo root otherwise. This
+keeps package apparatus portable without weakening path-containment checks or storing absolute
+paths as package declarations.
+
+The existing `with_*_experiment()` functions remain as compatibility wrappers for built-in legacy
+experiments. Their source paths and `source_root=None` behavior are unchanged, so the historical
+main-repo apparatus layout continues to work during migration. Package apparatus provenance uses
+the component digest already carried by the staged package model, while the existing ID-based
+digest helper remains available for legacy callers.
+
+As an integration proof, all three agent managers have tests that consume package-local tool/plugin
+content from an ACMM-staged snapshot after the original source package has been removed. This
+demonstrates that deployment-facing source resolution no longer depends on the main repository or
+the original package source directory.
+
+EP-3 intentionally does not yet make `acmm env`, `status`, `doctor`, or `acmm run` discover an
+external package automatically. It also does not yet persist package identity in deployment state.
+Those higher-level lifecycle/provenance changes belong to the next package milestones.

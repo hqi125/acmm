@@ -20,6 +20,7 @@ class managed_agent_zero_plugin:
     name: str
     source: Path
     destination: Path
+    source_root: Path | None = None
 
 
 @dataclass(frozen=True)

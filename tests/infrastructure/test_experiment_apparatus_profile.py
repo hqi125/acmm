@@ -34,6 +34,7 @@ def test_hermes_experiment_apparatus_composes_over_baseline() -> None:
         + EXPERIMENT_ID
         + "/plugins/acmm-tools"
     )
+    assert profile.plugins[0].source_root is None
 
 
 def test_open_webui_experiment_apparatus_composes_over_baseline() -> None:
@@ -48,6 +49,7 @@ def test_open_webui_experiment_apparatus_composes_over_baseline() -> None:
     assert profile.tools[0].source == Path(
         f"experiments/{EXPERIMENT_ID}/tools/acmm_tools.py"
     )
+    assert profile.tools[0].source_root is None
 
 
 def test_agent_zero_experiment_apparatus_composes_over_baseline() -> None:
@@ -66,6 +68,7 @@ def test_agent_zero_experiment_apparatus_composes_over_baseline() -> None:
     assert profile.plugins[0].source == Path(
         f"experiments/{EXPERIMENT_ID}/plugins/acmm_tools"
     )
+    assert profile.plugins[0].source_root is None
 
 
 def test_existing_experiments_have_independent_apparatus_copies() -> None:

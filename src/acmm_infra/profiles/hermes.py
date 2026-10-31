@@ -24,6 +24,7 @@ class managed_hermes_plugin:
     enabled: bool
     allow_tool_override: bool
     toolsets: tuple[str, ...]
+    source_root: Path | None = None
 
 
 @dataclass(frozen=True)

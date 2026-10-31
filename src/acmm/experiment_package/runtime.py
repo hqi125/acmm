@@ -16,15 +16,14 @@ from acmm.experiment_api import (
     experiment_runtime_context,
 )
 from acmm.experiment_package.model import experiment_package
-from acmm.experiment_package.source_tree import (
-    component_tree_sha256,
-    package_tree_sha256,
+from acmm.experiment_package.snapshot import (
+    staged_package_verification_error,
+    verify_staged_component_snapshot,
 )
 from acmm.runtime.interfaces import subject_adapter
 from acmm.runtime.registry import execution_registry
 
 
-_STAGED_PACKAGE_DIRECTORY = "_experiment_packages"
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
@@ -48,7 +47,6 @@ def load_staged_experiment_runtime(
             f"Experiment Package '{package.experiment_id}' does not declare runtime code."
         )
 
-    _validate_staged_package_layout(package)
     _verify_runtime_snapshot(package)
 
     if component.api_version != EXPERIMENT_RUNTIME_API_VERSION:
@@ -126,36 +124,26 @@ def compose_execution_registry(
     )
 
 
-def _validate_staged_package_layout(package: experiment_package) -> None:
-    root = package.root
-
-    if (
-        root.name != package.package_sha256
-        or root.parent.name != package.experiment_id
-        or root.parent.parent.name != _STAGED_PACKAGE_DIRECTORY
-    ):
-        raise experiment_runtime_error(
-            "Experiment runtime may only be loaded from an ACMM-staged package snapshot."
-        )
-
-
 def _verify_runtime_snapshot(package: experiment_package) -> None:
     component = package.runtime
     assert component is not None
 
-    observed_package_sha256 = package_tree_sha256(package.root)
-    if observed_package_sha256 != package.package_sha256:
-        raise experiment_runtime_error(
-            "Staged Experiment Package changed before runtime activation: "
-            f"expected {package.package_sha256}, observed {observed_package_sha256}."
+    try:
+        verify_staged_component_snapshot(
+            package,
+            component.root,
+            component.sha256,
+            "runtime",
         )
-
-    observed_runtime_sha256 = component_tree_sha256(component.root)
-    if observed_runtime_sha256 != component.sha256:
+    except staged_package_verification_error as exc:
+        message = str(exc)
+        if "not an ACMM-staged package snapshot" in message:
+            raise experiment_runtime_error(
+                "Experiment runtime may only be loaded from an ACMM-staged package snapshot."
+            ) from exc
         raise experiment_runtime_error(
-            "Staged Experiment Package runtime changed before activation: "
-            f"expected {component.sha256}, observed {observed_runtime_sha256}."
-        )
+            "Staged Experiment Package changed before runtime activation: " + message
+        ) from exc
 
 
 def _runtime_module_name(package: experiment_package) -> str:

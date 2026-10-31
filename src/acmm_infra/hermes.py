@@ -465,7 +465,7 @@ class hermes_manager:
         plugin_status = []
 
         for plugin in self.profile.plugins:
-            source = self.repo_root / plugin.source
+            source = self._plugin_source(plugin)
             destination = self.data_root / plugin.destination
             source_hash = _tree_sha256(source) if source.exists() else None
             destination_hash = _tree_sha256(destination) if destination.exists() else None
@@ -1229,8 +1229,17 @@ class hermes_manager:
         elif target.exists():
             target.unlink()
 
+    def _plugin_source(self, plugin: managed_hermes_plugin) -> Path:
+        root = (plugin.source_root or self.repo_root).resolve()
+        source = (root / plugin.source).resolve()
+        if not source.is_relative_to(root):
+            raise infrastructure_error(
+                f"Managed Hermes plugin source escapes its source root: '{source}'."
+            )
+        return source
+
     def _sync_plugin(self, plugin: managed_hermes_plugin) -> None:
-        source = (self.repo_root / plugin.source).resolve()
+        source = self._plugin_source(plugin)
         destination = _safe_runtime_target(self.data_root, plugin.destination)
 
         if not source.is_dir():
