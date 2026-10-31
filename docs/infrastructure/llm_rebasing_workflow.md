@@ -26,8 +26,9 @@ catalog current pointer
     -> default baseline for experiment-independent operations
 ```
 
-`acmm env apply --experiment <id>` always follows the experiment's registered subjects and their
-historical baseline. Plain `acmm env apply` follows the catalog's current baseline.
+Experiment Package application follows the package Contract's registered subjects and their bound
+LLM baselines. Experiment-independent model selection is explicit with
+`acmm env set-llm <llm-id>`; the CLI does not implicitly choose the catalog's current entry.
 
 ## 1. Register a candidate without promoting it
 
@@ -60,19 +61,19 @@ ollama pull <model>:cloud
 ollama ls
 ```
 
-ACMM intentionally does not pull external models during environment apply. Provider registration is
+ACMM intentionally does not pull external models during `env set-llm`. Provider registration is
 an operator action; `doctor` verifies that the configured model is actually visible through each
 agent/provider path.
 
-## 3. Apply the candidate qualification cohort
+## 3. Set the candidate qualification LLM
 
-Candidate selection is allowed only on the state-changing apply operation:
+Candidate selection uses the state-changing `set-llm` operation:
 
 ```text
-acmm env apply --llm-baseline <candidate-id>
+acmm env set-llm <candidate-id>
 ```
 
-After apply, observational cohort commands are passive and comprehensive:
+After `set-llm`, observational cohort commands are passive and comprehensive:
 
 ```text
 acmm env status
@@ -160,15 +161,15 @@ Promotion consists of:
 5. preserving all historical baseline definitions and subject bindings;
 6. documenting the qualification evidence and promotion boundary.
 
-After promotion, converge the deployed environment onto the production identity:
+After promotion, converge the deployed environment onto the production identity explicitly:
 
 ```text
-acmm env apply
+acmm env set-llm <production-id>
 acmm env status
 acmm env doctor --start-if-needed
 ```
 
-The actual model settings may be identical to the candidate, but this apply replaces temporary
+The actual model settings may be identical to the candidate, but `set-llm` replaces temporary
 qualification deployment identity with permanent production subject/baseline identity.
 
 ## 8. Verify historical reproduction remains intact
@@ -208,15 +209,15 @@ Then rerun:
 acmm env doctor --start-if-needed
 ```
 
-No environment reapply is needed if the agents are already configured for that model.
+No additional `set-llm` is needed if the agents are already configured for that model.
 
 ### Qualification reports stale or inconsistent experiment apparatus
 
 The qualification Tool fixture temporarily uses experiment apparatus markers. An interrupted or
-older buggy cleanup can leave one behind. Reconcile the experiment-independent current baseline:
+older buggy cleanup can leave one behind. Reconcile the environment to the intended LLM explicitly:
 
 ```text
-acmm env apply
+acmm env set-llm <llm-id>
 ```
 
 Then confirm:

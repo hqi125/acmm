@@ -598,6 +598,28 @@ def summarize_context(
     return cohort_context_summary(state="converged", experiment_id=experiment_id)
 
 
+def package_deployment_references(
+    repo_root: str | Path,
+    runtime_root: str | Path,
+    package_sha256: str,
+) -> tuple[str, ...]:
+    references: list[str] = []
+    for infrastructure_subject in _INFRASTRUCTURE_SUBJECTS:
+        state = deployed_experiment_state(
+            repo_root,
+            runtime_root,
+            infrastructure_subject,
+        )
+        if not isinstance(state, dict):
+            continue
+        package = state.get("package")
+        if not isinstance(package, dict):
+            continue
+        if package.get("sha256") == package_sha256:
+            references.append(infrastructure_subject)
+    return tuple(references)
+
+
 def stop_cohort(
     repo_root: str | Path,
     runtime_root: str | Path,

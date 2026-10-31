@@ -69,7 +69,7 @@ def stage_experiment_package(
         raise
 
 
-def acquire_experiment_package(
+def install_experiment_package(
     source_root: str | Path,
     runtime_root: str | Path,
     *,
@@ -81,6 +81,19 @@ def acquire_experiment_package(
     )
     return stage_experiment_package(
         package,
+        runtime_root,
+        contract_schema_path=contract_schema_path,
+    )
+
+
+def acquire_experiment_package(
+    source_root: str | Path,
+    runtime_root: str | Path,
+    *,
+    contract_schema_path: str | Path,
+) -> experiment_package:
+    return install_experiment_package(
+        source_root,
         runtime_root,
         contract_schema_path=contract_schema_path,
     )

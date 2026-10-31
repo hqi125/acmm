@@ -6,8 +6,25 @@ import sys
 
 from acmm.experiment_package.loader import experiment_package_error, load_experiment_package
 from acmm.experiment_package.model import experiment_package
-from acmm.experiment_package.staging import acquire_experiment_package
-from acmm_infra.profiles.common import default_runtime_root
+from acmm.experiment_package.staging import install_experiment_package
+from acmm.experiment_package.store import (
+    experiment_package_store_error,
+    list_installed_experiment_packages,
+    resolve_installed_experiment_package,
+    uninstall_experiment_package,
+)
+from acmm_infra.cohort import (
+    apply_cohort,
+    package_deployment_references,
+    resolve_package_cohort,
+)
+from acmm_infra.common import infrastructure_error
+from acmm_infra.docker import docker_error
+from acmm_infra.profiles.common import (
+    default_repo_root,
+    default_runtime_root,
+    profile_error,
+)
 
 
 def register_experiment_package_commands(
@@ -15,7 +32,7 @@ def register_experiment_package_commands(
 ) -> None:
     package_parser = subparsers.add_parser(
         "package",
-        help="Validate and acquire ACMM Experiment Packages.",
+        help="Validate and manage installed ACMM Experiment Packages.",
     )
     package_subparsers = package_parser.add_subparsers(
         dest="package_command",
@@ -24,63 +41,257 @@ def register_experiment_package_commands(
 
     validate_parser = package_subparsers.add_parser(
         "validate",
-        help="Validate an Experiment Package without staging it.",
+        help="Validate an Experiment Package source without installing it.",
     )
     validate_parser.add_argument("source", help="Path to an Experiment Package directory.")
-    _add_contract_schema_argument(validate_parser)
     validate_parser.set_defaults(handler=run_package_validate)
 
-    acquire_parser = package_subparsers.add_parser(
-        "acquire",
-        help="Validate, hash, and stage an Experiment Package.",
+    install_parser = package_subparsers.add_parser(
+        "install",
+        help="Validate, hash, and install an Experiment Package revision.",
     )
-    acquire_parser.add_argument("source", help="Path to an Experiment Package directory.")
-    _add_contract_schema_argument(acquire_parser)
-    acquire_parser.add_argument(
-        "--runtime-root",
-        default=str(default_runtime_root()),
+    install_parser.add_argument("source", help="Path to an Experiment Package directory.")
+    install_parser.set_defaults(handler=run_package_install)
+
+    apply_parser = package_subparsers.add_parser(
+        "apply",
+        help="Apply one installed Experiment Package to its qualified subjects.",
+    )
+    apply_parser.add_argument(
+        "selector",
         help=(
-            "Mutable ACMM runtime root used for immutable package staging. "
-            "Defaults to ACMM_RUNTIME_ROOT or ~/acmm_runtime."
+            "Installed package selector: EXPERIMENT_ID when unique, or "
+            "EXPERIMENT_ID@SHA_PREFIX when multiple revisions are installed."
         ),
     )
-    acquire_parser.set_defaults(handler=run_package_acquire)
+    _add_subject_arguments(apply_parser)
+    apply_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=120.0,
+        help="Maximum provisioning timeout passed to each subject manager.",
+    )
+    apply_parser.set_defaults(handler=run_package_apply)
+
+    uninstall_parser = package_subparsers.add_parser(
+        "uninstall",
+        help="Remove one installed Experiment Package revision.",
+    )
+    uninstall_parser.add_argument(
+        "selector",
+        help=(
+            "Installed package selector: EXPERIMENT_ID when unique, or "
+            "EXPERIMENT_ID@SHA_PREFIX when multiple revisions are installed."
+        ),
+    )
+    uninstall_parser.set_defaults(handler=run_package_uninstall)
+
+    list_parser = package_subparsers.add_parser(
+        "list",
+        help="List installed Experiment Package revisions.",
+    )
+    list_parser.set_defaults(handler=run_package_list)
+
+    show_parser = package_subparsers.add_parser(
+        "show",
+        help="Validate and show one installed Experiment Package revision.",
+    )
+    show_parser.add_argument(
+        "selector",
+        help=(
+            "Installed package selector: EXPERIMENT_ID when unique, or "
+            "EXPERIMENT_ID@SHA_PREFIX when multiple revisions are installed."
+        ),
+    )
+    show_parser.set_defaults(handler=run_package_show)
 
 
 def run_package_validate(args: argparse.Namespace) -> int:
     try:
         package = load_experiment_package(
             Path(args.source),
-            contract_schema_path=_contract_schema_path(args),
+            contract_schema_path=_contract_schema_path(),
         )
     except (experiment_package_error, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
     print("Experiment Package is valid:")
-    _print_package_summary(package, staged=False)
+    _print_package_summary(package, installed=False)
     return 0
 
 
-def run_package_acquire(args: argparse.Namespace) -> int:
+def run_package_install(args: argparse.Namespace) -> int:
     try:
-        package = acquire_experiment_package(
+        package = install_experiment_package(
             Path(args.source),
-            Path(args.runtime_root),
-            contract_schema_path=_contract_schema_path(args),
+            default_runtime_root().expanduser().resolve(),
+            contract_schema_path=_contract_schema_path(),
         )
     except (experiment_package_error, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    print("Experiment Package acquired:")
-    _print_package_summary(package, staged=True)
+    print("Experiment Package installed:")
+    _print_package_summary(package, installed=True)
+    print(f"  selector:         {package.experiment_id}@{package.package_sha256[:12]}")
     return 0
 
 
-def _contract_schema_path(args: argparse.Namespace) -> Path:
-    if args.schema is not None:
-        return Path(args.schema)
+def run_package_apply(args: argparse.Namespace) -> int:
+    repo_root = default_repo_root().expanduser().resolve()
+    runtime_root = default_runtime_root().expanduser().resolve()
+    try:
+        package = resolve_installed_experiment_package(
+            runtime_root,
+            args.selector,
+            contract_schema_path=_contract_schema_path(),
+        )
+        cohort = resolve_package_cohort(
+            repo_root,
+            package,
+            tuple(args.subjects or ()),
+        )
+    except (
+        experiment_package_store_error,
+        experiment_package_error,
+        profile_error,
+        infrastructure_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    print("Experiment Package apply:")
+    _print_package_summary(package, installed=True)
+    print(f"  subjects:          {len(cohort.subjects)}")
+    for subject in cohort.subjects:
+        print(
+            f"    {subject.subject_id} ({subject.infrastructure_subject}, "
+            f"llm={subject.llm_baseline_id})"
+        )
+
+    def progress(index, total, subject, payload) -> None:
+        if index is not None:
+            print()
+            print(f"[{index}/{total}] {subject.subject_id}")
+            print(f"  infrastructure: {subject.infrastructure_subject}")
+            print("  provisioning:")
+            return
+        print(f"    {payload}", flush=True)
+
+    try:
+        results = apply_cohort(
+            repo_root,
+            runtime_root,
+            cohort,
+            timeout_seconds=args.timeout_seconds,
+            progress=progress,
+        )
+    except (
+        profile_error,
+        infrastructure_error,
+        docker_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    print()
+    print("Experiment Package apply complete:")
+    print(f"  subjects applied: {len(results)}/{len(cohort.subjects)}")
+    print(f"  experiment:       {package.experiment_id}")
+    print(f"  package SHA-256:  {package.package_sha256}")
+    print("  deployment contexts:")
+    for item in results:
+        print(f"    {item.subject_id}:")
+        print(f"      application scope: {item.application_scope}")
+        print(f"      apparatus:         {item.apparatus_state}")
+        print(f"      apparatus SHA-256: {item.source_sha256 or 'none'}")
+    return 0
+
+
+def run_package_uninstall(args: argparse.Namespace) -> int:
+    runtime_root = default_runtime_root().expanduser().resolve()
+    try:
+        package = resolve_installed_experiment_package(
+            runtime_root,
+            args.selector,
+            contract_schema_path=_contract_schema_path(),
+        )
+        references = package_deployment_references(
+            default_repo_root(),
+            runtime_root,
+            package.package_sha256,
+        )
+        if references:
+            joined = ", ".join(references)
+            raise experiment_package_store_error(
+                "Cannot uninstall an Experiment Package while it is deployed to "
+                f"subject infrastructure: {joined}. Reconcile those subjects to "
+                "a clean LLM environment with 'acmm env set-llm <llm-id>' first."
+            )
+        installed = uninstall_experiment_package(
+            runtime_root,
+            args.selector,
+            contract_schema_path=_contract_schema_path(),
+        )
+    except (
+        experiment_package_store_error,
+        profile_error,
+        infrastructure_error,
+        docker_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    print("Experiment Package uninstalled:")
+    print(f"  experiment:       {installed.experiment_id}")
+    print(f"  package SHA-256:  {installed.package_sha256}")
+    print(f"  removed root:     {installed.root}")
+    return 0
+
+
+def run_package_list(args: argparse.Namespace) -> int:
+    try:
+        installed = list_installed_experiment_packages(
+            default_runtime_root().expanduser().resolve()
+        )
+    except (experiment_package_store_error, OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    print("Installed Experiment Packages:")
+    print(f"  count: {len(installed)}")
+    for item in installed:
+        print(f"  {item.selector}")
+        print(f"    package SHA-256: {item.package_sha256}")
+        print(f"    root:            {item.root}")
+    return 0
+
+
+def run_package_show(args: argparse.Namespace) -> int:
+    try:
+        package = resolve_installed_experiment_package(
+            default_runtime_root().expanduser().resolve(),
+            args.selector,
+            contract_schema_path=_contract_schema_path(),
+        )
+    except (experiment_package_store_error, OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    print("Installed Experiment Package:")
+    _print_package_summary(package, installed=True)
+    print(f"  selector:         {package.experiment_id}@{package.package_sha256[:12]}")
+    return 0
+
+
+def _contract_schema_path() -> Path:
     return (
         Path(__file__).resolve().parents[3]
         / "contracts"
@@ -89,23 +300,25 @@ def _contract_schema_path(args: argparse.Namespace) -> Path:
     )
 
 
-def _add_contract_schema_argument(parser: argparse.ArgumentParser) -> None:
+def _add_subject_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--schema",
+        "--subject",
+        dest="subjects",
+        action="append",
         help=(
-            "Path to a Contract JSON Schema. Defaults to "
-            "contracts/v0_1/contract.schema.json in this repository."
+            "Restrict package application to a qualified Contract subject ID. "
+            "Repeat to select multiple subjects."
         ),
     )
 
 
-def _print_package_summary(package: experiment_package, *, staged: bool) -> None:
+def _print_package_summary(package: experiment_package, *, installed: bool) -> None:
     print(f"  experiment:       {package.experiment_id}")
     print(f"  schema:           {package.schema_version}")
     print(f"  package SHA-256:  {package.package_sha256}")
     print(f"  Contract SHA-256: {package.contract_sha256}")
-    if staged:
-        print(f"  staged root:      {package.root}")
+    if installed:
+        print(f"  installed root:   {package.root}")
     else:
         print(f"  source root:      {package.root}")
 
@@ -130,6 +343,4 @@ def _print_package_summary(package: experiment_package, *, staged: bool) -> None
 
     print(f"  Contract warnings: {len(package.contract_warnings)}")
     for warning in package.contract_warnings:
-        print(
-            f"    {warning.path}: [{warning.code}] {warning.message}"
-        )
+        print(f"    {warning.path}: [{warning.code}] {warning.message}")

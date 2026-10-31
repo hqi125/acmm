@@ -12,8 +12,11 @@ from acmm.live_preflight import (
     live_readiness_preflight_result,
     subject_live_readiness,
 )
-from acmm_infra.deployment import write_experiment_apparatus_state
-from acmm_infra.profiles.experiments import experiment_apparatus_sha256
+from experiment_package.support import (
+    MAGIC_RUNTIME_SOURCE,
+    install_test_package,
+    write_package_context,
+)
 from acmm.runtime.experiment_execution import (
     experiment_execution_interrupted,
     experiment_interruption_result,
@@ -44,26 +47,6 @@ def _ready_live_preflight(*, subject_bindings, **kwargs):
             for subject_id, binding in subject_bindings.items()
         )
     )
-
-
-def _prepare_hermes_experiment_context(
-    tmp_path: Path,
-    experiment_id: str,
-) -> Path:
-    runtime_root = tmp_path / "runtime"
-    deployment_root = runtime_root / "hermes"
-    write_experiment_apparatus_state(
-        deployment_root,
-        experiment_id=experiment_id,
-        source_sha256=experiment_apparatus_sha256(
-            ROOT,
-            "hermes",
-            experiment_id,
-        ),
-        application_scope="experiment",
-        resources=[],
-    )
-    return runtime_root
 
 
 def _session_export() -> str:
@@ -147,10 +130,13 @@ def test_run_command_executes_one_magic_number_slot(
     capsys,
 ) -> None:
     monkeypatch.setattr("acmm.cli.inspect_live_readiness", _ready_live_preflight)
-    runtime_root = _prepare_hermes_experiment_context(
+    package, runtime_root = install_test_package(
         tmp_path,
-        "magic_number_tool_use_v1",
+        monkeypatch,
+        contract_path=CONTRACT_PATH,
+        runtime_source=MAGIC_RUNTIME_SOURCE,
     )
+    write_package_context(package, runtime_root, "hermes_nemotron30b")
     captured_commands: list[list[str]] = []
 
     def runner(command, **kwargs):
@@ -217,11 +203,9 @@ def test_run_command_executes_one_magic_number_slot(
     args = parser.parse_args(
         [
             "run",
-            str(CONTRACT_PATH),
+            "magic_number_tool_use_v1",
             "--run-index",
             "0",
-            "--runtime-root",
-            str(runtime_root),
             "--results-root",
             str(tmp_path),
         ]
@@ -291,13 +275,20 @@ def test_run_command_executes_one_magic_number_slot(
 
 def test_run_command_rejects_out_of_range_index(
     tmp_path: Path,
+    monkeypatch,
     capsys,
 ) -> None:
+    install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT_PATH,
+        runtime_source=MAGIC_RUNTIME_SOURCE,
+    )
     parser = _build_parser()
     args = parser.parse_args(
         [
             "run",
-            str(CONTRACT_PATH),
+            "magic_number_tool_use_v1",
             "--run-index",
             "5",
             "--results-root",
@@ -306,7 +297,7 @@ def test_run_command_rejects_out_of_range_index(
     )
 
     assert args.handler(args) == 2
-    assert not tmp_path.exists() or list(tmp_path.iterdir()) == []
+    assert not (tmp_path / "magic_number_tool_use_v1").exists()
 
     captured = capsys.readouterr()
     assert "outside the Contract plan range 0..4" in captured.err
@@ -319,10 +310,13 @@ def test_run_command_reports_graceful_ctrl_c_interruption(
     capsys,
 ) -> None:
     monkeypatch.setattr("acmm.cli.inspect_live_readiness", _ready_live_preflight)
-    runtime_root = _prepare_hermes_experiment_context(
+    package, runtime_root = install_test_package(
         tmp_path,
-        "magic_number_tool_use_v1",
+        monkeypatch,
+        contract_path=CONTRACT_PATH,
+        runtime_source=MAGIC_RUNTIME_SOURCE,
     )
+    write_package_context(package, runtime_root, "hermes_nemotron30b")
     session_dir = (
         tmp_path
         / "magic_number_tool_use_v1"
@@ -357,11 +351,9 @@ def test_run_command_reports_graceful_ctrl_c_interruption(
     args = parser.parse_args(
         [
             "run",
-            str(CONTRACT_PATH),
+            "magic_number_tool_use_v1",
             "--run-index",
             "0",
-            "--runtime-root",
-            str(runtime_root),
             "--results-root",
             str(tmp_path),
         ]

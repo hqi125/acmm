@@ -220,7 +220,7 @@ For a single-slot Hermes smoke test, with the managed deployment already `READY`
 deterministic slot with:
 
 ```text
-acmm run experiments/examples/magic_number/experiment.yaml --run-index 0
+acmm run magic_number_tool_use_v1 --run-index 0
 ```
 
 The command performs Contract validation, harness-compatibility validation, execution,
@@ -238,7 +238,7 @@ record paths, and final responses are written to `execution_summary.txt`.
 Run selection supports single indices, inclusive ranges, and Contract subject IDs:
 
 ```text
-acmm run experiments/examples/controlled_tool_use_multiscenario/experiment.yaml \
+acmm run controlled_tool_use_multiscenario_v1 \
     --run-index 20-39 --subject open_webui_nemotron30b
 ```
 
@@ -253,11 +253,10 @@ experiment deployment contexts for the selected subjects, but reports mismatches
 preview remains usable before infrastructure preparation. Omit both selector types to execute the
 entire Contract plan.
 
-A real execution first requires every selected subject deployment to record the Contract experiment
-ID, full `experiment` application scope, and the exact repository apparatus SHA-256. Plain
-`acmm run` then executes the same passive doctor logic used by `acmm-infra <subject> doctor` and
-requires every selected runtime to be live and `READY` before adapter construction or execution
-session creation.
+A real execution first requires every selected subject deployment to record the exact selected
+Experiment Package identity and the expected package apparatus identity, if any. `acmm run` then
+executes the same passive doctor logic used by `acmm-infra <subject> doctor` and requires every
+selected runtime to be live and `READY` before adapter construction or execution session creation.
 
 `--start-if-needed` changes only the stopped-runtime case. After provenance succeeds, already
 running subjects are still doctor-checked immediately; a running-but-unhealthy subject remains a
@@ -268,10 +267,10 @@ next one is acquired. Runtimes that were already running before the command are 
 this policy. Any ACMM-owned runtime is released on normal completion, interruption, or handled
 execution failure. `--startup-timeout-seconds` controls the startup allowance.
 
-Use `--runtime-root` when mutable deployments are not under the default ACMM runtime root and
-`--repo-root` when apparatus/readiness verification should use a different repository checkout.
-`--preview` stops after local context inspection and does not contact or start agent runtimes, even
-when `--start-if-needed` is supplied.
+Repository/runtime roots are not `acmm run` options. Repository location is infrastructure-owned,
+and `ACMM_RUNTIME_ROOT` selects a non-default runtime/package store when needed. `--preview` stops
+after local context inspection and does not contact or start agent runtimes, even when
+`--start-if-needed` is supplied.
 
 `--capture-runtime-logs` is an opt-in diagnostic channel. For each subject lease used by the
 execution, ACMM requests timestamped Docker logs bounded by the lease/acquisition start and captures
@@ -288,12 +287,11 @@ remain outside the Run Record evidence model and are ignored by compliance evalu
 export. Capture is best-effort, so a Docker-log or file-write failure is reported as a warning
 without changing execution validity.
 
-The Contract path is optional for built-in experiments. With bare `acmm run`, deployment contexts are
-read first, one converged experiment ID is inferred, and the canonical Contract path registered in
-`acmm.experiments.catalog` is loaded. Zero candidates or multiple distinct candidates are resolution
-errors. A unique candidate may still have missing, Tool-only, or stale covered-subject contexts; those
-conditions are handled by the ordinary deployment preflight after the Contract establishes the actual
-run plan. `--subject` scopes context inference before Contract resolution.
+`acmm run` requires one installed-package selector. `EXPERIMENT_ID` is accepted when one revision
+is installed; otherwise use `EXPERIMENT_ID@SHA_PREFIX`. The selected package is reopened from its
+immutable staged snapshot. Deployment context is then used strictly as preflight evidence and never
+as an experiment-selection mechanism.
+
 
 Ctrl+C exits with status 130 after persisting an interruption manifest and a human-readable
 summary when an execution session has already started. No completion manifest is written.
@@ -305,5 +303,5 @@ Experiment-level execution intentionally keeps these boundaries:
 - interrupted sessions are inspectable but cannot be resumed or exported as complete executions;
 - CLI selection currently filters by planned-run index/range and subject ID, not by scenario or
   repetition directly;
-- runtime implementations remain qualified through the built-in experiment and subject catalogs
-  rather than arbitrary command-line plugin loading.
+- experiment runtime implementations come only from verified installed packages, while subject
+  adapters remain qualified through the core subject catalog.

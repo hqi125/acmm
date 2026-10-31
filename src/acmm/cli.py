@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 from importlib.metadata import PackageNotFoundError, version
@@ -16,21 +15,18 @@ from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import load_schema, validate_contract
 from acmm.deployment_preflight import (
     deployment_preflight_result,
-    discover_deployment_contexts,
-    inspect_deployment_contexts,
     inspect_package_deployment_contexts,
 )
 from acmm.experiment_package import (
-    acquire_experiment_package,
     compose_execution_registry,
     experiment_package,
     experiment_package_error,
+    experiment_package_store_error,
     experiment_runtime_error,
     load_staged_experiment_runtime,
-    open_staged_experiment_package,
     package_provenance,
+    resolve_installed_experiment_package,
 )
-from acmm.experiments.catalog import lookup_experiment_execution_binding
 from acmm.experiment_package.cli import register_experiment_package_commands
 from acmm.environment_cli import register_environment_commands
 from acmm.live_preflight import (
@@ -39,7 +35,6 @@ from acmm.live_preflight import (
 )
 from acmm.subjects.catalog import (
     lookup_subject_execution_binding,
-    registered_subject_ids,
     subject_execution_binding,
     unsupported_termination_controls,
 )
@@ -99,12 +94,6 @@ def _default_run_record_schema_path() -> Path:
         / "v0_1"
         / "run_record.schema.json"
     )
-
-
-@dataclass(frozen=True)
-class _resolved_run_source:
-    contract_path: Path
-    package: experiment_package | None = None
 
 
 def _harness_version() -> str:
@@ -168,92 +157,6 @@ def _load_and_validate_contract(
         return contract, result, 1
 
     return contract, result, 0
-
-
-def _run_validate(args: argparse.Namespace) -> int:
-    contract_path = Path(args.contract)
-    schema_path = (
-        Path(args.schema)
-        if args.schema is not None
-        else _default_contract_schema_path()
-    )
-
-    _, result, status = _load_and_validate_contract(
-        contract_path,
-        schema_path,
-    )
-
-    if status != 0:
-        return status
-
-    assert result is not None
-
-    print(
-        f"Contract is valid with {len(result.warnings)} warning(s): "
-        f"{contract_path}"
-    )
-    return 0
-
-
-def _format_plan(plan: experiment_plan) -> str:
-    headers = ("INDEX", "SUBJECT", "SCENARIO", "REPETITION")
-    rows = [
-        (
-            str(run.run_index),
-            run.subject_id,
-            run.scenario_id,
-            str(run.repetition),
-        )
-        for run in plan.runs
-    ]
-
-    widths = [
-        max(
-            len(headers[column]),
-            *(len(row[column]) for row in rows),
-        )
-        for column in range(len(headers))
-    ]
-
-    def format_row(row: tuple[str, str, str, str]) -> str:
-        return "  ".join(
-            value.ljust(widths[column])
-            for column, value in enumerate(row)
-        ).rstrip()
-
-    lines = [
-        f"Experiment: {plan.experiment_id}",
-        f"Runs: {plan.run_count}",
-        "",
-        format_row(headers),
-        format_row(tuple("-" * width for width in widths)),
-    ]
-
-    lines.extend(format_row(row) for row in rows)
-    return "\n".join(lines)
-
-
-def _run_plan(args: argparse.Namespace) -> int:
-    contract_path = Path(args.contract)
-    schema_path = (
-        Path(args.schema)
-        if args.schema is not None
-        else _default_contract_schema_path()
-    )
-
-    contract, _, status = _load_and_validate_contract(
-        contract_path,
-        schema_path,
-    )
-
-    if status != 0:
-        return status
-
-    assert contract is not None
-
-    plan = build_experiment_plan(contract)
-    print(_format_plan(plan))
-    return 0
 
 
 
@@ -671,212 +574,63 @@ def _print_run_selection_preview(
     _print_subject_runtime_details(runtime_details)
     print("No execution started (--preview).")
 
-def _context_discovery_subject_bindings(
-    subject_selectors: list[str] | None,
-) -> dict[str, subject_execution_binding]:
-    subject_ids = (
-        tuple(dict.fromkeys(subject_selectors))
-        if subject_selectors
-        else registered_subject_ids()
-    )
-    bindings: dict[str, subject_execution_binding] = {}
-
-    for subject_id in subject_ids:
-        binding = lookup_subject_execution_binding(subject_id)
-        if binding is None:
-            raise ValueError(
-                f"No qualified execution binding is registered for subject "
-                f"'{subject_id}'."
-            )
-
-        bindings[subject_id] = binding
-
-    return bindings
-
-
-def _resolve_run_source(
-    args: argparse.Namespace,
+def _resolve_run_package(
+    selector: str,
+    runtime_root: Path,
     schema_path: Path,
-) -> _resolved_run_source:
-    runtime_root = Path(args.runtime_root).expanduser().resolve()
-
-    if args.package_path is not None and args.contract is not None:
-        raise ValueError("A positional Contract cannot be combined with --package.")
-
-    if args.package_path is not None:
-        try:
-            package = acquire_experiment_package(
-                Path(args.package_path),
-                runtime_root,
-                contract_schema_path=schema_path,
-            )
-        except (experiment_package_error, OSError, ValueError) as exc:
-            raise ValueError(str(exc)) from exc
-
-        print("Experiment resolution:")
-        _print_labeled_fields(
-            [
-                ("source", "Experiment Package"),
-                ("experiment", package.experiment_id),
-                ("package SHA-256", package.package_sha256),
-                ("staged package", package.root),
-                ("Contract", package.contract_path),
-            ],
-            indent=2,
+) -> experiment_package:
+    try:
+        package = resolve_installed_experiment_package(
+            runtime_root,
+            selector,
+            contract_schema_path=schema_path,
         )
-        return _resolved_run_source(
-            contract_path=package.contract_path,
-            package=package,
-        )
+    except (experiment_package_store_error, experiment_package_error, OSError, ValueError) as exc:
+        raise ValueError(str(exc)) from exc
 
-    if args.contract is not None:
-        return _resolved_run_source(contract_path=Path(args.contract))
-
-    subject_bindings = _context_discovery_subject_bindings(args.subject)
-    discovery = discover_deployment_contexts(
-        runtime_root=runtime_root,
-        subject_bindings=subject_bindings,
-    )
-    experiment_ids = discovery.experiment_ids
-
-    if not experiment_ids:
-        details = "\n".join(
-            f"  {subject.subject_id}: none"
-            for subject in discovery.subjects
-        )
-        raise ValueError(
-            "Cannot infer an experiment because no selected deployment context "
-            "declares an experiment:\n"
-            f"{details}"
-        )
-
-    if len(experiment_ids) != 1:
-        details = "\n".join(
-            f"  {subject.subject_id}: {subject.experiment_id or 'none'}"
-            for subject in discovery.subjects
-        )
-        raise ValueError(
-            "Cannot infer one experiment because selected deployment contexts "
-            "do not converge:\n"
-            f"{details}"
-        )
-
-    experiment_id = experiment_ids[0]
-    package_sha256s = discovery.package_sha256s
-    if package_sha256s:
-        mixed_legacy = any(
-            subject.experiment_id == experiment_id and subject.package_sha256 is None
-            for subject in discovery.subjects
-        )
-        if mixed_legacy:
-            raise ValueError(
-                "Cannot infer one Experiment Package because selected deployment "
-                "contexts mix package-backed and legacy experiment state."
-            )
-        if len(package_sha256s) != 1:
-            raise ValueError(
-                "Cannot infer one Experiment Package because selected deployment "
-                "contexts report different package revisions: "
-                + ", ".join(package_sha256s)
-                + "."
-            )
-        package_sha256 = package_sha256s[0]
-        try:
-            package = open_staged_experiment_package(
-                runtime_root,
-                experiment_id,
-                package_sha256,
-                contract_schema_path=schema_path,
-            )
-        except (experiment_package_error, OSError, ValueError) as exc:
-            raise ValueError(str(exc)) from exc
-
-        print("Experiment resolution:")
-        _print_labeled_fields(
-            [
-                ("source", "deployment context / staged Experiment Package"),
-                ("experiment", experiment_id),
-                ("package SHA-256", package.package_sha256),
-                ("staged package", package.root),
-                ("Contract", package.contract_path),
-            ],
-            indent=2,
-        )
-        return _resolved_run_source(
-            contract_path=package.contract_path,
-            package=package,
-        )
-
-    binding = lookup_experiment_execution_binding(experiment_id)
-    if binding is None:
-        raise ValueError(
-            "Cannot infer a runnable experiment because deployment contexts "
-            f"declare unregistered experiment '{experiment_id}'."
-        )
-
-    contract_path = Path(args.repo_root) / binding.canonical_contract
     print("Experiment resolution:")
     _print_labeled_fields(
         [
-            ("source", "deployment context"),
-            ("experiment", experiment_id),
-            ("canonical Contract", contract_path),
+            ("source", "installed Experiment Package"),
+            ("selector", selector),
+            ("experiment", package.experiment_id),
+            ("package SHA-256", package.package_sha256),
+            ("installed package", package.root),
+            ("Contract", package.contract_path),
         ],
         indent=2,
     )
-    return _resolved_run_source(contract_path=contract_path)
+    return package
 
 
 def _run_experiment(args: argparse.Namespace) -> int:
-    schema_path = (
-        Path(args.schema)
-        if args.schema is not None
-        else _default_contract_schema_path()
-    )
+    schema_path = _default_contract_schema_path()
+    repo_root = default_repo_root().expanduser().resolve()
+    runtime_root = default_runtime_root().expanduser().resolve()
+
     try:
-        source = _resolve_run_source(args, schema_path)
+        package = _resolve_run_package(
+            args.experiment,
+            runtime_root,
+            schema_path,
+        )
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    contract_path = source.contract_path
 
-    contract, _, status = _load_and_validate_contract(
-        contract_path,
-        schema_path,
+    contract = dict(package.contract)
+    contract_path = package.contract_path
+
+    try:
+        loaded_runtime = load_staged_experiment_runtime(package)
+    except (experiment_runtime_error, ValueError, OSError) as exc:
+        print(f"ERROR: Could not activate Experiment Package runtime: {exc}", file=sys.stderr)
+        return 2
+
+    compatibility = validate_harness_compatibility(
+        contract,
+        loaded_runtime.runtime.capabilities,
     )
-
-    if status != 0:
-        return status
-
-    assert contract is not None
-
-    experiment_id = contract["experiment"]["id"]
-    binding = None
-    loaded_runtime = None
-    if source.package is not None:
-        try:
-            loaded_runtime = load_staged_experiment_runtime(source.package)
-        except (experiment_runtime_error, ValueError, OSError) as exc:
-            print(f"ERROR: Could not activate Experiment Package runtime: {exc}", file=sys.stderr)
-            return 2
-        compatibility = validate_harness_compatibility(
-            contract,
-            loaded_runtime.runtime.capabilities,
-        )
-    else:
-        binding = lookup_experiment_execution_binding(experiment_id)
-        if binding is None:
-            print(
-                "ERROR: No built-in execution binding is registered for experiment "
-                f"'{experiment_id}'.",
-                file=sys.stderr,
-            )
-            return 2
-        compatibility = validate_harness_compatibility(
-            contract,
-            binding.capabilities,
-        )
-
     _print_validation_result(compatibility)
     if not compatibility.is_valid:
         print(
@@ -941,19 +695,11 @@ def _run_experiment(args: argparse.Namespace) -> int:
             (subject_id, subject_binding.runtime_details)
         )
 
-    if source.package is not None:
-        deployment_preflight = inspect_package_deployment_contexts(
-            runtime_root=Path(args.runtime_root).expanduser(),
-            package=source.package,
-            subject_bindings=subject_bindings,
-        )
-    else:
-        deployment_preflight = inspect_deployment_contexts(
-            repo_root=Path(args.repo_root),
-            runtime_root=Path(args.runtime_root).expanduser(),
-            experiment_id=experiment_id,
-            subject_bindings=subject_bindings,
-        )
+    deployment_preflight = inspect_package_deployment_contexts(
+        runtime_root=runtime_root,
+        package=package,
+        subject_bindings=subject_bindings,
+    )
 
     _print_deployment_preflight(
         deployment_preflight,
@@ -976,8 +722,6 @@ def _run_experiment(args: argparse.Namespace) -> int:
         )
         return 2
 
-    repo_root = Path(args.repo_root).expanduser().resolve()
-    runtime_root = Path(args.runtime_root).expanduser().resolve()
     runtime_leases: dict[str, subject_runtime_lease] = {}
     ready_subject_ids: set[str] = set()
 
@@ -1170,19 +914,11 @@ def _run_experiment(args: argparse.Namespace) -> int:
         )
         for subject_id in selected_subject_ids
     }
-    if loaded_runtime is not None:
-        registry = compose_execution_registry(
-            loaded_runtime.runtime,
-            subject_adapters,
-            subject_configuration_overlays=overlays,
-        )
-    else:
-        assert binding is not None
-        registry = binding.registry_builder(subject_adapters)
-        registry = replace(
-            registry,
-            subject_configuration_overlays=overlays,
-        )
+    registry = compose_execution_registry(
+        loaded_runtime.runtime,
+        subject_adapters,
+        subject_configuration_overlays=overlays,
+    )
 
     pacing = contract["run_protocol"].get("pacing", {})
     inter_run_delay = pacing.get("inter_run_delay_seconds", 0)
@@ -1213,11 +949,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
                 else None
             ),
             session_ready=session_ready if args.capture_runtime_logs else None,
-            package_provenance=(
-                _execution_package_provenance(source.package)
-                if source.package is not None
-                else None
-            ),
+            package_provenance=_execution_package_provenance(package),
         )
     except experiment_execution_interrupted as exc:
         capture_runtime_log(active_subject_id[0])
@@ -1745,15 +1477,6 @@ def _run_validate_record(args: argparse.Namespace) -> int:
     return 0
 
 
-def _add_contract_schema_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--schema",
-        help=(
-            "Path to a Contract JSON Schema. "
-            "Defaults to contracts/v0_1/contract.schema.json in this repository."
-        ),
-    )
-
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -1769,52 +1492,17 @@ def _build_parser() -> argparse.ArgumentParser:
     register_environment_commands(subparsers)
     register_experiment_package_commands(subparsers)
 
-    validate_parser = subparsers.add_parser(
-        "validate",
-        help="Validate an ACMM Experiment Contract.",
-    )
-    validate_parser.add_argument(
-        "contract",
-        help="Path to an experiment YAML file.",
-    )
-    _add_contract_schema_argument(validate_parser)
-    validate_parser.set_defaults(handler=_run_validate)
-
-    plan_parser = subparsers.add_parser(
-        "plan",
-        help="Validate and expand an ACMM Experiment Contract into planned runs.",
-    )
-    plan_parser.add_argument(
-        "contract",
-        help="Path to an experiment YAML file.",
-    )
-    _add_contract_schema_argument(plan_parser)
-    plan_parser.set_defaults(handler=_run_plan)
-
     run_parser = subparsers.add_parser(
         "run",
-        help=(
-            "Execute a validated built-in Contract or staged Experiment Package."
-        ),
+        help="Execute one installed ACMM Experiment Package.",
     )
     run_parser.add_argument(
-        "contract",
-        nargs="?",
+        "experiment",
         help=(
-            "Path to an experiment YAML file. Omit to infer one converged "
-            "experiment from deployed subject contexts and use its registered "
-            "canonical Contract."
+            "Installed Experiment Package selector: EXPERIMENT_ID when unique, "
+            "or EXPERIMENT_ID@SHA_PREFIX when multiple revisions are installed."
         ),
     )
-    run_parser.add_argument(
-        "--package",
-        dest="package_path",
-        help=(
-            "Validate, stage, and execute an Experiment Package. Cannot be "
-            "combined with a positional Contract."
-        ),
-    )
-    _add_contract_schema_argument(run_parser)
     run_parser.add_argument(
         "--run-index",
         action="append",
@@ -1865,22 +1553,6 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=120.0,
         help="Maximum startup wait for a subject started by ACMM.",
-    )
-    run_parser.add_argument(
-        "--repo-root",
-        default=str(default_repo_root()),
-        help=(
-            "ACMM repository root used for experiment-apparatus verification. "
-            "Defaults to the installed/editable repository root."
-        ),
-    )
-    run_parser.add_argument(
-        "--runtime-root",
-        default=str(default_runtime_root()),
-        help=(
-            "Mutable ACMM runtime root used to discover deployed experiment "
-            "contexts. Defaults to ACMM_RUNTIME_ROOT or ~/acmm_runtime."
-        ),
     )
     run_parser.add_argument(
         "--results-root",

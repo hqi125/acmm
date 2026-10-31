@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -10,7 +11,7 @@ import signal
 import subprocess
 import sys
 import time
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 import uuid
 
 
@@ -45,6 +46,7 @@ def _run_json_command(
     *,
     cwd: Path,
     transcript_path: Path,
+    environment: Mapping[str, str] | None = None,
 ) -> tuple[int, dict[str, Any] | None, str]:
     started = time.monotonic()
     try:
@@ -57,6 +59,7 @@ def _run_json_command(
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=None if environment is None else dict(environment),
         )
     except OSError as exc:
         raise cold_start_qualification_error(
@@ -96,6 +99,7 @@ def _run_streaming_command(
     *,
     cwd: Path,
     transcript_path: Path,
+    environment: Mapping[str, str] | None = None,
 ) -> tuple[int, str, float]:
     started = time.monotonic()
     transcript_path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,6 +120,7 @@ def _run_streaming_command(
                 encoding="utf-8",
                 errors="replace",
                 bufsize=1,
+                env=None if environment is None else dict(environment),
             )
         except OSError as exc:
             raise cold_start_qualification_error(
@@ -225,23 +230,17 @@ def _build_status_command(
 def _build_preview_command(
     *,
     acmm_command: str,
-    contract: Path,
+    experiment: str,
     subject_id: str,
     run_indices: Sequence[str],
-    repo_root: Path,
-    runtime_root: Path,
 ) -> list[str]:
     command = [
         acmm_command,
         "run",
-        str(contract),
+        experiment,
         "--subject",
         subject_id,
         "--preview",
-        "--repo-root",
-        str(repo_root),
-        "--runtime-root",
-        str(runtime_root),
     ]
     for selector in run_indices:
         command.extend(("--run-index", selector))
@@ -251,11 +250,9 @@ def _build_preview_command(
 def _build_run_command(
     *,
     acmm_command: str,
-    contract: Path,
+    experiment: str,
     subject_id: str,
     run_indices: Sequence[str],
-    repo_root: Path,
-    runtime_root: Path,
     results_root: Path,
     startup_timeout_seconds: float,
     capture_runtime_logs: bool,
@@ -263,16 +260,12 @@ def _build_run_command(
     command = [
         acmm_command,
         "run",
-        str(contract),
+        experiment,
         "--subject",
         subject_id,
         "--start-if-needed",
         "--startup-timeout-seconds",
         str(startup_timeout_seconds),
-        "--repo-root",
-        str(repo_root),
-        "--runtime-root",
-        str(runtime_root),
         "--results-root",
         str(results_root),
     ]
@@ -292,16 +285,9 @@ def run_qualification(args: argparse.Namespace) -> int:
     else:
         results_root = results_root.resolve()
 
-    contract = Path(args.contract).expanduser()
-    if not contract.is_absolute():
-        contract = (repo_root / contract).resolve()
-    else:
-        contract = contract.resolve()
+    command_environment = os.environ.copy()
+    command_environment["ACMM_RUNTIME_ROOT"] = str(runtime_root)
 
-    if not contract.is_file():
-        raise cold_start_qualification_error(
-            f"Contract does not exist: '{contract}'."
-        )
     if args.iterations < 1:
         raise cold_start_qualification_error("--iterations must be at least 1.")
     if args.startup_timeout_seconds <= 0:
@@ -325,7 +311,7 @@ def run_qualification(args: argparse.Namespace) -> int:
             "started_utc": started_utc,
             "ended_utc": None,
             "subject_id": args.subject,
-            "contract": str(contract),
+            "experiment": args.experiment,
             "iterations_requested": args.iterations,
             "iterations_completed": 0,
             "run_indices": list(args.run_index),
@@ -352,17 +338,16 @@ def run_qualification(args: argparse.Namespace) -> int:
     )
     preview_command = _build_preview_command(
         acmm_command=args.acmm_command,
-        contract=contract,
+        experiment=args.experiment,
         subject_id=args.subject,
         run_indices=args.run_index,
-        repo_root=repo_root,
-        runtime_root=runtime_root,
     )
     preview_transcript = artifact_dir / "preview.log"
     preview_code, _, _ = _run_streaming_command(
         preview_command,
         cwd=repo_root,
         transcript_path=preview_transcript,
+        environment=command_environment,
     )
     if preview_code != 0:
         raise cold_start_qualification_error(
@@ -372,11 +357,9 @@ def run_qualification(args: argparse.Namespace) -> int:
 
     run_command = _build_run_command(
         acmm_command=args.acmm_command,
-        contract=contract,
+        experiment=args.experiment,
         subject_id=args.subject,
         run_indices=args.run_index,
-        repo_root=repo_root,
-        runtime_root=runtime_root,
         results_root=results_root,
         startup_timeout_seconds=args.startup_timeout_seconds,
         capture_runtime_logs=args.capture_runtime_logs,
@@ -384,7 +367,7 @@ def run_qualification(args: argparse.Namespace) -> int:
 
     print("ACMM cold-start qualification:")
     print(f"  subject:      {args.subject}")
-    print(f"  contract:     {contract}")
+    print(f"  experiment:   {args.experiment}")
     print(f"  iterations:   {args.iterations}")
     print(f"  run indices:  {', '.join(args.run_index)}")
     print(f"  artifacts:    {artifact_dir}")
@@ -418,6 +401,7 @@ def run_qualification(args: argparse.Namespace) -> int:
                 stop_command,
                 cwd=repo_root,
                 transcript_path=transcript_path,
+                environment=command_environment,
             )
             if stop_code != 0:
                 raise cold_start_qualification_error(
@@ -429,6 +413,7 @@ def run_qualification(args: argparse.Namespace) -> int:
                 status_command,
                 cwd=repo_root,
                 transcript_path=transcript_path,
+                environment=command_environment,
             )
             if status_code != 0 or status is None:
                 raise cold_start_qualification_error(
@@ -448,6 +433,7 @@ def run_qualification(args: argparse.Namespace) -> int:
                 run_command,
                 cwd=repo_root,
                 transcript_path=transcript_path,
+                environment=command_environment,
             )
             iteration["run_exit_code"] = run_code
             iteration["execution_session"] = _extract_session(run_output)
@@ -463,6 +449,7 @@ def run_qualification(args: argparse.Namespace) -> int:
                 status_command,
                 cwd=repo_root,
                 transcript_path=transcript_path,
+                environment=command_environment,
             )
             if status_code != 0 or status is None:
                 raise cold_start_qualification_error(
@@ -478,6 +465,7 @@ def run_qualification(args: argparse.Namespace) -> int:
                     stop_command,
                     cwd=repo_root,
                     transcript_path=transcript_path,
+                    environment=command_environment,
                 )
                 if cleanup_code != 0:
                     raise cold_start_qualification_error(
@@ -488,6 +476,7 @@ def run_qualification(args: argparse.Namespace) -> int:
                     status_command,
                     cwd=repo_root,
                     transcript_path=transcript_path,
+                    environment=command_environment,
                 )
                 if (
                     verify_code != 0
@@ -521,6 +510,7 @@ def run_qualification(args: argparse.Namespace) -> int:
                 stop_command,
                 cwd=repo_root,
                 transcript_path=cleanup_transcript,
+                environment=command_environment,
             )
         except cold_start_qualification_error as exc:
             print(f"Cleanup warning: {exc}", file=sys.stderr)
@@ -549,7 +539,13 @@ def _build_parser() -> argparse.ArgumentParser:
             "starts and preserve per-start diagnostic artifacts."
         )
     )
-    parser.add_argument("contract", help="Path to the Experiment Contract YAML file.")
+    parser.add_argument(
+        "experiment",
+        help=(
+            "Installed Experiment Package selector passed to acmm run "
+            "(EXPERIMENT_ID or EXPERIMENT_ID@SHA_PREFIX)."
+        ),
+    )
     parser.add_argument(
         "--subject",
         required=True,

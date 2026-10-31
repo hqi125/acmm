@@ -139,8 +139,8 @@ def _require_clean_deployed_baseline(repo_root: Path, runtime_root: Path):
         raise llm_behavioral_qualification_error(
             "Could not resolve a clean deployed LLM baseline. The deployment may "
             "contain stale or inconsistent experiment apparatus from an interrupted "
-            "qualification or earlier experiment. Run 'acmm env apply' to reconcile "
-            "the current baseline, then retry qualification. Original detail: "
+            "qualification or earlier experiment. Run 'acmm env set-llm <llm-id>' "
+            "to reconcile the intended LLM, then retry qualification. Original detail: "
             f"{exc}"
         ) from exc
     if len(cohort.subjects) != 3:

@@ -2,7 +2,11 @@ from pathlib import Path
 
 from acmm.cli import _build_parser
 from acmm_infra.deployment import write_experiment_apparatus_state
-from acmm_infra.profiles.experiments import experiment_apparatus_sha256
+from experiment_package.support import (
+    CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+    install_test_package,
+    write_package_context,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,15 +25,16 @@ def test_real_run_rejects_wrong_deployment_context_before_execution(
     monkeypatch,
     capsys,
 ) -> None:
-    runtime_root = tmp_path / "runtime"
+    _, runtime_root = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+    )
     write_experiment_apparatus_state(
         runtime_root / "hermes",
         experiment_id="magic_number_tool_use_v1",
-        source_sha256=experiment_apparatus_sha256(
-            ROOT,
-            "hermes",
-            "magic_number_tool_use_v1",
-        ),
+        source_sha256=None,
         application_scope="experiment",
         resources=[],
     )
@@ -46,11 +51,9 @@ def test_real_run_rejects_wrong_deployment_context_before_execution(
     args = parser.parse_args(
         [
             "run",
-            str(CONTRACT),
+            EXPERIMENT_ID,
             "--run-index",
             "0",
-            "--runtime-root",
-            str(runtime_root),
             "--results-root",
             str(tmp_path / "results"),
         ]
@@ -73,29 +76,20 @@ def _binding_with_builder(subject_id: str, builder):
 
 def test_real_run_requires_selected_subjects_to_converge_on_contract_experiment(
     tmp_path: Path,
+    monkeypatch,
     capsys,
 ) -> None:
-    runtime_root = tmp_path / "runtime"
-
-    write_experiment_apparatus_state(
-        runtime_root / "hermes",
-        experiment_id=EXPERIMENT_ID,
-        source_sha256=experiment_apparatus_sha256(
-            ROOT,
-            "hermes",
-            EXPERIMENT_ID,
-        ),
-        application_scope="experiment",
-        resources=[],
+    package, runtime_root = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
     )
+    write_package_context(package, runtime_root, "hermes_nemotron30b")
     write_experiment_apparatus_state(
         runtime_root / "open-webui",
         experiment_id="magic_number_tool_use_v1",
-        source_sha256=experiment_apparatus_sha256(
-            ROOT,
-            "open-webui",
-            "magic_number_tool_use_v1",
-        ),
+        source_sha256=None,
         application_scope="experiment",
         resources=[],
     )
@@ -104,13 +98,11 @@ def test_real_run_requires_selected_subjects_to_converge_on_contract_experiment(
     args = parser.parse_args(
         [
             "run",
-            str(CONTRACT),
+            EXPERIMENT_ID,
             "--run-index",
             "0",
             "--run-index",
             "20",
-            "--runtime-root",
-            str(runtime_root),
             "--results-root",
             str(tmp_path / "results"),
         ]
@@ -139,18 +131,13 @@ def test_real_run_rejects_live_not_ready_before_adapter_construction(
     )
     from acmm_infra.common import doctor_check
 
-    runtime_root = tmp_path / "runtime"
-    write_experiment_apparatus_state(
-        runtime_root / "hermes",
-        experiment_id=EXPERIMENT_ID,
-        source_sha256=experiment_apparatus_sha256(
-            ROOT,
-            "hermes",
-            EXPERIMENT_ID,
-        ),
-        application_scope="experiment",
-        resources=[],
+    package, runtime_root = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
     )
+    write_package_context(package, runtime_root, "hermes_nemotron30b")
 
     binding = _binding_with_builder(
         "hermes_nemotron30b",
@@ -187,11 +174,9 @@ def test_real_run_rejects_live_not_ready_before_adapter_construction(
     args = parser.parse_args(
         [
             "run",
-            str(CONTRACT),
+            EXPERIMENT_ID,
             "--run-index",
             "0",
-            "--runtime-root",
-            str(runtime_root),
             "--results-root",
             str(tmp_path / "results"),
         ]
@@ -212,18 +197,13 @@ def test_preview_does_not_run_live_readiness(
     monkeypatch,
     capsys,
 ) -> None:
-    runtime_root = tmp_path / "runtime"
-    write_experiment_apparatus_state(
-        runtime_root / "hermes",
-        experiment_id=EXPERIMENT_ID,
-        source_sha256=experiment_apparatus_sha256(
-            ROOT,
-            "hermes",
-            EXPERIMENT_ID,
-        ),
-        application_scope="experiment",
-        resources=[],
+    package, runtime_root = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
     )
+    write_package_context(package, runtime_root, "hermes_nemotron30b")
 
     def forbidden_live_readiness(**kwargs):
         del kwargs
@@ -238,12 +218,10 @@ def test_preview_does_not_run_live_readiness(
     args = parser.parse_args(
         [
             "run",
-            str(CONTRACT),
+            EXPERIMENT_ID,
             "--run-index",
             "0",
             "--preview",
-            "--runtime-root",
-            str(runtime_root),
         ]
     )
 
@@ -265,19 +243,14 @@ def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
     from acmm.runtime.planner import planned_run
     from acmm_infra.common import doctor_check
 
-    runtime_root = tmp_path / "runtime"
-    for infrastructure_subject in ("hermes", "open-webui"):
-        write_experiment_apparatus_state(
-            runtime_root / infrastructure_subject,
-            experiment_id=EXPERIMENT_ID,
-            source_sha256=experiment_apparatus_sha256(
-                ROOT,
-                infrastructure_subject,
-                EXPERIMENT_ID,
-            ),
-            application_scope="experiment",
-            resources=[],
-        )
+    package, runtime_root = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+    )
+    write_package_context(package, runtime_root, "hermes_nemotron30b")
+    write_package_context(package, runtime_root, "open_webui_nemotron30b")
 
     events: list[str] = []
 
@@ -357,7 +330,7 @@ def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
     args = parser.parse_args(
         [
             "run",
-            str(CONTRACT),
+            EXPERIMENT_ID,
             "--run-index",
             "0",
             "--run-index",
@@ -365,8 +338,6 @@ def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
             "--start-if-needed",
             "--startup-timeout-seconds",
             "30",
-            "--runtime-root",
-            str(runtime_root),
             "--results-root",
             str(tmp_path / "results"),
         ]
@@ -393,18 +364,14 @@ def test_preview_start_if_needed_remains_non_contacting(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    runtime_root = tmp_path / "runtime"
-    write_experiment_apparatus_state(
-        runtime_root / "hermes",
-        experiment_id=EXPERIMENT_ID,
-        source_sha256=experiment_apparatus_sha256(
-            ROOT,
-            "hermes",
-            EXPERIMENT_ID,
-        ),
-        application_scope="experiment",
-        resources=[],
+    package, runtime_root = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
     )
+    write_package_context(package, runtime_root, "hermes_nemotron30b")
+    write_package_context(package, runtime_root, "open_webui_nemotron30b")
 
     monkeypatch.setattr(
         "acmm.cli._discover_runtime_leases",
@@ -417,14 +384,12 @@ def test_preview_start_if_needed_remains_non_contacting(
     args = parser.parse_args(
         [
             "run",
-            str(CONTRACT),
+            EXPERIMENT_ID,
             "--run-index",
             "0",
             "--preview",
             "--start-if-needed",
             "--capture-runtime-logs",
-            "--runtime-root",
-            str(runtime_root),
         ]
     )
 

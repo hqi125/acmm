@@ -55,7 +55,7 @@ execution records. When rerunning analysis on an older export, the wrapper remov
 
 ## `cold_start_qualification.py`
 
-Repeats one fixed Contract run selection across independent runtime cold starts. The tool is intended
+Repeats one fixed installed Experiment Package run selection across independent runtime cold starts. The tool is intended
 for integration debugging when a subject behaves differently immediately after startup than it does
 after several consecutive runs. It is deliberately outside the ordinary `acmm run` surface because
 the repeated stop/start cycle is a qualification procedure rather than an experiment execution mode.
@@ -77,7 +77,7 @@ For the Experiment 3 Agent Zero cold-start qualification:
 
 ```text
 python tools/cold_start_qualification.py \
-    experiments/examples/controlled_recovery_boundary_interaction/experiment.yaml \
+    controlled_recovery_boundary_interaction_v1 \
     --subject agent_zero_nemotron30b \
     --run-index 120-123 \
     --iterations 15
@@ -90,14 +90,15 @@ independent ACMM execution session, which is important when startup itself is th
 
 ### LLM Rebasing behavioral qualification
 
-After a replacement LLM baseline has been applied and passes `acmm env doctor --start-if-needed`,
+After the replacement LLM has been selected with `acmm env set-llm <llm-id>` and passes
+`acmm env doctor --start-if-needed`,
 run the engineering-only three-agent Tool gate:
 
 ```text
 python tools/qualify_llm_behavior.py --iterations 5
 ```
 
-The runner discovers the deployed LLM baseline rather than selecting one. All three runtimes must
+The runner discovers the deployed LLM rather than selecting one. All three runtimes must
 be stopped and free of experiment apparatus before it starts. It temporarily installs the frozen
 magic-number Tool fixture, runs the same controlled dependency path repeatedly through Hermes,
 Open WebUI, and Agent Zero, stores engineering artifacts under

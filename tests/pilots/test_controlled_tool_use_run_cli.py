@@ -11,8 +11,11 @@ from acmm.live_preflight import (
     live_readiness_preflight_result,
     subject_live_readiness,
 )
-from acmm_infra.deployment import write_experiment_apparatus_state
-from acmm_infra.profiles.experiments import experiment_apparatus_sha256
+from experiment_package.support import (
+    CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+    install_test_package,
+    write_package_context,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,26 +42,6 @@ def _ready_live_preflight(*, subject_bindings, **kwargs):
             for subject_id, binding in subject_bindings.items()
         )
     )
-
-
-def _prepare_hermes_experiment_context(
-    tmp_path: Path,
-    experiment_id: str,
-) -> Path:
-    runtime_root = tmp_path / "runtime"
-    deployment_root = runtime_root / "hermes"
-    write_experiment_apparatus_state(
-        deployment_root,
-        experiment_id=experiment_id,
-        source_sha256=experiment_apparatus_sha256(
-            ROOT,
-            "hermes",
-            experiment_id,
-        ),
-        application_scope="experiment",
-        resources=[],
-    )
-    return runtime_root
 
 
 def _contract() -> dict:
@@ -161,10 +144,13 @@ def test_run_command_executes_controlled_addition_failure_slot(
     capsys,
 ) -> None:
     monkeypatch.setattr("acmm.cli.inspect_live_readiness", _ready_live_preflight)
-    runtime_root = _prepare_hermes_experiment_context(
+    package, runtime_root = install_test_package(
         tmp_path,
-        "controlled_tool_use_multiscenario_v1",
+        monkeypatch,
+        contract_path=CONTRACT_PATH,
+        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
     )
+    write_package_context(package, runtime_root, "hermes_nemotron30b")
     captured_commands: list[list[str]] = []
 
     def runner(command, **kwargs):
@@ -201,11 +187,9 @@ def test_run_command_executes_controlled_addition_failure_slot(
     args = parser.parse_args(
         [
             "run",
-            str(CONTRACT_PATH),
+            "controlled_tool_use_multiscenario_v1",
             "--run-index",
             "15",
-            "--runtime-root",
-            str(runtime_root),
             "--results-root",
             str(tmp_path),
         ]
@@ -263,27 +247,32 @@ def test_run_command_executes_controlled_addition_failure_slot(
 
 def test_run_command_previews_subject_range_without_execution(
     tmp_path: Path,
+    monkeypatch,
     capsys,
 ) -> None:
+    install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT_PATH,
+        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+    )
     parser = _build_parser()
     args = parser.parse_args(
         [
             "run",
-            str(CONTRACT_PATH),
+            "controlled_tool_use_multiscenario_v1",
             "--run-index",
             "15-44",
             "--subject",
             "open_webui_nemotron30b",
             "--preview",
-            "--runtime-root",
-            str(tmp_path / "runtime"),
             "--results-root",
             str(tmp_path),
         ]
     )
 
     assert args.handler(args) == 0
-    assert list(tmp_path.iterdir()) == []
+    assert not (tmp_path / "controlled_tool_use_multiscenario_v1").exists()
 
     captured = capsys.readouterr()
     output = captured.out

@@ -24,7 +24,7 @@ acmm-infra = "acmm_infra.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

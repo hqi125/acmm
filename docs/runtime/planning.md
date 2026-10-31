@@ -158,13 +158,13 @@ This keeps planning focused on deterministic expansion rather than policy enforc
 
 ## CLI inspection
 
-The run plan can be inspected without execution:
+The run selection can be inspected without execution from an installed Experiment Package:
 
 ```text
-acmm plan experiments/examples/magic_number/experiment.yaml
+acmm run <experiment-selector> --preview
 ```
 
-The command performs Contract validation first. Errors prevent plan generation; warnings
-are reported but do not block planning.
-
-The output includes the experiment ID, total run count, and one row per planned run.
+Package loading validates the embedded Contract before planning. Errors prevent plan generation;
+warnings are reported but do not block planning. Preview applies any `--subject` and `--run-index`
+filters and reports the resolved deterministic selection without creating an execution session or
+contacting agents.

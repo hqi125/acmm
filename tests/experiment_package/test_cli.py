@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 
+import pytest
 import yaml
 
 from acmm.cli import _build_parser
@@ -83,9 +84,14 @@ def _write_package(root: Path) -> None:
     (runtime_root / "__init__.py").write_text(_RUNTIME_INIT, encoding="utf-8")
 
 
-def test_package_validate_and_acquire_commands(tmp_path: Path, capsys) -> None:
+def test_package_validate_install_query_and_uninstall_commands(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
     source = tmp_path / "source"
     runtime_root = tmp_path / "runtime-root"
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(runtime_root))
     _write_package(source)
     parser = _build_parser()
 
@@ -96,38 +102,85 @@ def test_package_validate_and_acquire_commands(tmp_path: Path, capsys) -> None:
     assert f"experiment:       {EXPERIMENT_ID}" in validate_output
     assert "source root:" in validate_output
 
-    acquire_args = parser.parse_args(
-        [
-            "package",
-            "acquire",
-            str(source),
-            "--runtime-root",
-            str(runtime_root),
-        ]
-    )
-    assert acquire_args.handler(acquire_args) == 0
-    acquire_output = capsys.readouterr().out
-    assert "Experiment Package acquired:" in acquire_output
-    assert "staged root:" in acquire_output
+    install_args = parser.parse_args(["package", "install", str(source)])
+    assert install_args.handler(install_args) == 0
+    install_output = capsys.readouterr().out
+    assert "Experiment Package installed:" in install_output
+    assert "installed root:" in install_output
     assert (runtime_root / "_experiment_packages" / EXPERIMENT_ID).is_dir()
 
+    list_args = parser.parse_args(["package", "list"])
+    assert list_args.handler(list_args) == 0
+    list_output = capsys.readouterr().out
+    assert "Installed Experiment Packages:" in list_output
+    assert EXPERIMENT_ID in list_output
 
-def test_run_package_preview_stages_and_uses_package_runtime(
+    package_root = next((runtime_root / "_experiment_packages" / EXPERIMENT_ID).iterdir())
+    selector = f"{EXPERIMENT_ID}@{package_root.name[:12]}"
+    show_args = parser.parse_args(["package", "show", selector])
+    assert show_args.handler(show_args) == 0
+    show_output = capsys.readouterr().out
+    assert "Installed Experiment Package:" in show_output
+    assert f"selector:         {selector}" in show_output
+
+    uninstall_args = parser.parse_args(["package", "uninstall", selector])
+    assert uninstall_args.handler(uninstall_args) == 0
+    uninstall_output = capsys.readouterr().out
+    assert "Experiment Package uninstalled:" in uninstall_output
+    assert not package_root.exists()
+
+
+def test_package_uninstall_rejects_deployed_revision(
     tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from acmm.experiment_package import cli as package_cli
+
+    source = tmp_path / "source"
+    runtime_root = tmp_path / "runtime-root"
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(runtime_root))
+    _write_package(source)
+    package = acquire_experiment_package(
+        source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+    monkeypatch.setattr(
+        package_cli,
+        "package_deployment_references",
+        lambda *args, **kwargs: ("hermes",),
+    )
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        ["package", "uninstall", package.experiment_id]
+    )
+    assert args.handler(args) == 2
+    assert package.root.exists()
+    assert "Cannot uninstall" in capsys.readouterr().err
+
+
+def test_run_installed_package_preview_uses_package_runtime(
+    tmp_path: Path,
+    monkeypatch,
     capsys,
 ) -> None:
     source = tmp_path / "source"
     runtime_root = tmp_path / "runtime-root"
     _write_package(source)
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(runtime_root))
+    package = acquire_experiment_package(
+        source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
     parser = _build_parser()
 
     args = parser.parse_args(
         [
             "run",
-            "--package",
-            str(source),
-            "--runtime-root",
-            str(runtime_root),
+            EXPERIMENT_ID,
             "--subject",
             "hermes_nemotron30b",
             "--preview",
@@ -136,15 +189,16 @@ def test_run_package_preview_stages_and_uses_package_runtime(
     assert args.handler(args) == 0
 
     captured = capsys.readouterr()
-    assert "source:          Experiment Package" in captured.out
-    assert f"experiment:      {EXPERIMENT_ID}" in captured.out
+    assert "installed Experiment Package" in captured.out
+    assert EXPERIMENT_ID in captured.out
     assert "package SHA-256:" in captured.out
     assert "No execution started (--preview)." in captured.out
     assert "no active experiment deployment context" in captured.err
 
 
-def test_run_infers_unregistered_package_from_deployment_context(
+def test_run_installed_unregistered_package_uses_explicit_selector(
     tmp_path: Path,
+    monkeypatch,
     capsys,
 ) -> None:
     source = tmp_path / "source"
@@ -155,6 +209,7 @@ def test_run_infers_unregistered_package_from_deployment_context(
         runtime_root,
         contract_schema_path=CONTRACT_SCHEMA,
     )
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(runtime_root))
     shutil.rmtree(source)
 
     provenance = deployment_provenance(package, "hermes")
@@ -171,8 +226,7 @@ def test_run_infers_unregistered_package_from_deployment_context(
     args = parser.parse_args(
         [
             "run",
-            "--runtime-root",
-            str(runtime_root),
+            EXPERIMENT_ID,
             "--subject",
             "hermes_nemotron30b",
             "--preview",
@@ -181,23 +235,29 @@ def test_run_infers_unregistered_package_from_deployment_context(
     assert args.handler(args) == 0
 
     captured = capsys.readouterr()
-    assert "deployment context / staged Experiment Package" in captured.out
-    assert f"experiment:      {EXPERIMENT_ID}" in captured.out
+    assert "installed Experiment Package" in captured.out
+    assert EXPERIMENT_ID in captured.out
     assert "apparatus:         match (none declared)" in captured.out
     assert captured.err == ""
 
 
-def test_environment_apply_package_acquires_and_resolves_package_cohort(
+def test_package_apply_resolves_installed_package_cohort(
     tmp_path: Path,
     capsys,
     monkeypatch,
 ) -> None:
-    from acmm import environment_cli
+    from acmm.experiment_package import cli as package_cli
     from acmm_infra.cohort import cohort_subject_status
 
     source = tmp_path / "source"
     runtime_root = tmp_path / "runtime-root"
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(runtime_root))
     _write_package(source)
+    package = acquire_experiment_package(
+        source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
     observed = {}
 
     def fake_apply(repo_root, observed_runtime_root, cohort, **kwargs):
@@ -218,19 +278,14 @@ def test_environment_apply_package_acquires_and_resolves_package_cohort(
             ),
         )
 
-    monkeypatch.setattr(environment_cli, "apply_cohort", fake_apply)
+    monkeypatch.setattr(package_cli, "apply_cohort", fake_apply)
 
     parser = _build_parser()
     args = parser.parse_args(
         [
-            "env",
+            "package",
             "apply",
-            "--package",
-            str(source),
-            "--repo-root",
-            str(ROOT),
-            "--runtime-root",
-            str(runtime_root),
+            package.experiment_id,
             "--subject",
             "hermes_nemotron30b",
         ]
@@ -243,5 +298,23 @@ def test_environment_apply_package_acquires_and_resolves_package_cohort(
     assert cohort.package.root.parent.name == EXPERIMENT_ID
     assert observed["runtime_root"] == runtime_root
     output = capsys.readouterr().out
+    assert "Experiment Package apply:" in output
     assert "package SHA-256:" in output
-    assert "staged package:" in output
+    assert "Experiment Package apply complete:" in output
+
+
+@pytest.mark.parametrize(
+    "argv",
+    (
+        ("package", "validate", ".", "--schema", "/tmp/schema.json"),
+        ("package", "install", ".", "--runtime-root", "/tmp/runtime"),
+        ("package", "list", "--runtime-root", "/tmp/runtime"),
+    ),
+)
+def test_package_parser_rejects_retired_configuration_overrides(
+    argv: tuple[str, ...],
+) -> None:
+    parser = _build_parser()
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(list(argv))
+    assert exc_info.value.code == 2

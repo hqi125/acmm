@@ -164,7 +164,7 @@ reconciles the baseline before applying the selected experiment overlay.
 The single-slot smoke test is:
 
 ```text
-acmm run experiments/examples/magic_number/experiment.yaml --run-index 0
+acmm run magic_number_tool_use_v1 --run-index 0
 ```
 
 The experiment layer explicitly requests the `acmm` toolset for the run; infrastructure

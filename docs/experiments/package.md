@@ -572,29 +572,31 @@ apply/run.
 
 ## CLI direction
 
-Exact syntax is deferred, but the command model should become package-oriented for new studies.
-Conceptually:
+The execution CLI is now package-oriented. Experiment Package source management and execution are
+separate operations:
 
 ```text
-acmm experiment validate <package-path>
-acmm env apply <package-path>
-acmm run <package-path>
+acmm package validate <package-directory>
+acmm package install <package-directory>
+acmm package apply EXPERIMENT_ID
+acmm package list
+acmm run EXPERIMENT_ID --preview
+acmm run EXPERIMENT_ID@SHA_PREFIX
 ```
 
-After a package has been staged and deployed, existing convenience behavior should remain possible:
+`acmm run` accepts only an installed package selector. It does not accept a raw Contract, a package
+source path, or an omitted experiment operand, and it never infers experiment identity from deployed
+subject state. Deployment markers remain important as evidence that the explicitly selected package
+is actually applied, but they are not a package-selection mechanism.
 
-```text
-acmm run
-```
+Repository and runtime roots are not run-selection options. The repository location belongs to the
+installed infrastructure implementation, while `ACMM_RUNTIME_ROOT` selects the runtime/package store
+when the default is unsuitable. `--results-root` remains on `acmm run` because result destination is
+an execution-output concern.
 
-can infer the one converged active package from selected deployment contexts, now using experiment
-ID plus package digest rather than a built-in catalog entry.
-
-Similarly, `status` and `doctor` should continue to work without requiring the package source path.
-This is one of the reasons staged package state is part of the design.
-
-The existing ID-based commands may remain as a legacy compatibility path while old experiments are
-still built into the main repo.
+`status` and `doctor` continue to work without requiring the original package source path.
+Experiment deployment belongs to `acmm package apply`; experiment-independent LLM selection
+uses `acmm env set-llm <llm-id>`.
 
 ## Relationship to the current execution registry
 
@@ -923,6 +925,10 @@ next milestone rather than deployment-state concerns.
 
 ## EP-5 implementation checkpoint
 
+Historical note: the CLI forms in this EP-5 checkpoint record the intermediate EP-5
+implementation. They are superseded by the later installed-package and environment-boundary
+cleanups documented below.
+
 EP-5 exposes the Experiment Package architecture through the normal ACMM researcher workflow while
 preserving the built-in experiment catalog as a legacy compatibility path.
 
@@ -939,7 +945,8 @@ same validation and then stages the immutable digest-addressed snapshot under
 `<runtime-root>/_experiment_packages/`. Both commands consume only explicit local filesystem paths;
 EP-5 does not introduce remote package discovery or downloading.
 
-Environment application accepts a package source directly:
+At the EP-5 checkpoint, environment application temporarily accepted a package source directly
+(the form below is now retired):
 
 ```text
 acmm env apply --package <package-directory>
@@ -997,3 +1004,107 @@ EP-5 deliberately does not migrate the historical experiments out of the main re
 the built-in experiment catalog. The next milestone, EP-6, should prove the boundary by moving one
 representative experiment completely outside the main repo and exercising validation, acquisition,
 environment application, preview/execution resolution, and analysis from that external package.
+
+
+## EP-5 package-store refinement
+
+After EP-5, Experiment Package ownership is tightened further before legacy `run` and `env` source
+paths are retired. The package lifecycle now uses installation terminology at the researcher-facing
+CLI boundary:
+
+```text
+acmm package validate <package-directory>
+acmm package install <package-directory>
+acmm package list
+acmm package show <selector>
+acmm package uninstall <selector>
+```
+
+`install` is the public package-management operation. Internally it still reuses the established
+validate, hash, immutable-copy, and digest-verification staging machinery. `acquire` remains only as
+a compatibility Python API for EP-5 callers that have not yet been migrated; it is no longer a
+researcher-facing package subcommand.
+
+The installed package store remains physically located at
+`<runtime-root>/_experiment_packages/`. Researcher-facing package commands no longer accept a
+per-command runtime-root override; the store location follows the shared `ACMM_RUNTIME_ROOT`
+infrastructure configuration (defaulting to `~/acmm_runtime`). The package identity model remains
+independent of the concrete store path.
+
+Installed revisions are addressed with an explicit package selector:
+
+```text
+EXPERIMENT_ID
+EXPERIMENT_ID@SHA_PREFIX
+```
+
+A plain experiment ID resolves only when exactly one revision of that experiment is installed. If
+multiple package digests exist, selection is rejected as ambiguous and the operator must provide a
+lowercase hexadecimal SHA-256 prefix of at least eight characters. CLI output prints a stable
+12-character selector for convenience while the full 64-character digest remains the authoritative
+revision identity. This selector abstraction is intended to become the future mandatory experiment
+operand for `acmm run`; aliases can later resolve to the same exact installed revision without
+changing the underlying identity model.
+
+Package-store discovery is independent of active deployment markers. It enumerates the managed
+store by experiment ID and digest and rejects unsafe/symlinked store entries. `show` reopens and
+fully verifies the selected immutable package before reporting it. `uninstall` likewise requires a
+unique, verified revision and removes only that digest-addressed snapshot, preserving other
+installed revisions of the same experiment.
+
+The first CLI-boundary cleanup is now complete for execution. `acmm run` accepts exactly one
+mandatory installed-package selector and no longer accepts a positional Contract, `--package`,
+`--schema`, `--repo-root`, or `--runtime-root`. It never acquires package source implicitly and never
+infers experiment identity from deployment markers. `--results-root` remains because output
+destination is an execution concern rather than experiment semantics. Repository location is
+resolved from the installed ACMM code, while `ACMM_RUNTIME_ROOT` remains infrastructure
+configuration for the runtime/package store.
+
+The second CLI-boundary cleanup moves experiment deployment out of `acmm env`.
+`acmm package apply <selector>` now resolves only an installed immutable package, selects subjects
+from its Contract, and reconciles the corresponding package-aware subject managers. Environment
+model selection is flattened to `acmm env set-llm <llm-id>`; the former `env apply`, `--experiment`,
+`--package`, and `--llm-baseline` interface is retired.
+
+This establishes three separate responsibilities:
+
+```text
+package install/apply/uninstall  -> experiment artifact and deployment lifecycle
+env set-llm/status/doctor/stop   -> qualified subject environment lifecycle
+run <selector>                   -> experiment execution
+```
+
+Installed package removal is now deployment-aware at the CLI boundary. `package uninstall` refuses
+to delete a staged revision while any subject deployment marker still references its package digest;
+the operator must first reconcile those subjects with `acmm env set-llm <llm-id>`.
+
+
+## CLI surface cleanup checkpoint
+
+The Experiment Package boundary is now the sole researcher-facing experiment boundary. The raw
+Contract commands `acmm validate <experiment.yaml>` and `acmm plan <experiment.yaml>` are retired.
+`acmm package validate <package-directory>` owns source validation, and
+`acmm run <experiment-selector> --preview` owns deterministic planning and execution selection.
+
+Package commands no longer expose `--schema` or `--runtime-root`. The Contract schema is a versioned
+ACMM Core interface, not an operator-selected experiment setting, and the installed package store
+uses the shared `ACMM_RUNTIME_ROOT` configuration. Likewise, `acmm env` no longer exposes
+`--repo-root` or `--runtime-root`; repository location is derived from the installed ACMM code and
+mutable runtime location comes from the same shared infrastructure configuration.
+
+This leaves the ordinary researcher-facing responsibility split as:
+
+```text
+acmm package validate/install/list/show/apply/uninstall
+    -> Experiment Package source, store, and deployment lifecycle
+
+acmm env set-llm/status/doctor/stop
+    -> qualified subject/LLM environment lifecycle
+
+acmm run <experiment-selector> [execution controls]
+    -> planning, selection, and execution of an installed experiment
+```
+
+Raw Contract and schema paths remain available only where they are genuinely artifact-level or
+development concerns (for example dedicated record/schema validation code), not as alternate ways
+to select or execute an experiment.

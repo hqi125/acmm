@@ -85,7 +85,7 @@ def test_behavioral_qualification_translates_inconsistent_deployment_state(
 
     with pytest.raises(
         qualification.llm_behavioral_qualification_error,
-        match="Run 'acmm env apply'",
+        match="Run 'acmm env set-llm <llm-id>'",
     ):
         qualification._require_clean_deployed_baseline(
             tmp_path,

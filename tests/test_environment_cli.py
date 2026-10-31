@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 
 import pytest
 
@@ -16,43 +17,31 @@ def test_acmm_exposes_environment_command_family() -> None:
     args = parser.parse_args(
         [
             "env",
-            "apply",
-            "--experiment",
-            EXPERIMENT,
+            "set-llm",
+            "gpt_oss_120b_cloud_v1",
             "--subject",
-            "hermes_nemotron30b",
+            "hermes_gpt_oss120b",
         ]
     )
     assert args.command == "env"
-    assert args.env_command == "apply"
-    assert args.experiment_id == EXPERIMENT
-    assert args.subjects == ["hermes_nemotron30b"]
+    assert args.env_command == "set-llm"
+    assert args.subjects == ["hermes_gpt_oss120b"]
     assert args.timeout_seconds == 120.0
-    assert args.llm_baseline_id is None
+    assert args.llm_id == "gpt_oss_120b_cloud_v1"
+    assert not hasattr(args, "experiment_id")
+    assert not hasattr(args, "package_path")
 
-    args = parser.parse_args(
-        [
-            "env",
-            "apply",
-            "--package",
-            "/tmp/example-package",
-        ]
-    )
-    assert args.package_path == "/tmp/example-package"
-    assert args.experiment_id is None
-
-    with pytest.raises(SystemExit) as exc_info:
-        parser.parse_args(
-            [
-                "env",
-                "apply",
-                "--experiment",
-                EXPERIMENT,
-                "--package",
-                "/tmp/example-package",
-            ]
-        )
-    assert exc_info.value.code == 2
+    for retired in (
+        ["apply"],
+        ["set-llm", "gpt_oss_120b_cloud_v1", "--experiment", EXPERIMENT],
+        ["set-llm", "gpt_oss_120b_cloud_v1", "--package", "/tmp/example-package"],
+        ["set-llm", "gpt_oss_120b_cloud_v1", "--llm-baseline", "candidate_v1"],
+        ["set-llm", "gpt_oss_120b_cloud_v1", "--repo-root", "/tmp/repo"],
+        ["status", "--runtime-root", "/tmp/runtime"],
+    ):
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(["env", *retired])
+        assert exc_info.value.code == 2
 
     args = parser.parse_args(["env", "status", "--json"])
     assert args.command == "env"
@@ -95,6 +84,73 @@ def test_acmm_exposes_environment_command_family() -> None:
     assert args.subjects == ["hermes_nemotron30b"]
 
 
+def test_environment_set_llm_reconciles_without_experiment(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    from acmm import environment_cli
+
+    monkeypatch.setattr(environment_cli, "default_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(tmp_path / "runtime"))
+    from acmm_infra.cohort import (
+        cohort_subject,
+        cohort_subject_status,
+        experiment_cohort,
+    )
+
+    subject = cohort_subject(
+        "hermes_llm_qualification",
+        "hermes",
+        "candidate_v1",
+    )
+    observed = {}
+
+    def fake_resolve(repo_root, selected, *, llm_baseline_id=None):
+        observed["repo_root"] = Path(repo_root)
+        observed["selected"] = selected
+        observed["llm_baseline_id"] = llm_baseline_id
+        return experiment_cohort(None, None, (subject,))
+
+    def fake_apply(repo_root, runtime_root, cohort, **kwargs):
+        observed["runtime_root"] = Path(runtime_root)
+        observed["cohort"] = cohort
+        del repo_root, kwargs
+        return (
+            cohort_subject_status(
+                subject_id=subject.subject_id,
+                infrastructure_subject=subject.infrastructure_subject,
+                running=False,
+                experiment_id=None,
+                application_scope=None,
+                apparatus_state="none",
+                source_sha256=None,
+            ),
+        )
+
+    monkeypatch.setattr(environment_cli, "resolve_baseline_cohort", fake_resolve)
+    monkeypatch.setattr(environment_cli, "apply_cohort", fake_apply)
+
+    parser = build_acmm_parser()
+    args = parser.parse_args(
+        [
+            "env",
+            "set-llm",
+            "candidate_v1",
+            "--subject",
+            subject.subject_id,
+        ]
+    )
+    assert args.handler(args) == 0
+    assert observed["selected"] == (subject.subject_id,)
+    assert observed["llm_baseline_id"] == "candidate_v1"
+    assert observed["cohort"].experiment_id is None
+
+    output = capsys.readouterr().out
+    assert "LLM:                candidate_v1" in output
+    assert "Experiment Package" not in output
+
+
 def test_acmm_infra_root_accepts_only_subject_backends() -> None:
     parser = build_infra_parser()
 
@@ -114,6 +170,9 @@ def test_environment_status_reports_llm_context_observability(
     capsys,
 ) -> None:
     from acmm import environment_cli
+
+    monkeypatch.setattr(environment_cli, "default_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(tmp_path / "runtime"))
     from acmm_infra.cohort import (
         cohort_llm_observation,
         cohort_subject,
@@ -204,16 +263,12 @@ def test_environment_status_reports_llm_context_observability(
         [
             "env",
             "status",
-            "--repo-root",
-            str(tmp_path),
-            "--runtime-root",
-            str(tmp_path / "runtime"),
         ]
     )
     assert args.handler(args) == 0
 
     output = capsys.readouterr().out
-    assert "LLM baseline:       nemotron_3_nano_30b_cloud_v1" in output
+    assert "LLM:                nemotron_3_nano_30b_cloud_v1" in output
     assert "context requested:  not controlled" in output
     assert "context kind:       configured_effective" in output
     assert "context kind:       model_capability" in output
@@ -227,6 +282,9 @@ def test_environment_status_explains_unknown_context(
     capsys,
 ) -> None:
     from acmm import environment_cli
+
+    monkeypatch.setattr(environment_cli, "default_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(tmp_path / "runtime"))
     from acmm_infra.cohort import (
         cohort_llm_observation,
         cohort_subject,
@@ -285,10 +343,6 @@ def test_environment_status_explains_unknown_context(
         [
             "env",
             "status",
-            "--repo-root",
-            str(tmp_path),
-            "--runtime-root",
-            str(tmp_path / "runtime"),
         ]
     )
     assert args.handler(args) == 0
@@ -305,6 +359,9 @@ def test_environment_doctor_reports_subject_progress(
     capsys,
 ) -> None:
     from acmm import environment_cli
+
+    monkeypatch.setattr(environment_cli, "default_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(tmp_path / "runtime"))
     from acmm_infra.cohort import (
         cohort_doctor_result,
         cohort_llm_observation,
@@ -392,10 +449,6 @@ def test_environment_doctor_reports_subject_progress(
             "env",
             "doctor",
             "--start-if-needed",
-            "--repo-root",
-            str(tmp_path),
-            "--runtime-root",
-            str(tmp_path / "runtime"),
         ]
     )
     assert args.handler(args) == 0
@@ -417,6 +470,9 @@ def test_environment_doctor_accepts_converged_baseline_context(
     capsys,
 ) -> None:
     from acmm import environment_cli
+
+    monkeypatch.setattr(environment_cli, "default_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(tmp_path / "runtime"))
     from acmm_infra.cohort import (
         cohort_doctor_result,
         cohort_subject,
@@ -480,10 +536,6 @@ def test_environment_doctor_accepts_converged_baseline_context(
         [
             "env",
             "doctor",
-            "--repo-root",
-            str(tmp_path),
-            "--runtime-root",
-            str(tmp_path / "runtime"),
         ]
     )
     assert args.handler(args) == 0

@@ -21,11 +21,12 @@ The repository currently contains Experiment Contract v0.1, including:
 - atomic per-run result persistence;
 - ACMM Run Record v0.1 schema and semantic validation;
 - regression fixtures and tests;
-- the `acmm validate` and `acmm plan` commands;
+- installed Experiment Package validation, installation, deployment, and execution commands;
 - the separate `acmm-infra` deployment/inspection command.
 
-The external Experiment Package architecture is specified in `docs/experiments/package.md`; the
-package loader/staging implementation is the next framework milestone.
+The Experiment Package architecture is specified in `docs/experiments/package.md`. Experiment
+Packages are now the sole researcher-facing experiment identity: raw Experiment Contracts remain
+package components and internal validation artifacts rather than standalone executable experiments.
 
 ## Development environment
 
@@ -278,28 +279,30 @@ pytest
 
 The current baseline test suite should pass completely.
 
-### 9. Validate an experiment
+### 9. Validate, install, and preview an experiment
 
-Validate the populated example Contract:
-
-```text
-acmm validate experiments/examples/magic_number/experiment.yaml
-```
-
-Inspect the deterministic run plan without executing the experiment:
+Experiment Packages are the researcher-facing experiment unit. Validate package source without
+installing or executing runtime code:
 
 ```text
-acmm plan experiments/examples/magic_number/experiment.yaml
+acmm package validate <package-directory>
 ```
 
-Validate an intentionally invalid fixture:
+Install the immutable package snapshot into the ACMM-managed store:
 
 ```text
-acmm validate tests/fixtures/contracts/invalid/unresolved_requirement.yaml
+acmm package install <package-directory>
 ```
 
-The valid Contract should return exit status `0`. Invalid Contracts return a nonzero exit
-status, which can later be used by scripts and CI.
+Then inspect the deterministic run selection without executing an agent:
+
+```text
+acmm run <experiment-selector> --preview
+```
+
+`<experiment-selector>` is the experiment ID when one revision is installed, or
+`EXPERIMENT_ID@SHA_PREFIX` when an exact installed revision must be selected. Package and Contract
+validation failures return a nonzero exit status.
 
 Inspect the most recent command's exit status with:
 
@@ -317,8 +320,7 @@ cd ~/acmm_repo
 source ~/.venvs/acmm_repo/bin/activate
 
 pytest
-acmm validate experiments/examples/magic_number/experiment.yaml
-acmm plan experiments/examples/magic_number/experiment.yaml
+acmm package list
 ```
 
 When finished:
@@ -417,14 +419,15 @@ This separation keeps the Contract validator independent of a particular agent p
 
 ## Runtime planning
 
-The researcher-facing command:
+The researcher-facing planning path operates on an installed Experiment Package:
 
 ```text
-acmm plan <experiment.yaml>
+acmm run <experiment-selector> --preview
 ```
 
-validates the Contract and, if valid, prints the deterministic run population without
-executing any agent. Validation errors block planning; warnings are reported but do not.
+Package loading validates the embedded Contract before runtime planning. Preview prints the
+resolved deterministic run selection without creating an execution session or contacting agents.
+Validation errors block planning; warnings are reported but do not.
 
 After validation, `build_experiment_plan()` expands a Contract into the deterministic run
 population defined by:
@@ -805,42 +808,55 @@ API, and normalizes Agent Zero Tool logs into the existing ACMM evidence channel
 
 ## Infrastructure management
 
-`acmm` owns experiment-facing workflow, while `acmm-infra` owns one infrastructure backend at
-a time. The preferred experiment-wide environment path is:
-
-```text
-acmm env apply --experiment controlled_tool_use_multiscenario_v1
-acmm env status
-acmm env doctor
-acmm env stop
-```
-
-External Experiment Packages use the same lifecycle but begin from an explicit local package
-directory. Packages are validated, hashed, and staged into the ACMM runtime root before their
-runtime code or apparatus is consumed:
+`acmm` now separates experiment-package lifecycle from subject-environment lifecycle. A normal
+experiment workflow is:
 
 ```text
 acmm package validate ../acmm-experiments/minimal_agent_baseline_v1
-acmm package acquire ../acmm-experiments/minimal_agent_baseline_v1
-acmm env apply --package ../acmm-experiments/minimal_agent_baseline_v1
-acmm run --package ../acmm-experiments/minimal_agent_baseline_v1 --preview
+acmm package install ../acmm-experiments/minimal_agent_baseline_v1
+acmm package apply minimal_agent_baseline_v1
+acmm run minimal_agent_baseline_v1 --preview
+acmm run minimal_agent_baseline_v1
 ```
 
-`acmm env apply --package` and `acmm run --package` acquire the package automatically, so the
-standalone `package acquire` command is mainly useful when an operator wants to stage and inspect a
-package before deployment. Package sources are local filesystem directories; ACMM does not install
-them with `pip` or automatically download executable experiment code.
+Experiment Package source directories are validated and copied into the ACMM-managed package store
+before their runtime code or apparatus is consumed. `package apply` accepts only an already-installed
+package selector; it never acquires package source implicitly. Multiple revisions of the same
+experiment may be installed simultaneously. A plain experiment ID selects it only when one revision
+is installed; otherwise use `EXPERIMENT_ID@SHA_PREFIX`, as printed by `package install` and
+`package list`. Package sources are local filesystem directories; ACMM does not install them with
+`pip` or automatically download executable experiment code.
 
-`acmm env apply` resolves either a built-in experiment's canonical Contract or an acquired
-Experiment Package Contract and delegates to exactly the qualified subjects covered by that
-Contract. `acmm env status` discovers current deployment
-contexts without selecting an expected experiment, and plain `acmm env doctor` aggregates the
-same passive per-subject readiness checks used by the low-level infrastructure commands.
-`acmm env doctor --start-if-needed` may temporarily start stopped subjects one at a time, run the
-doctor check, and restore each subject to its original stopped state before moving to the next.
-`acmm env stop` is a cleanup operation: it stops running qualified subject runtimes without
-changing experiment apparatus or deployment markers, even when experiment contexts are
-divergent. Repeatable `--subject` filters allow targeted environment work during integration.
+Package management also provides:
+
+```text
+acmm package list
+acmm package show minimal_agent_baseline_v1
+acmm package uninstall minimal_agent_baseline_v1
+```
+
+`package uninstall` refuses to remove a revision that is still referenced by deployed subject
+state. Reconcile those subjects to the intended LLM environment first.
+
+`acmm run` consumes only already-installed Experiment Packages. It does not accept a raw Contract
+path, acquire a package source implicitly, or infer an experiment from deployment state. The
+experiment/package selector is mandatory.
+
+`acmm env` no longer selects or applies experiments. Its only state-setting operation is explicit
+LLM selection:
+
+```text
+acmm env set-llm <llm-id>
+acmm env status
+acmm env doctor --start-if-needed
+acmm env stop
+```
+
+`set-llm` reconciles the selected qualified subjects to that registered LLM and removes any active
+experiment apparatus from them. `status` and `doctor` may still report observed package/deployment
+provenance because that is useful diagnostic evidence, but they do not choose an experiment. `stop`
+only stops running qualified subject runtimes and does not mutate apparatus.
+
 `acmm-infra` remains strictly subject-facing: `acmm-infra hermes ...`, `open-webui ...`, and
 `agent-zero ...` are the detailed lifecycle and diagnostic escape hatches.
 
@@ -935,7 +951,7 @@ After `doctor` reports `READY`, execute only the first deterministic magic-numbe
 the live smoke test:
 
 ```text
-acmm run experiments/examples/magic_number/experiment.yaml --run-index 0
+acmm run magic_number_tool_use_v1 --run-index 0
 ```
 
 `acmm run` also supports deterministic selection without shell loops. Each `--run-index`
@@ -944,7 +960,7 @@ Contract subject/agent IDs. Different selector types are intersected and overlap
 selectors are deduplicated. For example:
 
 ```text
-acmm run experiments/examples/controlled_tool_use_multiscenario/experiment.yaml \
+acmm run controlled_tool_use_multiscenario_v1 \
     --subject open_webui_nemotron30b --run-index 20-39
 ```
 
@@ -956,11 +972,9 @@ from the staged snapshot so harness compatibility and runtime declarations can b
 subjects' recorded deployment contexts; context mismatches are warnings in preview mode so planning
 remains available before deployment.
 
-Before a real acquisition, `acmm run` performs deployment-context and live-readiness checks for
-exactly the selected subjects. Built-in experiments require the Contract experiment ID, full
-`experiment` application scope, and an apparatus SHA-256 matching the repository apparatus.
-Package-backed experiments additionally require the exact staged package, Contract, runtime, and
-per-subject apparatus identities recorded during deployment; a package may legitimately declare no
+Before a real acquisition, `acmm run` performs package-deployment and live-readiness checks for
+exactly the selected subjects. The selected deployment must record the exact installed package,
+Contract, runtime, and per-subject apparatus identities; a package may legitimately declare no
 apparatus for a subject. Plain `acmm run` then requires every selected subject to already report
 `READY` through the same passive doctor logic used by `acmm-infra <subject> doctor`.
 
@@ -969,9 +983,10 @@ that are stopped are marked deferred during initial live preflight and are start
 first selected run is reached. ACMM runs the doctor check immediately after startup, keeps only the
 currently needed ACMM-owned runtime alive when selected runs move between subjects, and stops only
 runtimes that ACMM itself started. A subject that was already running is never stopped by this
-policy. Wrong experiment/apparatus state and an already-running but unhealthy subject remain hard
+policy. Wrong package/apparatus state and an already-running but unhealthy subject remain hard
 errors; the option is not an automatic repair mechanism. `--startup-timeout-seconds` controls the
-startup allowance. `--runtime-root` and `--repo-root` can override the roots used for these checks.
+startup allowance. Repository and runtime roots are infrastructure configuration rather than run
+selection options; `ACMM_RUNTIME_ROOT` selects a non-default runtime/package store when needed.
 `--preview` performs only the local deployment-context inspection and never contacts or starts
 subject runtimes, even when `--start-if-needed` is present.
 
@@ -988,26 +1003,23 @@ evidence, do not participate in compliance adjudication, and do not affect Contr
 hashes. A log-capture or metadata-write failure produces a warning but does not invalidate the
 experiment. Preview mode never creates diagnostic files.
 
-When the Contract path and `--package` are both omitted, `acmm run` can infer either a built-in
-experiment or an Experiment Package from deployed subject contexts:
+`acmm run` requires one explicit installed-package selector:
 
 ```text
-acmm run --preview
+acmm run EXPERIMENT_ID --preview
+acmm run EXPERIMENT_ID@SHA_PREFIX --preview
 ```
 
-Inference requires one unambiguous deployed experiment ID across the contexts considered for
-resolution. Package-backed contexts must additionally converge on one package SHA-256; mixed
-legacy/package state and differing package revisions are errors. A converged package is reopened
-from the immutable staged snapshot and therefore does not need to be registered in the built-in
-experiment catalog. Missing contexts do not invent another candidate, so a unique remaining
-experiment can still be resolved and then reported as not ready by normal preflight. Repeatable
-`--subject` selectors scope inference before the Contract is loaded; without them, all qualified
-subject deployments participate in experiment resolution.
+A plain experiment ID is accepted only when exactly one installed revision exists. When multiple
+revisions are installed, the digest-qualified selector is mandatory. Deployment markers are used
+only to verify that the selected package is actually applied to the selected subjects; they never
+choose the experiment on behalf of the operator.
 
-The command validates the Contract and harness compatibility and resolves each Contract subject
-through the qualified subject execution catalog. Built-in experiments obtain fixtures/evaluators
-from the legacy experiment catalog; Experiment Packages activate their runtime only from the
-verified staged snapshot and compose it with the same core-owned subject adapters. Execution
+
+The command opens and verifies the installed Experiment Package, checks harness compatibility,
+and resolves each Contract subject through the qualified subject execution catalog. Package runtime
+code is activated only from the verified staged snapshot and composed with the same core-owned
+subject adapters. Execution
 persists the exact Contract snapshot, Run Record, evidence artifacts, and package provenance when
 applicable, then re-validates the persisted Run Record. Agent-specific runtime wiring stays in the
 subject catalog rather than in experiment packages or the top-level experiment CLI.

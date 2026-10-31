@@ -9,6 +9,7 @@ from acmm_infra.cohort import (
     cohort_subject,
     cohort_subject_status,
     experiment_cohort,
+    package_deployment_references,
     resolve_experiment_cohort,
     summarize_context,
 )
@@ -38,6 +39,29 @@ class _fake_manager:
         if progress is not None:
             progress("fake apply")
         return {}
+
+
+
+def test_package_deployment_references_matches_package_digest(monkeypatch) -> None:
+    states = {
+        "hermes": {"package": {"sha256": "a" * 64}},
+        "open-webui": {"package": {"sha256": "b" * 64}},
+        "agent-zero": None,
+    }
+
+    monkeypatch.setattr(
+        cohort_module,
+        "deployed_experiment_state",
+        lambda repo_root, runtime_root, infrastructure_subject: states[
+            infrastructure_subject
+        ],
+    )
+
+    assert package_deployment_references(
+        ROOT,
+        ROOT / "runtime",
+        "a" * 64,
+    ) == ("hermes",)
 
 
 def test_resolve_experiment_cohort_uses_canonical_contract_subjects() -> None:

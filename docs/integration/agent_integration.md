@@ -497,13 +497,13 @@ For example, `acmm run` now supports subject filtering, run-index ranges, and pr
 so this can be done without hand-building long index lists:
 
 ```text
-acmm run experiment.yaml --subject <subject_id> --preview
-acmm run experiment.yaml --subject <subject_id>
+acmm run <experiment-selector> --subject <subject_id> --preview
+acmm run <experiment-selector> --subject <subject_id>
 ```
 
 When instability appears concentrated immediately after runtime startup, complement an ordinary
 subject-only stress population with repeated cold-start qualification. The repository helper
-`tools/cold_start_qualification.py` repeats one fixed Contract selection across independently stopped
+`tools/cold_start_qualification.py` repeats one fixed installed-package selection across independently stopped
 and restarted subject runtimes, preserving each execution and its runtime diagnostics separately.
 This distinguishes endurance behavior within one long-lived runtime from startup-sensitive behavior
 across many independent runtime acquisitions. Do not combine these qualification runs with canonical

@@ -4,7 +4,6 @@ import argparse
 from dataclasses import asdict
 from functools import wraps
 import json
-from pathlib import Path
 import sys
 
 from acmm_infra.cohort import (
@@ -13,12 +12,9 @@ from acmm_infra.cohort import (
     inspect_cohort,
     resolve_baseline_cohort,
     resolve_deployed_cohort,
-    resolve_experiment_cohort,
-    resolve_package_cohort,
     stop_cohort,
     summarize_context,
 )
-from acmm.experiment_package import acquire_experiment_package, experiment_package_error
 from acmm_infra.common import infrastructure_error
 from acmm_infra.docker import docker_error
 from acmm_infra.profiles.common import (
@@ -43,7 +39,7 @@ def _safe_environment_handler(handler):
 def register_environment_commands(subparsers: argparse._SubParsersAction) -> None:
     env_parser = subparsers.add_parser(
         "env",
-        help="Prepare and inspect ACMM experiment environments.",
+        help="Prepare and inspect qualified ACMM subject environments.",
     )
     env_subparsers = env_parser.add_subparsers(
         dest="env_command",
@@ -55,51 +51,39 @@ def register_environment_commands(subparsers: argparse._SubParsersAction) -> Non
 def _register_environment_subcommands(
     subparsers: argparse._SubParsersAction,
 ) -> None:
-    apply_parser = subparsers.add_parser(
-        "apply",
-        help="Reconcile an ACMM experiment environment or qualified baseline.",
-    )
-    experiment_source = apply_parser.add_mutually_exclusive_group()
-    experiment_source.add_argument(
-        "--experiment",
-        dest="experiment_id",
+    set_llm_parser = subparsers.add_parser(
+        "set-llm",
         help=(
-            "Prepare the subjects covered by the canonical Contract for this "
-            "experiment. Without this option, reconcile an LLM baseline."
+            "Reconcile qualified subjects to a registered LLM and remove any "
+            "active experiment apparatus."
         ),
     )
-    experiment_source.add_argument(
-        "--package",
-        dest="package_path",
-        help=(
-            "Validate, stage, and apply an external Experiment Package. The "
-            "package Contract selects the experiment subjects."
-        ),
+    set_llm_parser.add_argument(
+        "llm_id",
+        help="Registered LLM ID to deploy across the selected qualified subjects.",
     )
-    _add_llm_baseline_argument(apply_parser)
-    _add_environment_root_arguments(apply_parser)
-    _add_subject_arguments(apply_parser)
-    apply_parser.add_argument(
+    _add_subject_arguments(set_llm_parser)
+    set_llm_parser.add_argument(
         "--timeout-seconds",
         type=float,
         default=120.0,
         help="Maximum provisioning timeout passed to each subject manager.",
     )
-    apply_parser.set_defaults(handler=_safe_environment_handler(run_environment_apply))
+    set_llm_parser.set_defaults(
+        handler=_safe_environment_handler(run_environment_set_llm)
+    )
 
     status_parser = subparsers.add_parser(
         "status",
         help="Show the discovered state of qualified ACMM subject deployments.",
     )
-    _add_environment_root_arguments(status_parser)
     status_parser.add_argument("--json", action="store_true")
     status_parser.set_defaults(handler=_safe_environment_handler(run_environment_status))
 
     doctor_parser = subparsers.add_parser(
         "doctor",
-        help="Check live readiness of the current ACMM experiment environment.",
+        help="Check live readiness of the current qualified ACMM subject environment.",
     )
-    _add_environment_root_arguments(doctor_parser)
     doctor_parser.add_argument(
         "--start-if-needed",
         action="store_true",
@@ -121,70 +105,23 @@ def _register_environment_subcommands(
         "stop",
         help="Stop running qualified ACMM subject runtimes without changing apparatus.",
     )
-    _add_environment_root_arguments(stop_parser)
     _add_subject_arguments(stop_parser)
     stop_parser.add_argument("--json", action="store_true")
     stop_parser.set_defaults(handler=_safe_environment_handler(run_environment_stop))
 
 
-def run_environment_apply(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo_root).expanduser().resolve()
-    runtime_root = Path(args.runtime_root).expanduser().resolve()
+def run_environment_set_llm(args: argparse.Namespace) -> int:
+    repo_root = default_repo_root().expanduser().resolve()
+    runtime_root = default_runtime_root().expanduser().resolve()
     selected = tuple(args.subjects or ())
+    cohort = resolve_baseline_cohort(
+        repo_root,
+        selected,
+        llm_baseline_id=args.llm_id,
+    )
 
-    package = None
-    if args.package_path is not None:
-        if args.llm_baseline_id is not None:
-            raise infrastructure_error(
-                "--llm-baseline cannot be combined with --package; Experiment "
-                "Package Contracts resolve their LLM baseline automatically."
-            )
-        try:
-            package = acquire_experiment_package(
-                Path(args.package_path),
-                runtime_root,
-                contract_schema_path=(
-                    repo_root / "contracts" / "v0_1" / "contract.schema.json"
-                ),
-            )
-        except (experiment_package_error, ValueError) as exc:
-            raise infrastructure_error(str(exc)) from exc
-        cohort = resolve_package_cohort(
-            repo_root,
-            package,
-            selected,
-        )
-    elif args.experiment_id is None:
-        print(
-            "WARNING: no experiment selected; applying experiment-independent "
-            "baselines to the selected cohort and removing active experiment "
-            "apparatus.",
-            file=sys.stderr,
-        )
-        cohort = resolve_baseline_cohort(
-            repo_root,
-            selected,
-            llm_baseline_id=args.llm_baseline_id,
-        )
-    else:
-        if args.llm_baseline_id is not None:
-            raise infrastructure_error(
-                "--llm-baseline cannot be combined with --experiment; experiment "
-                "Contracts resolve their historical LLM baseline automatically."
-            )
-        cohort = resolve_experiment_cohort(
-            repo_root,
-            args.experiment_id,
-            selected,
-        )
-
-    print("ACMM environment apply:")
-    print(f"  experiment:         {cohort.experiment_id or 'baseline'}")
-    if package is not None:
-        print(f"  package SHA-256:    {package.package_sha256}")
-        print(f"  staged package:     {package.root}")
-    if cohort.canonical_contract is not None:
-        print(f"  canonical Contract: {cohort.canonical_contract}")
+    print("ACMM environment set-llm:")
+    print(f"  LLM:                {args.llm_id}")
     print(f"  subjects:           {len(cohort.subjects)}")
     for subject in cohort.subjects:
         print(
@@ -210,24 +147,15 @@ def run_environment_apply(args: argparse.Namespace) -> int:
     )
 
     print()
-    print("Environment apply complete:")
-    print(f"  subjects applied: {len(results)}/{len(cohort.subjects)}")
-    print(f"  experiment:       {cohort.experiment_id or 'baseline'}")
-    if package is not None:
-        print(f"  package SHA-256:  {package.package_sha256}")
-    if cohort.experiment_id is not None:
-        print("  deployment contexts:")
-        for item in results:
-            print(f"    {item.subject_id}:")
-            print(f"      application scope: {item.application_scope}")
-            print(f"      apparatus:         {item.apparatus_state}")
-            print(f"      apparatus SHA-256: {item.source_sha256}")
+    print("Environment set-llm complete:")
+    print(f"  subjects updated: {len(results)}/{len(cohort.subjects)}")
+    print(f"  LLM:              {args.llm_id}")
     return 0
 
 
 def run_environment_status(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo_root).expanduser().resolve()
-    runtime_root = Path(args.runtime_root).expanduser().resolve()
+    repo_root = default_repo_root().expanduser().resolve()
+    runtime_root = default_runtime_root().expanduser().resolve()
     cohort = resolve_deployed_cohort(
         repo_root,
         runtime_root,
@@ -244,7 +172,7 @@ def run_environment_status(args: argparse.Namespace) -> int:
         return 0
 
     print("ACMM environment status:")
-    print("  experiment context:")
+    print("  deployment context:")
     print(f"    state:      {context.state}")
     print(f"    experiment: {context.experiment_id or 'none'}")
     if context.package_sha256 is not None:
@@ -272,8 +200,8 @@ def run_environment_status(args: argparse.Namespace) -> int:
 
 
 def run_environment_doctor(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo_root).expanduser().resolve()
-    runtime_root = Path(args.runtime_root).expanduser().resolve()
+    repo_root = default_repo_root().expanduser().resolve()
+    runtime_root = default_runtime_root().expanduser().resolve()
     cohort = resolve_deployed_cohort(
         repo_root,
         runtime_root,
@@ -378,7 +306,7 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         return 0 if ready else 1
 
     print("ACMM environment doctor:")
-    print("  experiment context:")
+    print("  deployment context:")
     print(f"    state:      {context.state}")
     print(f"    experiment: {context.experiment_id or 'none'}")
     if context.package_sha256 is not None:
@@ -390,7 +318,7 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         state = item.deployment_state
         print(f"    {subject.subject_id}:")
         print(f"      infrastructure:    {subject.infrastructure_subject}")
-        print(f"      LLM baseline:      {subject.llm_baseline_id}")
+        print(f"      LLM:               {subject.llm_baseline_id}")
         if item.llm is not None:
             _print_llm_observation(
                 item.llm,
@@ -442,8 +370,8 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
 
 
 def run_environment_stop(args: argparse.Namespace) -> int:
-    repo_root = Path(args.repo_root).expanduser().resolve()
-    runtime_root = Path(args.runtime_root).expanduser().resolve()
+    repo_root = default_repo_root().expanduser().resolve()
+    runtime_root = default_runtime_root().expanduser().resolve()
     cohort = resolve_deployed_cohort(
         repo_root,
         runtime_root,
@@ -483,9 +411,9 @@ def _print_llm_observation(
     running: bool | None = None,
 ) -> None:
     prefix = " " * indent
-    print(f"{prefix}LLM baseline:       {observation.deployed_baseline_id}")
+    print(f"{prefix}LLM:                {observation.deployed_baseline_id}")
     if observation.expected_baseline_id != observation.deployed_baseline_id:
-        print(f"{prefix}expected baseline:  {observation.expected_baseline_id}")
+        print(f"{prefix}expected LLM:       {observation.expected_baseline_id}")
     print(f"{prefix}model:              {observation.model_name}")
     print(f"{prefix}provider:           {observation.logical_provider}")
     print(
@@ -520,7 +448,7 @@ def _print_llm_observation(
             f"{prefix}availability source:{observation.provider_model_availability_source}"
         )
     if observation.model_matches_baseline is False:
-        print(f"{prefix}model state:        WARNING: observed model differs from baseline")
+        print(f"{prefix}model state:        WARNING: observed model differs from configured LLM")
     if observation.context_meets_minimum is False:
         print(f"{prefix}context state:      WARNING: observed context is below minimum")
     elif observation.context_matches_requested is False:
@@ -557,30 +485,6 @@ def _print_context_comparability(statuses) -> None:
         rendered = ", ".join(f"{name}={value}" for name, value in capability)
         print(f"    capability metadata:  {rendered}")
 
-
-def _add_llm_baseline_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--llm-baseline",
-        dest="llm_baseline_id",
-        help=(
-            "Select a registered experiment-independent LLM baseline. This is "
-            "intended for LLM Rebasing qualification and does not change the "
-            "catalog's current baseline."
-        ),
-    )
-
-
-def _add_environment_root_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--repo-root",
-        default=str(default_repo_root()),
-        help="ACMM repository root.",
-    )
-    parser.add_argument(
-        "--runtime-root",
-        default=str(default_runtime_root()),
-        help="Mutable ACMM runtime root. Defaults to ~/acmm_runtime.",
-    )
 
 
 def _add_subject_arguments(parser: argparse.ArgumentParser) -> None:

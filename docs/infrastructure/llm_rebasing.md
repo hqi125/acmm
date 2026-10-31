@@ -167,28 +167,29 @@ agent_zero_llm_qualification
 ```
 
 This prevents candidate testing from making the model look scientifically frozen before the three
-agents have been qualified. Historical experiments continue to resolve their model from their
-registered subject bindings, and ordinary `acmm env apply` uses whichever qualified baseline is currently selected in the catalog;
-during Stage 3 that remained the historical Nemotron baseline until promotion evidence was complete.
+agents have been qualified. Experiment Packages resolve their model from registered Contract
+subject bindings, while `acmm env set-llm <llm-id>` explicitly selects the registered LLM to deploy; during Stage 3 that remained the historical Nemotron baseline until
+promotion evidence was complete.
 
-Candidate baseline selection is explicit only for the state-changing apply operation:
+Candidate selection is explicit through the state-changing `set-llm` operation:
 
 ```text
-acmm env apply --llm-baseline gpt_oss_120b_cloud_candidate_v1
+acmm env set-llm gpt_oss_120b_cloud_candidate_v1
 acmm env status
 acmm env doctor --start-if-needed
 acmm env stop
 ```
 
-`apply` records the deployed LLM baseline beside each subject deployment. Cohort-level `status`
+`set-llm` records the deployed LLM identity beside each subject deployment. Cohort-level `status`
 and `doctor` accept no cohort selectors: they passively discover and inspect all three deployed
 agent environments, including mixed or partially applied baseline states. `stop` also discovers
 the deployed baseline automatically, while retaining optional subject scoping because it is an
 operator action.
 
-`--llm-baseline` cannot be combined with `--experiment`. Experiment Contracts always resolve the
-historical baseline through their subject bindings. Selecting a qualification baseline does not
-change `catalog.yaml` and therefore does not rebase the project by itself.
+`set-llm` belongs only to experiment-independent LLM selection. Experiment Packages resolve their
+LLM through Contract subject bindings and are applied with
+`acmm package apply`. Selecting a qualification baseline does not change `catalog.yaml` and
+therefore does not rebase the project by itself.
 
 The first candidate was selected as a conservative compatibility probe rather than solely on
 headline benchmark performance. It offers a context capability above ACMM's 64K minimum, native
@@ -238,7 +239,7 @@ Doctor therefore requires the candidate model to be visible through each agent/p
 All three checks are reported as `provider_model_available`. A candidate that has been configured
 in the agents but has not been registered with the host Ollama installation must remain NOT READY.
 For an Ollama Cloud model, register it on the Ollama host with `ollama pull <model>:cloud` before
-qualification. ACMM does not silently pull or enable external models during `env apply`; provider
+qualification. ACMM does not silently pull or enable external models during `env set-llm`; provider
 registration is an explicit host-side prerequisite and `doctor` is the readiness gate that verifies
 it.
 
@@ -265,7 +266,7 @@ python tools/qualify_llm_behavior.py --iterations 5
 The runner is deliberately passive about model selection. It discovers the LLM baseline already
 deployed across the three-agent cohort, requires one common experiment-independent baseline, and
 refuses to run while any subject runtime is active or experiment apparatus is present. Candidate
-selection therefore remains an `acmm env apply --llm-baseline ...` responsibility.
+selection therefore remains an `acmm env set-llm <llm-id>` responsibility.
 
 For each agent, the runner temporarily reuses the frozen `magic_number_tool_use_v1` Tool apparatus
 as an engineering fixture while retaining the deployed LLM baseline. It then starts the runtime and
