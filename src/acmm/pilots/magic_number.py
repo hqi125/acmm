@@ -3,18 +3,18 @@ from __future__ import annotations
 import json
 from typing import Any, Mapping
 
-from acmm.evidence.artifacts import (
+from acmm.experiment_api import (
+    contains_numeric_value,
+    evaluation_context,
+    experiment_runtime,
+    harness_capabilities,
+    judgment_result,
     load_json_object_array_evidence,
     load_text_evidence,
-)
-from acmm.evidence.text import contains_numeric_value
-from acmm.runtime.interfaces import (
-    evaluation_context,
-    judgment_result,
     prepared_environment,
-    subject_adapter,
 )
-from acmm.harness.capabilities import harness_capabilities
+from acmm.experiment_package.runtime import compose_execution_registry
+from acmm.runtime.interfaces import subject_adapter
 from acmm.runtime.registry import execution_registry
 
 
@@ -267,12 +267,11 @@ def magic_number_harness_capabilities() -> harness_capabilities:
     )
 
 
-def build_magic_number_registry(
-    subject_adapters: Mapping[str, subject_adapter],
+def build_magic_number_runtime(
     fixture_value: int = 87,
-) -> execution_registry:
-    return execution_registry(
-        subject_adapters=dict(subject_adapters),
+) -> experiment_runtime:
+    return experiment_runtime(
+        capabilities=magic_number_harness_capabilities(),
         fixtures={
             "magic_number_environment_v1": magic_number_fixture(
                 fixture_value,
@@ -282,6 +281,16 @@ def build_magic_number_registry(
             "magic_number_retrieval": magic_number_retrieval_evaluator(),
             "magic_number_addition": magic_number_addition_evaluator(),
         },
+    )
+
+
+def build_magic_number_registry(
+    subject_adapters: Mapping[str, subject_adapter],
+    fixture_value: int = 87,
+) -> execution_registry:
+    return compose_execution_registry(
+        build_magic_number_runtime(fixture_value),
+        subject_adapters,
     )
 
 

@@ -1,0 +1,273 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import hashlib
+import importlib.util
+from pathlib import Path
+import re
+import sys
+from types import ModuleType
+from typing import Any, Mapping
+
+from acmm.contract.compatibility import validate_harness_compatibility
+from acmm.experiment_api import (
+    EXPERIMENT_RUNTIME_API_VERSION,
+    experiment_runtime,
+    experiment_runtime_context,
+)
+from acmm.experiment_package.model import experiment_package
+from acmm.experiment_package.source_tree import (
+    component_tree_sha256,
+    package_tree_sha256,
+)
+from acmm.runtime.interfaces import subject_adapter
+from acmm.runtime.registry import execution_registry
+
+
+_STAGED_PACKAGE_DIRECTORY = "_experiment_packages"
+_IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+class experiment_runtime_error(ValueError):
+    """Raised when staged Experiment Package runtime code cannot be activated."""
+
+
+@dataclass(frozen=True)
+class loaded_experiment_runtime:
+    context: experiment_runtime_context
+    runtime: experiment_runtime
+    module_name: str
+
+
+def load_staged_experiment_runtime(
+    package: experiment_package,
+) -> loaded_experiment_runtime:
+    component = package.runtime
+    if component is None:
+        raise experiment_runtime_error(
+            f"Experiment Package '{package.experiment_id}' does not declare runtime code."
+        )
+
+    _validate_staged_package_layout(package)
+    _verify_runtime_snapshot(package)
+
+    if component.api_version != EXPERIMENT_RUNTIME_API_VERSION:
+        raise experiment_runtime_error(
+            f"Unsupported runtime API version '{component.api_version}'."
+        )
+
+    context = experiment_runtime_context(
+        experiment_id=package.experiment_id,
+        package_sha256=package.package_sha256,
+        package_root=package.root,
+    )
+    module_name = _runtime_module_name(package)
+    module = _load_runtime_module(
+        module_name,
+        component.root,
+    )
+    entrypoint = getattr(module, component.entrypoint, None)
+
+    if not callable(entrypoint):
+        raise experiment_runtime_error(
+            f"Runtime entrypoint '{component.entrypoint}' is not callable."
+        )
+
+    try:
+        runtime = entrypoint(context)
+    except Exception as exc:
+        raise experiment_runtime_error(
+            f"Runtime entrypoint '{component.entrypoint}' failed: {exc}"
+        ) from exc
+
+    _verify_runtime_snapshot(package)
+
+    if not isinstance(runtime, experiment_runtime):
+        raise experiment_runtime_error(
+            f"Runtime entrypoint '{component.entrypoint}' must return experiment_runtime."
+        )
+
+    _validate_runtime_contributions(runtime)
+    compatibility = validate_harness_compatibility(
+        dict(package.contract),
+        runtime.capabilities,
+    )
+
+    if compatibility.errors:
+        issue = compatibility.errors[0]
+        raise experiment_runtime_error(
+            "Experiment runtime is incompatible with its Contract at "
+            f"'{issue.path}': {issue.message}"
+        )
+
+    return loaded_experiment_runtime(
+        context=context,
+        runtime=runtime,
+        module_name=module_name,
+    )
+
+
+def compose_execution_registry(
+    runtime: experiment_runtime,
+    subject_adapters: Mapping[str, subject_adapter],
+    *,
+    subject_configuration_overlays: Mapping[str, Mapping[str, Any]] | None = None,
+) -> execution_registry:
+    overlays = {
+        subject_id: dict(configuration)
+        for subject_id, configuration in (subject_configuration_overlays or {}).items()
+    }
+
+    return execution_registry(
+        subject_adapters=dict(subject_adapters),
+        fixtures=dict(runtime.fixtures),
+        evaluators=dict(runtime.evaluators),
+        subject_configuration_overlays=overlays,
+    )
+
+
+def _validate_staged_package_layout(package: experiment_package) -> None:
+    root = package.root
+
+    if (
+        root.name != package.package_sha256
+        or root.parent.name != package.experiment_id
+        or root.parent.parent.name != _STAGED_PACKAGE_DIRECTORY
+    ):
+        raise experiment_runtime_error(
+            "Experiment runtime may only be loaded from an ACMM-staged package snapshot."
+        )
+
+
+def _verify_runtime_snapshot(package: experiment_package) -> None:
+    component = package.runtime
+    assert component is not None
+
+    observed_package_sha256 = package_tree_sha256(package.root)
+    if observed_package_sha256 != package.package_sha256:
+        raise experiment_runtime_error(
+            "Staged Experiment Package changed before runtime activation: "
+            f"expected {package.package_sha256}, observed {observed_package_sha256}."
+        )
+
+    observed_runtime_sha256 = component_tree_sha256(component.root)
+    if observed_runtime_sha256 != component.sha256:
+        raise experiment_runtime_error(
+            "Staged Experiment Package runtime changed before activation: "
+            f"expected {component.sha256}, observed {observed_runtime_sha256}."
+        )
+
+
+def _runtime_module_name(package: experiment_package) -> str:
+    root_sha256 = hashlib.sha256(str(package.root).encode("utf-8")).hexdigest()
+    return (
+        f"_acmm_experiment_{package.experiment_id}_"
+        f"{package.package_sha256[:16]}_{root_sha256[:12]}"
+    )
+
+
+def _load_runtime_module(
+    module_name: str,
+    runtime_root: Path,
+) -> ModuleType:
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+
+    init_path = runtime_root / "__init__.py"
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        init_path,
+        submodule_search_locations=[str(runtime_root)],
+    )
+
+    if spec is None or spec.loader is None:
+        raise experiment_runtime_error(
+            f"Could not create a Python module spec for runtime '{runtime_root}'."
+        )
+
+    module = importlib.util.module_from_spec(spec)
+    modules_before = set(sys.modules)
+    sys.modules[module_name] = module
+
+    previous_bytecode_setting = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        _remove_failed_runtime_modules(module_name, modules_before)
+        raise experiment_runtime_error(
+            f"Could not import Experiment Package runtime '{runtime_root}': {exc}"
+        ) from exc
+    finally:
+        sys.dont_write_bytecode = previous_bytecode_setting
+
+    return module
+
+
+def _remove_failed_runtime_modules(
+    module_name: str,
+    modules_before: set[str],
+) -> None:
+    prefix = module_name + "."
+    for name in tuple(sys.modules):
+        if name in modules_before:
+            continue
+        if name == module_name or name.startswith(prefix):
+            sys.modules.pop(name, None)
+
+
+def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
+    if not isinstance(runtime.capabilities.evaluators, frozenset):
+        raise experiment_runtime_error("Runtime evaluator capabilities must be a frozenset.")
+    if not isinstance(runtime.capabilities.fixtures, frozenset):
+        raise experiment_runtime_error("Runtime fixture capabilities must be a frozenset.")
+    if not isinstance(runtime.capabilities.tools, frozenset):
+        raise experiment_runtime_error("Runtime tool capabilities must be a frozenset.")
+    if not isinstance(runtime.capabilities.evidence_channels, frozenset):
+        raise experiment_runtime_error(
+            "Runtime evidence-channel capabilities must be a frozenset."
+        )
+
+    for label, values in (
+        ("evaluator", runtime.capabilities.evaluators),
+        ("fixture", runtime.capabilities.fixtures),
+        ("tool", runtime.capabilities.tools),
+        ("evidence channel", runtime.capabilities.evidence_channels),
+    ):
+        _validate_capability_identifiers(label, values)
+
+    fixture_ids = frozenset(runtime.fixtures)
+    evaluator_ids = frozenset(runtime.evaluators)
+
+    if fixture_ids != runtime.capabilities.fixtures:
+        raise experiment_runtime_error(
+            "Runtime fixture declarations must exactly match runtime.capabilities.fixtures."
+        )
+    if evaluator_ids != runtime.capabilities.evaluators:
+        raise experiment_runtime_error(
+            "Runtime evaluator declarations must exactly match runtime.capabilities.evaluators."
+        )
+
+    for fixture_id, fixture in runtime.fixtures.items():
+        if not callable(getattr(fixture, "prepare", None)):
+            raise experiment_runtime_error(
+                f"Runtime fixture '{fixture_id}' does not provide callable prepare()."
+            )
+
+    for evaluator_id, evaluator in runtime.evaluators.items():
+        if not callable(getattr(evaluator, "evaluate", None)):
+            raise experiment_runtime_error(
+                f"Runtime evaluator '{evaluator_id}' does not provide callable evaluate()."
+            )
+
+
+def _validate_capability_identifiers(
+    label: str,
+    values: frozenset[str],
+) -> None:
+    for value in values:
+        if not isinstance(value, str) or _IDENTIFIER_PATTERN.fullmatch(value) is None:
+            raise experiment_runtime_error(
+                f"Runtime {label} capability is not a valid ACMM identifier: {value!r}."
+            )

@@ -746,3 +746,62 @@ The initial implementation lives under `acmm.experiment_package` and provides:
 EP-1 intentionally does not load package runtime Python, compose subject adapters, change the
 built-in experiment catalog, or apply package apparatus. Those remain subsequent Experiment Package
 steps.
+
+## EP-2 implementation checkpoint
+
+EP-2 establishes the executable Experiment Runtime boundary while preserving the existing subject
+adapter and legacy catalog ownership model.
+
+The public package-facing API is `acmm.experiment_api` version `0.1`. It exposes only the runtime
+concepts experiment code needs:
+
+- `experiment_runtime` and `experiment_runtime_context`;
+- `harness_capabilities`;
+- fixture/evaluator protocols and their context/result structures; and
+- normalized evidence access/text helpers used by experiment evaluators.
+
+The facade deliberately does not export subject adapters, `execution_registry`, infrastructure
+managers, subject catalogs, or CLI implementation details. This API boundary is a dependency
+contract for package authors rather than a Python sandbox; Experiment Package runtime remains
+trusted local research code.
+
+Runtime activation now:
+
+1. accepts only a package located in the ACMM staged-package layout;
+2. rechecks the package and runtime-component digests immediately before code import;
+3. imports `runtime/__init__.py` under an ACMM-generated private module namespace;
+4. supports ordinary relative imports inside the runtime directory without installing the package;
+5. constructs an `experiment_runtime_context` containing package identity and staged-root access;
+6. invokes the manifest-selected entrypoint;
+7. requires the entrypoint to return `experiment_runtime`;
+8. validates fixture/evaluator declarations and callable protocol surfaces; and
+9. runs the existing Contract-versus-harness compatibility validation against the returned
+   capabilities.
+
+`experiment_runtime_context.resolve_resource()` provides a convenient checked package-relative
+resource lookup for package-owned assets. The runtime remains trusted Python, so this helper is not
+presented as a security boundary.
+
+The returned runtime contains only experiment-owned contributions:
+
+```text
+experiment_runtime
+    capabilities
+    fixtures
+    evaluators
+```
+
+Core code composes those contributions with core-owned subject adapters and subject configuration
+overlays through `compose_execution_registry()`. Subject adapters therefore never cross the public
+Experiment API boundary.
+
+As a compatibility probe, the built-in `magic_number` pilot now constructs the same
+`experiment_runtime` contribution model and then composes it into the legacy `execution_registry`.
+Its catalog identity, Contract, adapter ownership, and historical execution path remain unchanged.
+This demonstrates that the package runtime model can represent an existing real ACMM experiment
+without requiring a redesign of the execution engine.
+
+EP-2 does not yet make the CLI discover or run external packages, replace the built-in experiment
+catalog, or apply package-owned apparatus. Those remain later package milestones. The next major
+boundary is EP-3: make agent infrastructure consume resolved apparatus roots from staged packages
+instead of reconstructing main-repository experiment paths.

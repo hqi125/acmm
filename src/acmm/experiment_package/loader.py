@@ -11,6 +11,7 @@ import yaml
 
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import load_schema, validate_contract
+from acmm.experiment_api import EXPERIMENT_RUNTIME_API_VERSION
 from acmm.experiment_package.model import (
     experiment_analysis_component,
     experiment_apparatus_component,
@@ -28,7 +29,6 @@ from acmm.experiment_package.source_tree import (
 
 _PACKAGE_MANIFEST_NAME = "experiment-package.yaml"
 _SUPPORTED_APPARATUS_SCHEMA_VERSION = "0.1"
-_SUPPORTED_RUNTIME_API_VERSION = "0.1"
 _EXPERIMENT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
 _COMPONENT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -204,7 +204,7 @@ def _load_runtime_component(
         raise experiment_package_error("runtime must be a mapping.")
 
     api_version = str(data["api_version"])
-    if api_version != _SUPPORTED_RUNTIME_API_VERSION:
+    if api_version != EXPERIMENT_RUNTIME_API_VERSION:
         raise experiment_package_error(
             f"Unsupported runtime.api_version '{api_version}'."
         )
