@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
-from typing import Callable
+from typing import Callable, Mapping
 import uuid
 
 import yaml
@@ -129,6 +129,7 @@ def execute_experiment(
     before_run: Callable[[planned_run], None] | None = None,
     after_run: Callable[[planned_run], None] | None = None,
     session_ready: Callable[[Path], None] | None = None,
+    package_provenance: Mapping[str, str | None] | None = None,
 ) -> experiment_execution_result:
     """
     Execute every selected planned slot in one experiment execution session.
@@ -320,6 +321,7 @@ def execute_experiment(
             contract_run_count=plan.run_count,
             selected_run_indices=selected_run_indices,
             subject_llm_baselines=subject_llm_baselines,
+            package_provenance=package_provenance,
             slots=tuple(slots),
             session_dir=session_dir,
         )
@@ -361,6 +363,7 @@ def execute_experiment(
             contract_run_count=plan.run_count,
             selected_run_indices=selected_run_indices,
             subject_llm_baselines=subject_llm_baselines,
+            package_provenance=package_provenance,
             slots=tuple(interruption_slots),
             interrupted_run_index=(
                 active_planned.run_index
@@ -489,6 +492,7 @@ def _build_interruption_manifest(
     contract_run_count: int,
     selected_run_indices: tuple[int, ...],
     subject_llm_baselines: dict[str, str],
+    package_provenance: Mapping[str, str | None] | None,
     slots: tuple[slot_execution, ...],
     interrupted_run_index: int | None,
     interrupted_attempt: int | None,
@@ -513,36 +517,39 @@ def _build_interruption_manifest(
         if run_index not in started_set
     )
 
+    execution = {
+        "id": execution_id,
+        "experiment_id": experiment_id,
+        "contract_sha256": contract_sha256,
+        "harness_version": harness_version,
+        "subject_llm_baselines": dict(subject_llm_baselines),
+        "status": "interrupted",
+        "interrupt_kind": "keyboard_interrupt",
+        "started_at": _format_timestamp(started_at),
+        "interrupted_at": _format_timestamp(ended_at),
+        "max_attempts_per_run": max_attempts_per_run,
+        "pacing": {
+            "inter_run_delay_seconds": inter_run_delay_seconds,
+        },
+        "contract_run_count": contract_run_count,
+        "selected_run_indices": list(selected_run_indices),
+        "selected_run_count": len(selected_run_indices),
+        "started_run_indices": list(started),
+        "resolved_run_indices": list(resolved),
+        "unresolved_run_indices": list(unresolved),
+        "not_started_run_indices": list(not_started),
+        "interrupted_run_index": interrupted_run_index,
+        "interrupted_attempt": interrupted_attempt,
+        "persisted_attempt_count": sum(
+            len(slot.attempts)
+            for slot in slots
+        ),
+    }
+    _attach_package_provenance(execution, package_provenance)
+
     return {
         "schema_version": "0.1",
-        "execution": {
-            "id": execution_id,
-            "experiment_id": experiment_id,
-            "contract_sha256": contract_sha256,
-            "harness_version": harness_version,
-            "subject_llm_baselines": dict(subject_llm_baselines),
-            "status": "interrupted",
-            "interrupt_kind": "keyboard_interrupt",
-            "started_at": _format_timestamp(started_at),
-            "interrupted_at": _format_timestamp(ended_at),
-            "max_attempts_per_run": max_attempts_per_run,
-            "pacing": {
-                "inter_run_delay_seconds": inter_run_delay_seconds,
-            },
-            "contract_run_count": contract_run_count,
-            "selected_run_indices": list(selected_run_indices),
-            "selected_run_count": len(selected_run_indices),
-            "started_run_indices": list(started),
-            "resolved_run_indices": list(resolved),
-            "unresolved_run_indices": list(unresolved),
-            "not_started_run_indices": list(not_started),
-            "interrupted_run_index": interrupted_run_index,
-            "interrupted_attempt": interrupted_attempt,
-            "persisted_attempt_count": sum(
-                len(slot.attempts)
-                for slot in slots
-            ),
-        },
+        "execution": execution,
         "slots": _build_slot_records(slots, session_dir),
     }
 
@@ -559,6 +566,7 @@ def _build_manifest(
     contract_run_count: int,
     selected_run_indices: tuple[int, ...],
     subject_llm_baselines: dict[str, str],
+    package_provenance: Mapping[str, str | None] | None,
     slots: tuple[slot_execution, ...],
     session_dir: Path,
 ) -> dict:
@@ -570,27 +578,44 @@ def _build_manifest(
 
     slot_records = _build_slot_records(slots, session_dir)
 
+    execution = {
+        "id": execution_id,
+        "experiment_id": experiment_id,
+        "contract_sha256": contract_sha256,
+        "harness_version": harness_version,
+        "subject_llm_baselines": dict(subject_llm_baselines),
+        "started_at": _format_timestamp(started_at),
+        "ended_at": _format_timestamp(ended_at),
+        "max_attempts_per_run": max_attempts_per_run,
+        "pacing": {
+            "inter_run_delay_seconds": inter_run_delay_seconds,
+        },
+        "contract_run_count": contract_run_count,
+        "selected_run_indices": list(selected_run_indices),
+        "planned_run_count": len(slots),
+        "resolved_run_count": len(slots) - len(unresolved),
+        "unresolved_run_indices": unresolved,
+    }
+    _attach_package_provenance(execution, package_provenance)
+
     return {
         "schema_version": "0.1",
-        "execution": {
-            "id": execution_id,
-            "experiment_id": experiment_id,
-            "contract_sha256": contract_sha256,
-            "harness_version": harness_version,
-            "subject_llm_baselines": dict(subject_llm_baselines),
-            "started_at": _format_timestamp(started_at),
-            "ended_at": _format_timestamp(ended_at),
-            "max_attempts_per_run": max_attempts_per_run,
-            "pacing": {
-                "inter_run_delay_seconds": inter_run_delay_seconds,
-            },
-            "contract_run_count": contract_run_count,
-            "selected_run_indices": list(selected_run_indices),
-            "planned_run_count": len(slots),
-            "resolved_run_count": len(slots) - len(unresolved),
-            "unresolved_run_indices": unresolved,
-        },
+        "execution": execution,
         "slots": slot_records,
+    }
+
+
+def _attach_package_provenance(
+    execution: dict,
+    provenance: Mapping[str, str | None] | None,
+) -> None:
+    if provenance is None:
+        return
+    execution["package"] = {
+        "schema_version": provenance["schema_version"],
+        "sha256": provenance["sha256"],
+        "contract_sha256": provenance["contract_sha256"],
+        "runtime_sha256": provenance.get("runtime_sha256"),
     }
 
 

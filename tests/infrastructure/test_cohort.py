@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -205,6 +206,68 @@ def test_apply_cohort_propagates_selected_llm_baseline(monkeypatch, tmp_path: Pa
     assert manager.applied is True
     assert observed_baselines == [baseline_id]
     assert len(results) == 1
+
+
+def test_apply_cohort_uses_package_subject_manager_when_package_is_present(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manager = _fake_manager(running=False)
+    package = SimpleNamespace(package_sha256="a" * 64)
+    built: list[tuple[str, object]] = []
+
+    def fake_package_builder(
+        repo_root,
+        runtime_root,
+        infrastructure_subject,
+        observed_package,
+    ):
+        del repo_root, runtime_root
+        built.append((infrastructure_subject, observed_package))
+        return subject_manager_context(
+            infrastructure_subject=infrastructure_subject,
+            experiment_id="external_v1",
+            manager=manager,
+            package_sha256="a" * 64,
+        )
+
+    def fake_inspect(repo_root, runtime_root, subject, include_running=True):
+        del repo_root, runtime_root, include_running
+        return cohort_subject_status(
+            subject_id=subject.subject_id,
+            infrastructure_subject=subject.infrastructure_subject,
+            running=None,
+            experiment_id="external_v1",
+            application_scope="experiment",
+            apparatus_state="match",
+            source_sha256=None,
+            package_sha256="a" * 64,
+        )
+
+    monkeypatch.setattr(
+        cohort_module,
+        "build_package_subject_manager",
+        fake_package_builder,
+    )
+    monkeypatch.setattr(cohort_module, "inspect_subject_context", fake_inspect)
+
+    cohort = experiment_cohort(
+        experiment_id="external_v1",
+        canonical_contract=tmp_path / "experiment.yaml",
+        subjects=(cohort_subject("subject_a", "hermes"),),
+        package=package,
+    )
+    results = apply_cohort(
+        tmp_path,
+        tmp_path / "runtime",
+        cohort,
+        timeout_seconds=120.0,
+        progress=lambda *args: None,
+    )
+
+    assert manager.applied is True
+    assert built == [("hermes", package)]
+    assert results[0].package_sha256 == "a" * 64
 
 
 def test_apply_cohort_checks_all_runtimes_before_mutating(monkeypatch, tmp_path: Path) -> None:

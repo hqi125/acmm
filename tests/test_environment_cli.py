@@ -30,6 +30,30 @@ def test_acmm_exposes_environment_command_family() -> None:
     assert args.timeout_seconds == 120.0
     assert args.llm_baseline_id is None
 
+    args = parser.parse_args(
+        [
+            "env",
+            "apply",
+            "--package",
+            "/tmp/example-package",
+        ]
+    )
+    assert args.package_path == "/tmp/example-package"
+    assert args.experiment_id is None
+
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(
+            [
+                "env",
+                "apply",
+                "--experiment",
+                EXPERIMENT,
+                "--package",
+                "/tmp/example-package",
+            ]
+        )
+    assert exc_info.value.code == 2
+
     args = parser.parse_args(["env", "status", "--json"])
     assert args.command == "env"
     assert args.env_command == "status"

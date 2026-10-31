@@ -14,9 +14,11 @@ from acmm_infra.cohort import (
     resolve_baseline_cohort,
     resolve_deployed_cohort,
     resolve_experiment_cohort,
+    resolve_package_cohort,
     stop_cohort,
     summarize_context,
 )
+from acmm.experiment_package import acquire_experiment_package, experiment_package_error
 from acmm_infra.common import infrastructure_error
 from acmm_infra.docker import docker_error
 from acmm_infra.profiles.common import (
@@ -57,12 +59,21 @@ def _register_environment_subcommands(
         "apply",
         help="Reconcile an ACMM experiment environment or qualified baseline.",
     )
-    apply_parser.add_argument(
+    experiment_source = apply_parser.add_mutually_exclusive_group()
+    experiment_source.add_argument(
         "--experiment",
         dest="experiment_id",
         help=(
             "Prepare the subjects covered by the canonical Contract for this "
             "experiment. Without this option, reconcile an LLM baseline."
+        ),
+    )
+    experiment_source.add_argument(
+        "--package",
+        dest="package_path",
+        help=(
+            "Validate, stage, and apply an external Experiment Package. The "
+            "package Contract selects the experiment subjects."
         ),
     )
     _add_llm_baseline_argument(apply_parser)
@@ -121,7 +132,29 @@ def run_environment_apply(args: argparse.Namespace) -> int:
     runtime_root = Path(args.runtime_root).expanduser().resolve()
     selected = tuple(args.subjects or ())
 
-    if args.experiment_id is None:
+    package = None
+    if args.package_path is not None:
+        if args.llm_baseline_id is not None:
+            raise infrastructure_error(
+                "--llm-baseline cannot be combined with --package; Experiment "
+                "Package Contracts resolve their LLM baseline automatically."
+            )
+        try:
+            package = acquire_experiment_package(
+                Path(args.package_path),
+                runtime_root,
+                contract_schema_path=(
+                    repo_root / "contracts" / "v0_1" / "contract.schema.json"
+                ),
+            )
+        except (experiment_package_error, ValueError) as exc:
+            raise infrastructure_error(str(exc)) from exc
+        cohort = resolve_package_cohort(
+            repo_root,
+            package,
+            selected,
+        )
+    elif args.experiment_id is None:
         print(
             "WARNING: no experiment selected; applying experiment-independent "
             "baselines to the selected cohort and removing active experiment "
@@ -147,6 +180,9 @@ def run_environment_apply(args: argparse.Namespace) -> int:
 
     print("ACMM environment apply:")
     print(f"  experiment:         {cohort.experiment_id or 'baseline'}")
+    if package is not None:
+        print(f"  package SHA-256:    {package.package_sha256}")
+        print(f"  staged package:     {package.root}")
     if cohort.canonical_contract is not None:
         print(f"  canonical Contract: {cohort.canonical_contract}")
     print(f"  subjects:           {len(cohort.subjects)}")
@@ -177,6 +213,8 @@ def run_environment_apply(args: argparse.Namespace) -> int:
     print("Environment apply complete:")
     print(f"  subjects applied: {len(results)}/{len(cohort.subjects)}")
     print(f"  experiment:       {cohort.experiment_id or 'baseline'}")
+    if package is not None:
+        print(f"  package SHA-256:  {package.package_sha256}")
     if cohort.experiment_id is not None:
         print("  deployment contexts:")
         for item in results:

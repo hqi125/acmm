@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from acmm.contract.loader import load_contract
-from acmm.experiment_package import open_staged_experiment_package
+from acmm.experiment_package import experiment_package, open_staged_experiment_package
 from acmm.experiments.catalog import lookup_experiment_execution_binding
 from acmm.subjects.catalog import (
     lookup_subject_execution_binding,
@@ -30,6 +30,7 @@ from acmm_infra.readiness import (
 )
 from acmm_infra.runtime_lifecycle import discover_runtime_lease
 from acmm_infra.subject_managers import (
+    build_package_subject_manager,
     build_deployed_subject_manager,
     build_subject_manager,
     deployed_experiment_state,
@@ -48,6 +49,7 @@ class experiment_cohort:
     experiment_id: str | None
     canonical_contract: Path | None
     subjects: tuple[cohort_subject, ...]
+    package: experiment_package | None = None
 
 
 @dataclass(frozen=True)
@@ -147,6 +149,26 @@ def resolve_experiment_cohort(
         experiment_id=experiment_id,
         canonical_contract=contract_path,
         subjects=subjects,
+    )
+
+
+def resolve_package_cohort(
+    repo_root: str | Path,
+    package: experiment_package,
+    selected_subject_ids: Iterable[str] = (),
+) -> experiment_cohort:
+    repo = Path(repo_root).expanduser().resolve()
+
+    for subject in package.contract["subjects"]:
+        _require_contract_llm_binding(repo, subject)
+
+    subject_ids = tuple(item["id"] for item in package.contract["subjects"])
+    subjects = _resolve_subjects(subject_ids, selected_subject_ids)
+    return experiment_cohort(
+        experiment_id=package.experiment_id,
+        canonical_contract=package.contract_path,
+        subjects=subjects,
+        package=package,
     )
 
 
@@ -266,13 +288,21 @@ def apply_cohort(
     contexts = []
     running: list[str] = []
     for subject in cohort.subjects:
-        context = build_subject_manager(
-            repo_root,
-            runtime_root,
-            subject.infrastructure_subject,
-            cohort.experiment_id,
-            subject.llm_baseline_id,
-        )
+        if cohort.package is not None:
+            context = build_package_subject_manager(
+                repo_root,
+                runtime_root,
+                subject.infrastructure_subject,
+                cohort.package,
+            )
+        else:
+            context = build_subject_manager(
+                repo_root,
+                runtime_root,
+                subject.infrastructure_subject,
+                cohort.experiment_id,
+                subject.llm_baseline_id,
+            )
         contexts.append((subject, context))
         if context.manager.docker.container_running():
             running.append(subject.subject_id)
@@ -307,7 +337,15 @@ def apply_cohort(
             subject,
             include_running=False,
         )
-        _require_applied_context(observed, cohort.experiment_id)
+        _require_applied_context(
+            observed,
+            cohort.experiment_id,
+            expected_package_sha256=(
+                cohort.package.package_sha256
+                if cohort.package is not None
+                else None
+            ),
+        )
         results.append(observed)
     return tuple(results)
 
@@ -918,6 +956,8 @@ def _apparatus_state(
 def _require_applied_context(
     observed: cohort_subject_status,
     experiment_id: str | None,
+    *,
+    expected_package_sha256: str | None = None,
 ) -> None:
     if observed.error is not None:
         raise infrastructure_error(
@@ -941,6 +981,13 @@ def _require_applied_context(
             f"Applied state for '{observed.subject_id}' has application scope "
             f"'{observed.application_scope}', expected 'experiment'."
         )
+    if expected_package_sha256 is not None:
+        if observed.package_sha256 != expected_package_sha256:
+            raise infrastructure_error(
+                f"Applied state for '{observed.subject_id}' reports Experiment "
+                f"Package SHA-256 '{observed.package_sha256}', expected "
+                f"'{expected_package_sha256}'."
+            )
     if observed.apparatus_state != "match":
         raise infrastructure_error(
             f"Applied state for '{observed.subject_id}' has apparatus state "

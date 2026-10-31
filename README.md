@@ -815,8 +815,25 @@ acmm env doctor
 acmm env stop
 ```
 
-`acmm env apply` resolves the experiment's canonical Contract and delegates to exactly the
-qualified subjects covered by that Contract. `acmm env status` discovers current deployment
+External Experiment Packages use the same lifecycle but begin from an explicit local package
+directory. Packages are validated, hashed, and staged into the ACMM runtime root before their
+runtime code or apparatus is consumed:
+
+```text
+acmm package validate ../acmm-experiments/minimal_agent_baseline_v1
+acmm package acquire ../acmm-experiments/minimal_agent_baseline_v1
+acmm env apply --package ../acmm-experiments/minimal_agent_baseline_v1
+acmm run --package ../acmm-experiments/minimal_agent_baseline_v1 --preview
+```
+
+`acmm env apply --package` and `acmm run --package` acquire the package automatically, so the
+standalone `package acquire` command is mainly useful when an operator wants to stage and inspect a
+package before deployment. Package sources are local filesystem directories; ACMM does not install
+them with `pip` or automatically download executable experiment code.
+
+`acmm env apply` resolves either a built-in experiment's canonical Contract or an acquired
+Experiment Package Contract and delegates to exactly the qualified subjects covered by that
+Contract. `acmm env status` discovers current deployment
 contexts without selecting an expected experiment, and plain `acmm env doctor` aggregates the
 same passive per-subject readiness checks used by the low-level infrastructure commands.
 `acmm env doctor --start-if-needed` may temporarily start stopped subjects one at a time, run the
@@ -933,14 +950,19 @@ acmm run experiments/examples/controlled_tool_use_multiscenario/experiment.yaml 
 
 Use `--preview` with the same selectors to validate and print the resolved run-index, subject,
 scenario, and repetition breakdown without creating an execution directory or contacting the
-subject runtimes. Preview also inspects the selected subjects' recorded deployment contexts;
-context mismatches are warnings in preview mode so planning remains available before deployment.
+subject runtimes. For an Experiment Package, preview still activates trusted package runtime code
+from the staged snapshot so harness compatibility and runtime declarations can be checked; use
+`acmm package validate` when package code must not be executed. Preview also inspects the selected
+subjects' recorded deployment contexts; context mismatches are warnings in preview mode so planning
+remains available before deployment.
 
 Before a real acquisition, `acmm run` performs deployment-context and live-readiness checks for
-exactly the selected subjects. The deployment-context layer requires the Contract experiment ID,
-full `experiment` application scope, and an apparatus SHA-256 matching the repository apparatus
-for that subject and experiment. Plain `acmm run` then requires every selected subject to already
-report `READY` through the same passive doctor logic used by `acmm-infra <subject> doctor`.
+exactly the selected subjects. Built-in experiments require the Contract experiment ID, full
+`experiment` application scope, and an apparatus SHA-256 matching the repository apparatus.
+Package-backed experiments additionally require the exact staged package, Contract, runtime, and
+per-subject apparatus identities recorded during deployment; a package may legitimately declare no
+apparatus for a subject. Plain `acmm run` then requires every selected subject to already report
+`READY` through the same passive doctor logic used by `acmm-infra <subject> doctor`.
 
 `acmm run --start-if-needed` grants a narrower lifecycle permission. Correctly deployed subjects
 that are stopped are marked deferred during initial live preflight and are started lazily when their
@@ -966,25 +988,29 @@ evidence, do not participate in compliance adjudication, and do not affect Contr
 hashes. A log-capture or metadata-write failure produces a warning but does not invalidate the
 experiment. Preview mode never creates diagnostic files.
 
-When the Contract path is omitted, `acmm run` can infer a built-in experiment from deployed
-subject contexts and load that experiment's canonical Contract from the experiment catalog:
+When the Contract path and `--package` are both omitted, `acmm run` can infer either a built-in
+experiment or an Experiment Package from deployed subject contexts:
 
 ```text
 acmm run --preview
 ```
 
 Inference requires one unambiguous deployed experiment ID across the contexts considered for
-resolution. Missing contexts do not invent another candidate, so a unique remaining experiment can
-still be resolved and then reported as not ready by normal preflight. Conflicting experiment IDs are
-an error even in preview mode because no canonical Contract can be chosen safely. Repeatable
+resolution. Package-backed contexts must additionally converge on one package SHA-256; mixed
+legacy/package state and differing package revisions are errors. A converged package is reopened
+from the immutable staged snapshot and therefore does not need to be registered in the built-in
+experiment catalog. Missing contexts do not invent another candidate, so a unique remaining
+experiment can still be resolved and then reported as not ready by normal preflight. Repeatable
 `--subject` selectors scope inference before the Contract is loaded; without them, all qualified
 subject deployments participate in experiment resolution.
 
-The command validates the Contract and harness compatibility, resolves each Contract subject
-through the qualified subject execution catalog, invokes the running `acmm-hermes` container
-with the explicit `acmm` toolset overlay, persists the exact Contract snapshot, Run Record, and
-evidence artifacts, and re-validates the persisted Run Record. Agent-specific runtime wiring
-stays in the subject catalog rather than in the top-level experiment CLI.
+The command validates the Contract and harness compatibility and resolves each Contract subject
+through the qualified subject execution catalog. Built-in experiments obtain fixtures/evaluators
+from the legacy experiment catalog; Experiment Packages activate their runtime only from the
+verified staged snapshot and compose it with the same core-owned subject adapters. Execution
+persists the exact Contract snapshot, Run Record, evidence artifacts, and package provenance when
+applicable, then re-validates the persisted Run Record. Agent-specific runtime wiring stays in the
+subject catalog rather than in experiment packages or the top-level experiment CLI.
 The subject catalog also declares which per-run termination controls each qualified runtime can
 enforce. Execution fails before acquisition when a Contract requests an unsupported control.
 Hermes supports the current `max_steps` plus `timeout_seconds` policy; smoke-qualified Open WebUI

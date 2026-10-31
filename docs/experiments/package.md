@@ -920,3 +920,80 @@ path.
 EP-4 does not yet add `acmm env apply <package-path>`, `acmm run <package-path>`, package discovery,
 or package provenance to execution result manifests. Those are integration responsibilities for the
 next milestone rather than deployment-state concerns.
+
+## EP-5 implementation checkpoint
+
+EP-5 exposes the Experiment Package architecture through the normal ACMM researcher workflow while
+preserving the built-in experiment catalog as a legacy compatibility path.
+
+The top-level CLI now provides explicit package lifecycle commands:
+
+```text
+acmm package validate <package-directory>
+acmm package acquire <package-directory> [--runtime-root <root>]
+```
+
+`validate` parses the package manifest, validates the Contract, checks managed paths, and computes
+component/package digests without staging or executing package runtime code. `acquire` performs the
+same validation and then stages the immutable digest-addressed snapshot under
+`<runtime-root>/_experiment_packages/`. Both commands consume only explicit local filesystem paths;
+EP-5 does not introduce remote package discovery or downloading.
+
+Environment application accepts a package source directly:
+
+```text
+acmm env apply --package <package-directory>
+```
+
+The command acquires the package first, resolves its qualified Contract subjects and LLM baselines,
+and builds package-aware subject managers. `--package` and legacy `--experiment` are mutually
+exclusive, and neither package Contracts nor built-in experiment Contracts may be overridden by an
+independent `--llm-baseline` selection. Package-backed cohort application verifies the exact package
+SHA-256 after each subject is reconciled. Packages that declare no apparatus remain valid experiment
+contexts and therefore do not require a synthetic tool layer.
+
+Experiment execution accepts either an explicit package source or a package already represented by
+deployed subject state:
+
+```text
+acmm run --package <package-directory> --preview
+acmm run --package <package-directory>
+acmm run --preview
+```
+
+The explicit `--package` path validates/acquires the source, activates runtime code only from the
+staged snapshot, and composes the returned experiment runtime with core-owned subject adapters and
+LLM provenance overlays. A positional legacy Contract and `--package` cannot be combined.
+
+When neither a Contract nor `--package` is supplied, deployment-context inference now recognizes
+package provenance. If the selected contexts converge on one experiment ID and one package SHA-256,
+ACMM reopens that staged snapshot and runs it even when the experiment ID is absent from the built-in
+catalog. Mixed legacy/package state or differing package revisions are rejected rather than silently
+choosing one source.
+
+Package-aware execution preflight verifies the exact staged deployment identity for every selected
+subject:
+
+- experiment ID and full `experiment` application scope;
+- package schema version and package SHA-256;
+- Contract and runtime component SHA-256 values;
+- infrastructure/apparatus subject identity; and
+- apparatus component/deployed-source SHA-256 when apparatus exists.
+
+A package that intentionally declares no apparatus passes when both the package provenance and
+deployment state record no apparatus for that subject. Preview mode retains the existing warning-only
+preflight behavior and never contacts subject runtimes. Package preview does activate the package's
+trusted runtime code from the staged snapshot because ACMM must validate harness compatibility and
+construct the experiment-owned fixture/evaluator declarations; `acmm package validate` remains the
+non-executing package inspection path.
+
+Completed and interrupted execution manifests remain schema `0.1` and now optionally carry an
+`execution.package` mapping containing the package schema version, package SHA-256, Contract
+SHA-256, and runtime SHA-256. Built-in legacy executions omit this mapping, preserving their
+historical manifest shape while package-backed results bind execution evidence to the exact staged
+research artifact.
+
+EP-5 deliberately does not migrate the historical experiments out of the main repository or remove
+the built-in experiment catalog. The next milestone, EP-6, should prove the boundary by moving one
+representative experiment completely outside the main repo and exercising validation, acquisition,
+environment application, preview/execution resolution, and analysis from that external package.

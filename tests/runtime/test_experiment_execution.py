@@ -619,6 +619,12 @@ def test_keyboard_interrupt_persists_partial_session_without_completion_manifest
             now=_clock(),
             execution_id_factory=lambda: EXECUTION_ID,
             run_id_factory=_run_id_factory(),
+            package_provenance={
+                "schema_version": "0.1",
+                "sha256": "a" * 64,
+                "contract_sha256": "b" * 64,
+                "runtime_sha256": None,
+            },
         )
 
     result = captured.value.result
@@ -647,6 +653,12 @@ def test_keyboard_interrupt_persists_partial_session_without_completion_manifest
     assert execution["not_started_run_indices"] == [2, 3, 4]
     assert execution["interrupted_run_index"] == 1
     assert execution["interrupted_attempt"] == 1
+    assert execution["package"] == {
+        "schema_version": "0.1",
+        "sha256": "a" * 64,
+        "contract_sha256": "b" * 64,
+        "runtime_sha256": None,
+    }
     assert len(manifest["slots"]) == 2
     assert len(manifest["slots"][0]["attempts"]) == 1
     assert manifest["slots"][1]["attempts"] == []
@@ -692,3 +704,35 @@ def test_keyboard_interrupt_during_completion_manifest_becomes_interruption(
     assert result.interrupted_attempt is None
     assert result.interruption_path.is_file()
     assert not (result.session_dir / "experiment_execution.yaml").exists()
+
+
+def test_execution_manifest_records_experiment_package_provenance(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=_registry(sequence_adapter()),
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        sleep=lambda _: None,
+        run_indices=(0,),
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        package_provenance={
+            "schema_version": "0.1",
+            "sha256": "a" * 64,
+            "contract_sha256": "b" * 64,
+            "runtime_sha256": "c" * 64,
+        },
+    )
+
+    manifest = yaml.safe_load(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["execution"]["package"] == {
+        "schema_version": "0.1",
+        "sha256": "a" * 64,
+        "contract_sha256": "b" * 64,
+        "runtime_sha256": "c" * 64,
+    }
