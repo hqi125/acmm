@@ -736,3 +736,37 @@ def test_execution_manifest_records_experiment_package_provenance(
         "contract_sha256": "b" * 64,
         "runtime_sha256": "c" * 64,
     }
+
+
+def test_execution_manifest_records_deployment_reconciliation(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=_registry(sequence_adapter()),
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        sleep=lambda _: None,
+        run_indices=(0,),
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        deployment_reconciliation={
+            "permitted": True,
+            "initial_state": "divergent",
+            "performed": True,
+            "subjects": ["hermes_nemotron30b"],
+            "final_state": "ready",
+        },
+    )
+
+    manifest = yaml.safe_load(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["execution"]["deployment_reconciliation"] == {
+        "permitted": True,
+        "initial_state": "divergent",
+        "performed": True,
+        "subjects": ["hermes_nemotron30b"],
+        "final_state": "ready",
+    }

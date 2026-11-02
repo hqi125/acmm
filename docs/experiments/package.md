@@ -1108,3 +1108,41 @@ acmm run <experiment-selector> [execution controls]
 Raw Contract and schema paths remain available only where they are genuinely artifact-level or
 development concerns (for example dedicated record/schema validation code), not as alternate ways
 to select or execute an experiment.
+
+## Strict run with optional apply-if-needed checkpoint
+
+`acmm run` remains strict by default even though experiment identity is now explicit. A real run
+first inspects the selected subjects' package deployment context. If that context is already
+converged, execution proceeds through the normal live-readiness preflight with no reconciliation
+message or mutation. If deployment context diverges, plain `acmm run <selector>` aborts.
+
+`--apply-if-needed` is an explicit, narrowly scoped mutation permission. When the initial deployment
+preflight is not ready, `run` invokes the same package-cohort application machinery used by
+`acmm package apply`, but only for subjects required by the selected run set. The command then
+re-runs the strict deployment preflight from persisted state. Execution is still prohibited unless
+that second check is ready; a successful apply call is not treated as proof of convergence.
+
+`--preview` remains non-mutating. For divergent context it reports the deployment warnings and then
+states either that strict mode would fail or that `--apply-if-needed` would permit reconciliation
+before execution. Both messages are omitted when the selected context is already converged.
+
+When reconciliation is relevant to an execution, the execution manifest records whether permission
+was granted, whether reconciliation was performed, the affected selected subjects, and the final
+ready state. This keeps an already-converged execution distinguishable from one ACMM reconciled
+immediately before acquisition.
+
+The intended command relationship is therefore:
+
+```text
+acmm package apply <selector>
+    -> explicit preparation of the requested package/subject scope only
+
+acmm run <selector>
+    -> strict execution; fail on deployment divergence
+
+acmm run <selector> --apply-if-needed
+    -> reconcile selected execution subjects only when needed, verify again, then execute
+```
+
+This mirrors `--start-if-needed`: both options grant a specific remediation permission without
+weakening the final readiness requirement.

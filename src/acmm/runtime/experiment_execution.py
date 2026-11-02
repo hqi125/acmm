@@ -130,6 +130,7 @@ def execute_experiment(
     after_run: Callable[[planned_run], None] | None = None,
     session_ready: Callable[[Path], None] | None = None,
     package_provenance: Mapping[str, str | None] | None = None,
+    deployment_reconciliation: Mapping[str, object] | None = None,
 ) -> experiment_execution_result:
     """
     Execute every selected planned slot in one experiment execution session.
@@ -322,6 +323,7 @@ def execute_experiment(
             selected_run_indices=selected_run_indices,
             subject_llm_baselines=subject_llm_baselines,
             package_provenance=package_provenance,
+            deployment_reconciliation=deployment_reconciliation,
             slots=tuple(slots),
             session_dir=session_dir,
         )
@@ -364,6 +366,7 @@ def execute_experiment(
             selected_run_indices=selected_run_indices,
             subject_llm_baselines=subject_llm_baselines,
             package_provenance=package_provenance,
+            deployment_reconciliation=deployment_reconciliation,
             slots=tuple(interruption_slots),
             interrupted_run_index=(
                 active_planned.run_index
@@ -493,6 +496,7 @@ def _build_interruption_manifest(
     selected_run_indices: tuple[int, ...],
     subject_llm_baselines: dict[str, str],
     package_provenance: Mapping[str, str | None] | None,
+    deployment_reconciliation: Mapping[str, object] | None,
     slots: tuple[slot_execution, ...],
     interrupted_run_index: int | None,
     interrupted_attempt: int | None,
@@ -546,6 +550,7 @@ def _build_interruption_manifest(
         ),
     }
     _attach_package_provenance(execution, package_provenance)
+    _attach_deployment_reconciliation(execution, deployment_reconciliation)
 
     return {
         "schema_version": "0.1",
@@ -567,6 +572,7 @@ def _build_manifest(
     selected_run_indices: tuple[int, ...],
     subject_llm_baselines: dict[str, str],
     package_provenance: Mapping[str, str | None] | None,
+    deployment_reconciliation: Mapping[str, object] | None,
     slots: tuple[slot_execution, ...],
     session_dir: Path,
 ) -> dict:
@@ -597,12 +603,22 @@ def _build_manifest(
         "unresolved_run_indices": unresolved,
     }
     _attach_package_provenance(execution, package_provenance)
+    _attach_deployment_reconciliation(execution, deployment_reconciliation)
 
     return {
         "schema_version": "0.1",
         "execution": execution,
         "slots": slot_records,
     }
+
+
+def _attach_deployment_reconciliation(
+    execution: dict,
+    reconciliation: Mapping[str, object] | None,
+) -> None:
+    if reconciliation is None:
+        return
+    execution["deployment_reconciliation"] = dict(reconciliation)
 
 
 def _attach_package_provenance(

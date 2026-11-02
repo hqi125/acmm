@@ -817,6 +817,9 @@ acmm package install ../acmm-experiments/minimal_agent_baseline_v1
 acmm package apply minimal_agent_baseline_v1
 acmm run minimal_agent_baseline_v1 --preview
 acmm run minimal_agent_baseline_v1
+
+# Or let run reconcile selected experiment context when needed:
+acmm run minimal_agent_baseline_v1 --apply-if-needed
 ```
 
 Experiment Package source directories are validated and copied into the ACMM-managed package store
@@ -970,13 +973,21 @@ subject runtimes. For an Experiment Package, preview still activates trusted pac
 from the staged snapshot so harness compatibility and runtime declarations can be checked; use
 `acmm package validate` when package code must not be executed. Preview also inspects the selected
 subjects' recorded deployment contexts; context mismatches are warnings in preview mode so planning
-remains available before deployment.
+remains available before deployment. When context is divergent, preview also reports whether strict
+mode would fail or whether `--apply-if-needed` grants permission to reconcile the selected subjects.
+Preview never performs that reconciliation.
 
 Before a real acquisition, `acmm run` performs package-deployment and live-readiness checks for
 exactly the selected subjects. The selected deployment must record the exact installed package,
 Contract, runtime, and per-subject apparatus identities; a package may legitimately declare no
-apparatus for a subject. Plain `acmm run` then requires every selected subject to already report
-`READY` through the same passive doctor logic used by `acmm-infra <subject> doctor`.
+apparatus for a subject. Plain `acmm run` remains strict: deployment divergence aborts before an
+execution session is created. `--apply-if-needed` grants permission to run the same package-apply
+workflow for only the subjects required by the selected run set. ACMM then repeats the strict
+deployment preflight from persisted state; execution remains blocked unless that second preflight
+passes.
+
+After deployment provenance is ready, every selected subject must report `READY` through the same
+passive doctor logic used by `acmm-infra <subject> doctor`.
 
 `acmm run --start-if-needed` grants a narrower lifecycle permission. Correctly deployed subjects
 that are stopped are marked deferred during initial live preflight and are started lazily when their

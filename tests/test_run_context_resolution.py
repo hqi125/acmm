@@ -7,6 +7,10 @@ import pytest
 
 from acmm.cli import _build_parser
 from acmm.experiment_package import install_experiment_package
+from acmm.live_preflight import (
+    live_readiness_preflight_result,
+    subject_live_readiness,
+)
 from acmm.subjects.catalog import lookup_subject_execution_binding
 from acmm_infra.deployment import write_experiment_apparatus_state
 from experiment_package.support import (
@@ -197,3 +201,163 @@ def test_parser_rejects_retired_raw_contract_commands(command: str) -> None:
     with pytest.raises(SystemExit) as exc_info:
         parser.parse_args([command, str(CONTRACT)])
     assert exc_info.value.code == 2
+
+
+def test_run_preview_reports_strict_failure_for_diverged_context(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=MAGIC_RUNTIME_SOURCE,
+    )
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        ["run", EXPERIMENT_ID, "--subject", SUBJECT_ID, "--preview"]
+    )
+
+    assert args.handler(args) == 0
+    captured = capsys.readouterr()
+    assert "context:           not-ready" in captured.out
+    assert "reconciliation is not permitted" in captured.err
+    assert "Execution would fail in strict mode" in captured.err
+    assert "--apply-if-needed" not in captured.out
+
+
+def test_run_preview_reports_permitted_reconciliation_without_mutation(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    package, runtime_root = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=MAGIC_RUNTIME_SOURCE,
+    )
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            EXPERIMENT_ID,
+            "--subject",
+            SUBJECT_ID,
+            "--preview",
+            "--apply-if-needed",
+        ]
+    )
+
+    assert args.handler(args) == 0
+    captured = capsys.readouterr()
+    assert "context:           not-ready" in captured.out
+    assert "reconciliation is permitted by --apply-if-needed" in captured.out
+    assert "followed by a second strict deployment preflight" in captured.out
+    assert "reconciliation is not permitted" not in captured.err
+
+    binding = lookup_subject_execution_binding(SUBJECT_ID)
+    assert binding is not None
+    assert not (runtime_root / binding.infrastructure_subject).exists()
+    assert package.root.exists()
+
+
+def test_run_apply_if_needed_reconciles_only_selected_subjects_and_rechecks(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=MAGIC_RUNTIME_SOURCE,
+    )
+    selected: list[tuple[str, ...]] = []
+
+    def fake_apply_selected_package_context(**kwargs) -> None:
+        selected.append(kwargs["selected_subject_ids"])
+
+    monkeypatch.setattr(
+        "acmm.cli._apply_selected_package_context",
+        fake_apply_selected_package_context,
+    )
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            EXPERIMENT_ID,
+            "--subject",
+            SUBJECT_ID,
+            "--apply-if-needed",
+        ]
+    )
+
+    assert args.handler(args) == 2
+    captured = capsys.readouterr()
+    assert selected == [(SUBJECT_ID,)]
+    assert "Experiment context is not converged" in captured.out
+    assert "Deployment context preflight after reconciliation:" in captured.out
+    assert "Deployment context preflight failed" in captured.err
+    assert "no execution session was created" in captured.err
+
+
+def test_run_apply_if_needed_requires_successful_second_preflight(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    package, runtime_root = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=MAGIC_RUNTIME_SOURCE,
+    )
+
+    def fake_apply_selected_package_context(**kwargs) -> None:
+        assert kwargs["selected_subject_ids"] == (SUBJECT_ID,)
+        write_package_context(package, runtime_root, SUBJECT_ID)
+
+    binding = lookup_subject_execution_binding(SUBJECT_ID)
+    assert binding is not None
+
+    def fake_live_readiness(**kwargs):
+        return live_readiness_preflight_result(
+            subjects=(
+                subject_live_readiness(
+                    subject_id=SUBJECT_ID,
+                    infrastructure_subject=binding.infrastructure_subject,
+                    experiment_id=EXPERIMENT_ID,
+                    checks=(),
+                    error="test stop after deployment reconciliation",
+                ),
+            )
+        )
+
+    monkeypatch.setattr(
+        "acmm.cli._apply_selected_package_context",
+        fake_apply_selected_package_context,
+    )
+    monkeypatch.setattr("acmm.cli.inspect_live_readiness", fake_live_readiness)
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            EXPERIMENT_ID,
+            "--subject",
+            SUBJECT_ID,
+            "--apply-if-needed",
+        ]
+    )
+
+    assert args.handler(args) == 2
+    captured = capsys.readouterr()
+    assert "Deployment context preflight after reconciliation:" in captured.out
+    assert "context:           ready" in captured.out
+    assert "Deployment context preflight failed" not in captured.err
+    assert "Live readiness preflight failed" in captured.err

@@ -249,14 +249,21 @@ Contract plan order, not command-line selector order.
 
 `--preview` resolves the same filters and prints a compact subject/scenario/repetition breakdown
 without constructing runtime adapters or creating result artifacts. It also inspects recorded
-experiment deployment contexts for the selected subjects, but reports mismatches as warnings so
-preview remains usable before infrastructure preparation. Omit both selector types to execute the
-entire Contract plan.
+experiment deployment contexts for the selected subjects. A mismatch is reported as a warning;
+preview then states whether strict mode would fail or `--apply-if-needed` would permit reconciliation.
+Preview never mutates deployment state. Omit both selector types to execute the entire Contract plan.
 
-A real execution first requires every selected subject deployment to record the exact selected
-Experiment Package identity and the expected package apparatus identity, if any. `acmm run` then
-executes the same passive doctor logic used by `acmm-infra <subject> doctor` and requires every
-selected runtime to be live and `READY` before adapter construction or execution session creation.
+A real execution first checks that every selected subject deployment records the exact selected
+Experiment Package identity and expected package apparatus identity, if any. Plain `acmm run` is
+strict and aborts on deployment divergence. With `--apply-if-needed`, ACMM may apply the selected
+package to only the subjects required by the selected run set. After that workflow returns, ACMM
+re-reads persisted deployment state and runs the same strict deployment preflight again. The apply
+return value alone is never sufficient; failure of the second preflight aborts before session
+creation.
+
+Once deployment provenance is ready, `acmm run` executes the same passive doctor logic used by
+`acmm-infra <subject> doctor` and requires every selected runtime to be live and `READY` before
+adapter construction or execution session creation.
 
 `--start-if-needed` changes only the stopped-runtime case. After provenance succeeds, already
 running subjects are still doctor-checked immediately; a running-but-unhealthy subject remains a
@@ -269,8 +276,8 @@ execution failure. `--startup-timeout-seconds` controls the startup allowance.
 
 Repository/runtime roots are not `acmm run` options. Repository location is infrastructure-owned,
 and `ACMM_RUNTIME_ROOT` selects a non-default runtime/package store when needed. `--preview` stops
-after local context inspection and does not contact or start agent runtimes, even when
-`--start-if-needed` is supplied.
+after local context inspection and does not apply experiment context, contact agent runtimes, or
+start agent runtimes, even when `--apply-if-needed` or `--start-if-needed` is supplied.
 
 `--capture-runtime-logs` is an opt-in diagnostic channel. For each subject lease used by the
 execution, ACMM requests timestamped Docker logs bounded by the lease/acquisition start and captures

@@ -61,6 +61,7 @@ from acmm.runtime.planner import (
 )
 from acmm.runtime.result_store import result_write_error
 from acmm.validation import validation_result
+from acmm_infra.cohort import apply_cohort, resolve_package_cohort
 from acmm_infra.common import infrastructure_error
 from acmm_infra.docker import docker_error
 from acmm_infra.profiles.llm import (
@@ -317,8 +318,9 @@ def _print_deployment_preflight(
     result: deployment_preflight_result,
     *,
     warning_only: bool,
+    title: str = "Deployment context preflight",
 ) -> None:
-    print("Deployment context preflight:")
+    print(f"{title}:")
 
     for subject in result.subjects:
         experiment = subject.experiment_id or "none"
@@ -603,6 +605,37 @@ def _resolve_run_package(
     return package
 
 
+def _apply_selected_package_context(
+    *,
+    repo_root: Path,
+    runtime_root: Path,
+    package: experiment_package,
+    selected_subject_ids: tuple[str, ...],
+) -> None:
+    cohort = resolve_package_cohort(
+        repo_root,
+        package,
+        selected_subject_ids,
+    )
+
+    def progress(index, total, subject, payload) -> None:
+        if index is not None:
+            print()
+            print(f"[apply {index}/{total}] {subject.subject_id}")
+            print(f"  infrastructure: {subject.infrastructure_subject}")
+            print("  provisioning:")
+            return
+        print(f"    {payload}", flush=True)
+
+    apply_cohort(
+        repo_root,
+        runtime_root,
+        cohort,
+        timeout_seconds=120.0,
+        progress=progress,
+    )
+
+
 def _run_experiment(args: argparse.Namespace) -> int:
     schema_path = _default_contract_schema_path()
     repo_root = default_repo_root().expanduser().resolve()
@@ -700,19 +733,82 @@ def _run_experiment(args: argparse.Namespace) -> int:
         package=package,
         subject_bindings=subject_bindings,
     )
-
-    _print_deployment_preflight(
-        deployment_preflight,
-        warning_only=args.preview,
-    )
+    initial_deployment_ready = deployment_preflight.is_ready
+    reconciliation_performed = False
 
     if args.preview:
+        _print_deployment_preflight(
+            deployment_preflight,
+            warning_only=True,
+        )
+        if not deployment_preflight.is_ready:
+            if args.apply_if_needed:
+                print(
+                    "INFO: Experiment context reconciliation is permitted by "
+                    "--apply-if-needed. The selected subject context would be "
+                    "applied before execution and followed by a second strict "
+                    "deployment preflight."
+                )
+            else:
+                print(
+                    "WARNING: Experiment context reconciliation is not permitted. "
+                    "Execution would fail in strict mode.",
+                    file=sys.stderr,
+                )
         _print_run_selection_preview(
             plan,
             selected_runs,
             subject_runtime_details,
         )
         return 0
+
+    if not deployment_preflight.is_ready and args.apply_if_needed:
+        _print_deployment_preflight(
+            deployment_preflight,
+            warning_only=True,
+        )
+        print(
+            "INFO: Experiment context is not converged; --apply-if-needed permits "
+            "ACMM to apply the selected Experiment Package context before "
+            "execution."
+        )
+        try:
+            _apply_selected_package_context(
+                repo_root=repo_root,
+                runtime_root=runtime_root,
+                package=package,
+                selected_subject_ids=selected_subject_ids,
+            )
+            reconciliation_performed = True
+        except (
+            infrastructure_error,
+            profile_error,
+            docker_error,
+            OSError,
+            ValueError,
+        ) as exc:
+            print(
+                f"ERROR: Experiment context reconciliation failed: {exc}",
+                file=sys.stderr,
+            )
+            print("ERROR: No execution session was created.", file=sys.stderr)
+            return 2
+
+        deployment_preflight = inspect_package_deployment_contexts(
+            runtime_root=runtime_root,
+            package=package,
+            subject_bindings=subject_bindings,
+        )
+        _print_deployment_preflight(
+            deployment_preflight,
+            warning_only=False,
+            title="Deployment context preflight after reconciliation",
+        )
+    else:
+        _print_deployment_preflight(
+            deployment_preflight,
+            warning_only=False,
+        )
 
     if not deployment_preflight.is_ready:
         print(
@@ -950,6 +1046,23 @@ def _run_experiment(args: argparse.Namespace) -> int:
             ),
             session_ready=session_ready if args.capture_runtime_logs else None,
             package_provenance=_execution_package_provenance(package),
+            deployment_reconciliation=(
+                {
+                    "permitted": bool(args.apply_if_needed),
+                    "initial_state": (
+                        "ready" if initial_deployment_ready else "divergent"
+                    ),
+                    "performed": reconciliation_performed,
+                    "subjects": (
+                        list(selected_subject_ids)
+                        if reconciliation_performed
+                        else []
+                    ),
+                    "final_state": "ready",
+                }
+                if args.apply_if_needed or reconciliation_performed
+                else None
+            ),
         )
     except experiment_execution_interrupted as exc:
         capture_runtime_log(active_subject_id[0])
@@ -1528,6 +1641,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Validate and print the resolved run selection without creating an "
             "execution session or contacting subject runtimes."
+        ),
+    )
+    run_parser.add_argument(
+        "--apply-if-needed",
+        action="store_true",
+        help=(
+            "For real execution, permit ACMM to reconcile selected subject "
+            "experiment context when deployment preflight is not ready. A "
+            "second strict deployment preflight must pass before execution."
         ),
     )
     run_parser.add_argument(
