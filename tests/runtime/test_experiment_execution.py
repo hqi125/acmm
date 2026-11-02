@@ -770,3 +770,78 @@ def test_execution_manifest_records_deployment_reconciliation(
         "subjects": ["hermes_nemotron30b"],
         "final_state": "ready",
     }
+
+
+def test_execution_manifest_records_best_effort_provider_usage(
+    tmp_path: Path,
+) -> None:
+    class fake_usage_monitor:
+        def __init__(self) -> None:
+            self.started = False
+
+        def begin(self) -> None:
+            self.started = True
+
+        def finish(self):
+            assert self.started
+            return {
+                "test_provider": {
+                    "status": "available",
+                    "request_count": 7,
+                }
+            }
+
+    monitor = fake_usage_monitor()
+    result = execute_experiment(
+        contract=load_contract(CONTRACT_PATH),
+        contract_path=CONTRACT_PATH,
+        registry=_registry(sequence_adapter()),
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        sleep=lambda _: None,
+        run_indices=(0,),
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        provider_usage_monitor=monitor,
+    )
+
+    manifest = yaml.safe_load(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["execution"]["provider_usage"] == {
+        "test_provider": {
+            "status": "available",
+            "request_count": 7,
+        }
+    }
+
+
+def test_provider_usage_monitor_failure_does_not_invalidate_execution(
+    tmp_path: Path,
+) -> None:
+    messages: list[str] = []
+
+    class failing_usage_monitor:
+        def begin(self) -> None:
+            raise RuntimeError("telemetry offline")
+
+        def finish(self):
+            raise AssertionError("finish must not run after begin fails")
+
+    result = execute_experiment(
+        contract=load_contract(CONTRACT_PATH),
+        contract_path=CONTRACT_PATH,
+        registry=_registry(sequence_adapter()),
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        sleep=lambda _: None,
+        run_indices=(0,),
+        progress=messages.append,
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        provider_usage_monitor=failing_usage_monitor(),
+    )
+
+    manifest = yaml.safe_load(result.manifest_path.read_text(encoding="utf-8"))
+    assert "provider_usage" not in manifest["execution"]
+    assert any("telemetry unavailable" in message for message in messages)

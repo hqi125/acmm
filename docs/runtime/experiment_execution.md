@@ -95,6 +95,17 @@ always a new execution session.
 The completion manifest itself is written through a temporary sibling file followed by an
 atomic replacement.
 
+The YAML manifest structure is defined by the versioned JSON Schema shipped with ACMM Core:
+
+```text
+src/acmm/runtime/schemas/experiment-execution-v0.1.schema.json
+```
+
+`experiment_execution.yaml` remains the persisted researcher-facing artifact. JSON Schema is the
+structural definition of that parsed YAML object; it is not a new researcher-facing JSON format and
+does not add a new execution validity gate. The runtime schema version is centralized in
+`acmm.runtime.execution_manifest`.
+
 `execution_summary.txt` is a researcher-facing CLI report, not a scientific completion marker.
 After persisted Run Records are re-validated, `acmm run` writes the detailed per-run summary to
 this file instead of replaying every judgment and final response to the terminal. The report can
@@ -161,6 +172,26 @@ execution.pacing.inter_run_delay_seconds
 
 The delay is deterministic rather than randomized. This keeps provider-facing request
 bursts conservative while preserving straightforward experimental reproducibility.
+
+## Provider usage observability
+
+When selected subjects use an Ollama Cloud LLM baseline, `acmm run` creates a best-effort Ollama
+Cloud usage monitor. If `OLLAMA_API_KEY` is available, ACMM samples the official cloud usage API
+immediately before and after experiment-level execution and stores the normalized snapshots plus
+account/model deltas under `execution.provider_usage.ollama_cloud`. The usage API calls occur
+outside the execution start/end timestamps so telemetry latency does not inflate recorded execution
+duration.
+
+If the API key is absent, the API is unreachable, authentication fails, or the response cannot be
+interpreted, experiment acquisition continues normally. Telemetry is diagnostic provenance only; it
+never affects Run Record validity, ACMM judgments, dimension scores, availability analysis, or retry
+policy.
+
+The usage endpoint is account-scoped rather than execution-scoped. Concurrent Ollama activity may
+therefore contaminate the before/after delta. Per-model groups may also be absent when the provider
+omits a model from its returned group limit, and a rolling-window boundary can change account
+totals during a long execution. ACMM preserves the before/after observations and marks incomplete
+per-model deltas rather than treating them as exact experimental measurements.
 
 ## Retry semantics
 

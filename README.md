@@ -24,6 +24,8 @@ The repository currently contains Experiment Contract v0.1, including:
 - installed Experiment Package validation, installation, deployment, and execution commands;
 - the separate `acmm-infra` deployment/inspection command.
 
+The CLI ownership boundary is summarized in `docs/runtime/cli.md`.
+
 The Experiment Package architecture is specified in `docs/experiments/package.md`. Experiment
 Packages are now the sole researcher-facing experiment identity: raw Experiment Contracts remain
 package components and internal validation artifacts rather than standalone executable experiments.

@@ -1,0 +1,414 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acmm.local/schemas/experiment-execution-v0.1.schema.json",
+  "title": "ACMM Experiment Execution Manifest v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "execution",
+    "slots"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "execution": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/completedExecution"
+        },
+        {
+          "$ref": "#/$defs/interruptedExecution"
+        }
+      ]
+    },
+    "slots": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/slot"
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "indexArray": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/nonNegativeInteger"
+      }
+    },
+    "subjectLlmBaselines": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "pacing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inter_run_delay_seconds"
+      ],
+      "properties": {
+        "inter_run_delay_seconds": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "sha256",
+        "contract_sha256",
+        "runtime_sha256"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "contract_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runtime_sha256": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sha256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "deploymentReconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "permitted",
+        "initial_state",
+        "performed",
+        "subjects",
+        "final_state"
+      ],
+      "properties": {
+        "permitted": {
+          "type": "boolean"
+        },
+        "initial_state": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "divergent"
+          ]
+        },
+        "performed": {
+          "type": "boolean"
+        },
+        "subjects": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "final_state": {
+          "type": "string",
+          "const": "ready"
+        }
+      }
+    },
+    "completedExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "experiment_id",
+        "contract_sha256",
+        "harness_version",
+        "subject_llm_baselines",
+        "started_at",
+        "ended_at",
+        "max_attempts_per_run",
+        "pacing",
+        "contract_run_count",
+        "selected_run_indices",
+        "planned_run_count",
+        "resolved_run_count",
+        "unresolved_run_indices"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "experiment_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contract_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "harness_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subject_llm_baselines": {
+          "$ref": "#/$defs/subjectLlmBaselines"
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "ended_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "max_attempts_per_run": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "pacing": {
+          "$ref": "#/$defs/pacing"
+        },
+        "contract_run_count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "selected_run_indices": {
+          "$ref": "#/$defs/indexArray"
+        },
+        "planned_run_count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "resolved_run_count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "unresolved_run_indices": {
+          "$ref": "#/$defs/indexArray"
+        },
+        "package": {
+          "$ref": "#/$defs/package"
+        },
+        "deployment_reconciliation": {
+          "$ref": "#/$defs/deploymentReconciliation"
+        },
+        "provider_usage": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "interruptedExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "experiment_id",
+        "contract_sha256",
+        "harness_version",
+        "subject_llm_baselines",
+        "status",
+        "interrupt_kind",
+        "started_at",
+        "interrupted_at",
+        "max_attempts_per_run",
+        "pacing",
+        "contract_run_count",
+        "selected_run_indices",
+        "selected_run_count",
+        "started_run_indices",
+        "resolved_run_indices",
+        "unresolved_run_indices",
+        "not_started_run_indices",
+        "interrupted_run_index",
+        "interrupted_attempt",
+        "persisted_attempt_count"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "experiment_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contract_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "harness_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subject_llm_baselines": {
+          "$ref": "#/$defs/subjectLlmBaselines"
+        },
+        "status": {
+          "const": "interrupted"
+        },
+        "interrupt_kind": {
+          "const": "keyboard_interrupt"
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "interrupted_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "max_attempts_per_run": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "pacing": {
+          "$ref": "#/$defs/pacing"
+        },
+        "contract_run_count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "selected_run_indices": {
+          "$ref": "#/$defs/indexArray"
+        },
+        "selected_run_count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "started_run_indices": {
+          "$ref": "#/$defs/indexArray"
+        },
+        "resolved_run_indices": {
+          "$ref": "#/$defs/indexArray"
+        },
+        "unresolved_run_indices": {
+          "$ref": "#/$defs/indexArray"
+        },
+        "not_started_run_indices": {
+          "$ref": "#/$defs/indexArray"
+        },
+        "interrupted_run_index": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/nonNegativeInteger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interrupted_attempt": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "persisted_attempt_count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "package": {
+          "$ref": "#/$defs/package"
+        },
+        "deployment_reconciliation": {
+          "$ref": "#/$defs/deploymentReconciliation"
+        },
+        "provider_usage": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_index",
+        "subject_id",
+        "scenario_id",
+        "repetition",
+        "attempts",
+        "selected_run_id"
+      ],
+      "properties": {
+        "run_index": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "subject_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scenario_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repetition": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/attempt"
+          }
+        },
+        "selected_run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt",
+        "run_id",
+        "validity",
+        "termination",
+        "result_path"
+      ],
+      "properties": {
+        "attempt": {
+          "$ref": "#/$defs/positiveInteger"
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "validity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "termination": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result_path": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import io
+import json
+
+from acmm.runtime.provider_usage import ollama_cloud_usage_monitor
+
+
+class _response(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
+        return False
+
+
+def _clock():
+    current = datetime(2026, 11, 2, 20, 0, 0, tzinfo=timezone.utc)
+
+    def now():
+        nonlocal current
+        value = current
+        current += timedelta(seconds=1)
+        return value
+
+    return now
+
+
+def test_ollama_usage_monitor_computes_account_and_model_deltas() -> None:
+    payloads = [
+        {
+            "totals": {
+                "request_count": 100,
+                "usage_usd": 1.0,
+                "input_tokens": 1000,
+                "cached_input_tokens": 200,
+                "output_tokens": 300,
+                "groups": [
+                    {
+                        "model": "gpt-oss:120b-cloud",
+                        "request_count": 80,
+                        "usage_usd": 0.8,
+                        "input_tokens": 800,
+                        "cached_input_tokens": 160,
+                        "output_tokens": 240,
+                    }
+                ],
+            }
+        },
+        {
+            "totals": {
+                "request_count": 107,
+                "usage_usd": 1.08,
+                "input_tokens": 1600,
+                "cached_input_tokens": 260,
+                "output_tokens": 410,
+                "groups": [
+                    {
+                        "model": "gpt-oss:120b-cloud",
+                        "request_count": 87,
+                        "usage_usd": 0.88,
+                        "input_tokens": 1400,
+                        "cached_input_tokens": 220,
+                        "output_tokens": 350,
+                    }
+                ],
+            }
+        },
+    ]
+    requests = []
+
+    def opener(request, *, timeout):
+        requests.append((request, timeout))
+        return _response(json.dumps(payloads.pop(0)).encode("utf-8"))
+
+    monitor = ollama_cloud_usage_monitor(
+        ("gpt-oss:120b-cloud",),
+        api_key="test-key",
+        opener=opener,
+        now=_clock(),
+    )
+    monitor.begin()
+    report = monitor.finish()["ollama_cloud"]
+
+    assert report["status"] == "available"
+    assert report["account_delta"]["request_count"] == 7
+    assert report["account_delta"]["input_tokens"] == 600
+    model = report["models"]["gpt-oss:120b-cloud"]
+    assert model["complete"] is True
+    assert model["delta"]["request_count"] == 7
+    assert len(requests) == 2
+    assert requests[0][0].get_header("Authorization") == "Bearer test-key"
+    assert "group_by=model" in requests[0][0].full_url
+
+
+def test_ollama_usage_monitor_is_unavailable_without_api_key() -> None:
+    monitor = ollama_cloud_usage_monitor(
+        ("gpt-oss:120b-cloud",),
+        api_key="",
+        now=_clock(),
+    )
+    monitor.begin()
+    report = monitor.finish()["ollama_cloud"]
+
+    assert report["status"] == "unavailable"
+    assert report["before"]["error"] == "OLLAMA_API_KEY is not set"
+    assert report["after"]["error"] == "OLLAMA_API_KEY is not set"
+    assert report["account_delta"] is None
+
+
+def test_ollama_usage_monitor_marks_missing_model_group_incomplete() -> None:
+    payload = {
+        "totals": {
+            "request_count": 10,
+            "groups": [],
+        }
+    }
+
+    def opener(request, *, timeout):
+        del request, timeout
+        return _response(json.dumps(payload).encode("utf-8"))
+
+    monitor = ollama_cloud_usage_monitor(
+        ("gpt-oss:120b-cloud",),
+        api_key="test-key",
+        opener=opener,
+        now=_clock(),
+    )
+    monitor.begin()
+    report = monitor.finish()["ollama_cloud"]
+
+    model = report["models"]["gpt-oss:120b-cloud"]
+    assert model["complete"] is False
+    assert model["delta"] is None

@@ -12,6 +12,17 @@ from acmm.runtime.planner import build_experiment_plan
 from acmm.validation import validation_issue, validation_result, split_issues
 
 
+def default_run_record_schema_path() -> Path:
+    """Return the repository Run Record v0.1 schema used by ACMM Core."""
+
+    return (
+        Path(__file__).resolve().parents[3]
+        / "records"
+        / "v0_1"
+        / "run_record.schema.json"
+    )
+
+
 def load_run_record_schema(path: str | Path) -> dict[str, Any]:
     schema_path = Path(path)
 

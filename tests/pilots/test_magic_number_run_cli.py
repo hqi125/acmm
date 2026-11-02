@@ -129,6 +129,7 @@ def test_run_command_executes_one_magic_number_slot(
     monkeypatch,
     capsys,
 ) -> None:
+    monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     monkeypatch.setattr("acmm.cli.inspect_live_readiness", _ready_live_preflight)
     package, runtime_root = install_test_package(
         tmp_path,
@@ -232,6 +233,10 @@ def test_run_command_executes_one_magic_number_slot(
     assert manifest["execution"]["pacing"] == {
         "inter_run_delay_seconds": 2.0,
     }
+    provider_usage = manifest["execution"]["provider_usage"]["ollama_cloud"]
+    assert provider_usage["status"] == "unavailable"
+    assert provider_usage["before"]["error"] == "OLLAMA_API_KEY is not set"
+    assert provider_usage["after"]["error"] == "OLLAMA_API_KEY is not set"
 
     run_dirs = list((execution_dir / "runs").glob("run_000000_*"))
     assert len(run_dirs) == 1

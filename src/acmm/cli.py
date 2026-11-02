@@ -3,16 +3,19 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from datetime import datetime, timezone
-import json
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import sys
-from typing import Any, TextIO
+from typing import Any
 
 from acmm.analysis.export import analysis_export_error, export_execution
 from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.contract.loader import contract_load_error, load_contract
-from acmm.contract.validator import load_schema, validate_contract
+from acmm.contract.validator import (
+    default_contract_schema_path,
+    load_schema,
+    validate_contract,
+)
 from acmm.deployment_preflight import (
     deployment_preflight_result,
     inspect_package_deployment_contexts,
@@ -40,6 +43,7 @@ from acmm.subjects.catalog import (
 )
 from acmm.record.loader import load_run_record, run_record_load_error
 from acmm.record.validator import (
+    default_run_record_schema_path,
     load_run_record_schema,
     sha256_file,
     validate_run_record,
@@ -54,10 +58,19 @@ from acmm.runtime.experiment_execution import (
     experiment_execution_result,
     experiment_interruption_result,
 )
+from acmm.runtime.execution_summary import (
+    format_execution_duration,
+    format_execution_timestamp,
+    write_execution_summary,
+    write_interruption_summary,
+)
+from acmm.runtime.provider_usage import ollama_cloud_usage_monitor
 from acmm.runtime.planner import (
     build_experiment_plan,
     experiment_plan,
     planned_run,
+    select_planned_runs,
+    selected_subject_ids as selected_subject_ids_for_runs,
 )
 from acmm.runtime.result_store import result_write_error
 from acmm.validation import validation_result
@@ -77,24 +90,6 @@ from acmm_infra.runtime_lifecycle import (
     discover_runtime_lease,
     subject_runtime_lease,
 )
-
-
-def _default_contract_schema_path() -> Path:
-    return (
-        Path(__file__).resolve().parents[2]
-        / "contracts"
-        / "v0_1"
-        / "contract.schema.json"
-    )
-
-
-def _default_run_record_schema_path() -> Path:
-    return (
-        Path(__file__).resolve().parents[2]
-        / "records"
-        / "v0_1"
-        / "run_record.schema.json"
-    )
 
 
 def _harness_version() -> str:
@@ -159,111 +154,6 @@ def _load_and_validate_contract(
 
     return contract, result, 0
 
-
-
-def _parse_run_index_selectors(
-    selectors: list[str] | None,
-    plan: experiment_plan,
-) -> set[int] | None:
-    if selectors is None:
-        return None
-
-    selected: set[int] = set()
-    maximum = plan.run_count - 1
-
-    for selector in selectors:
-        if selector.isdecimal():
-            start = int(selector)
-            end = start
-        else:
-            parts = selector.split("-")
-
-            if (
-                len(parts) != 2
-                or not parts[0].isdecimal()
-                or not parts[1].isdecimal()
-            ):
-                raise ValueError(
-                    "--run-index must be a non-negative index or inclusive "
-                    f"range START-END; got '{selector}'."
-                )
-
-            start = int(parts[0])
-            end = int(parts[1])
-
-            if start > end:
-                raise ValueError(
-                    "--run-index range start must not exceed its end; got "
-                    f"'{selector}'."
-                )
-
-        if start > maximum or end > maximum:
-            raise ValueError(
-                f"Run selector '{selector}' is outside the Contract plan "
-                f"range 0..{maximum}."
-            )
-
-        selected.update(range(start, end + 1))
-
-    return selected
-
-
-def _resolve_selected_runs(
-    plan: experiment_plan,
-    contract: dict[str, Any],
-    run_selectors: list[str] | None,
-    subject_selectors: list[str] | None,
-) -> tuple[planned_run, ...]:
-    selected_indices = _parse_run_index_selectors(run_selectors, plan)
-    selected_subjects = set(subject_selectors) if subject_selectors else None
-
-    if selected_subjects is not None:
-        contract_subjects = tuple(subject["id"] for subject in contract["subjects"])
-        unknown = sorted(selected_subjects - set(contract_subjects))
-
-        if unknown:
-            raise ValueError(
-                "Unknown --subject selection(s): "
-                + ", ".join(unknown)
-                + ". Contract subjects: "
-                + ", ".join(contract_subjects)
-                + "."
-            )
-
-    selected = tuple(
-        run
-        for run in plan.runs
-        if (
-            selected_indices is None
-            or run.run_index in selected_indices
-        )
-        and (
-            selected_subjects is None
-            or run.subject_id in selected_subjects
-        )
-    )
-
-    if not selected:
-        raise ValueError(
-            "Run selection is empty after applying --run-index and --subject "
-            "filters."
-        )
-
-    return selected
-
-
-def _selected_subject_ids(
-    selected_runs: tuple[planned_run, ...],
-) -> tuple[str, ...]:
-    ordered: list[str] = []
-    seen: set[str] = set()
-
-    for run in selected_runs:
-        if run.subject_id not in seen:
-            ordered.append(run.subject_id)
-            seen.add(run.subject_id)
-
-    return tuple(ordered)
 
 
 def _compact_integer_ranges(values: tuple[int, ...] | list[int]) -> str:
@@ -545,7 +435,7 @@ def _print_run_selection_preview(
     selected_runs: tuple[planned_run, ...],
     runtime_details: list[tuple[str, tuple[tuple[str, str], ...]]],
 ) -> None:
-    subject_ids = _selected_subject_ids(selected_runs)
+    subject_ids = selected_subject_ids_for_runs(selected_runs)
     run_indices = tuple(run.run_index for run in selected_runs)
     grouped: dict[tuple[str, str], list[planned_run]] = {}
 
@@ -637,7 +527,7 @@ def _apply_selected_package_context(
 
 
 def _run_experiment(args: argparse.Namespace) -> int:
-    schema_path = _default_contract_schema_path()
+    schema_path = default_contract_schema_path()
     repo_root = default_repo_root().expanduser().resolve()
     runtime_root = default_runtime_root().expanduser().resolve()
 
@@ -675,7 +565,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
     plan = build_experiment_plan(contract)
 
     try:
-        selected_runs = _resolve_selected_runs(
+        selected_runs = select_planned_runs(
             plan,
             contract,
             args.run_index,
@@ -686,7 +576,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
         return 2
 
     selected_indices = tuple(run.run_index for run in selected_runs)
-    selected_subject_ids = _selected_subject_ids(selected_runs)
+    selected_subject_ids = selected_subject_ids_for_runs(selected_runs)
     selected_subject_set = set(selected_subject_ids)
     subject_bindings = {}
     subject_runtime_details: list[
@@ -1000,16 +890,37 @@ def _run_experiment(args: argparse.Namespace) -> int:
         subject_id: subject_bindings[subject_id].adapter_builder()
         for subject_id in selected_subject_ids
     }
+    selected_baselines = {
+        subject_id: load_llm_baseline(
+            repo_root,
+            subject_bindings[subject_id].llm_baseline_id,
+        )
+        for subject_id in selected_subject_ids
+    }
     overlays = {
         subject_id: runtime_provenance_configuration(
-            load_llm_baseline(
-                repo_root,
-                subject_bindings[subject_id].llm_baseline_id,
-            ),
+            selected_baselines[subject_id],
             subject_bindings[subject_id].infrastructure_subject,
         )
         for subject_id in selected_subject_ids
     }
+    ollama_usage_models: list[str] = []
+    for subject_id in selected_subject_ids:
+        baseline = selected_baselines[subject_id]
+        if baseline.logical_provider != "ollama_cloud":
+            continue
+        if baseline.model_name not in ollama_usage_models:
+            ollama_usage_models.append(baseline.model_name)
+        if subject_bindings[subject_id].infrastructure_subject == "agent-zero":
+            utility_model = baseline.agent_zero.utility_model_name
+            if utility_model not in ollama_usage_models:
+                ollama_usage_models.append(utility_model)
+
+    provider_usage_monitor = (
+        ollama_cloud_usage_monitor(tuple(ollama_usage_models))
+        if ollama_usage_models
+        else None
+    )
     registry = compose_execution_registry(
         loaded_runtime.runtime,
         subject_adapters,
@@ -1046,6 +957,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
             ),
             session_ready=session_ready if args.capture_runtime_logs else None,
             package_provenance=_execution_package_provenance(package),
+            provider_usage_monitor=provider_usage_monitor,
             deployment_reconciliation=(
                 {
                     "permitted": bool(args.apply_if_needed),
@@ -1071,7 +983,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
         _validate_persisted_execution(result, contract)
 
         try:
-            summary_path = _write_interruption_summary(result)
+            summary_path = write_interruption_summary(result)
         except OSError as summary_exc:
             summary_path = None
             print(
@@ -1109,7 +1021,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
         return validation_status
 
     try:
-        summary_path = _write_execution_summary(result)
+        summary_path = write_execution_summary(result)
     except OSError as exc:
         summary_path = None
         print(
@@ -1142,7 +1054,7 @@ def _validate_persisted_execution(
 ) -> int:
     try:
         record_schema = load_run_record_schema(
-            _default_run_record_schema_path()
+            default_run_record_schema_path()
         )
     except (OSError, ValueError) as exc:
         print(
@@ -1180,65 +1092,6 @@ def _validate_persisted_execution(
     return 0
 
 
-def _write_interruption_summary(
-    result: experiment_interruption_result,
-) -> Path:
-    summary_path = result.session_dir / "execution_summary.txt"
-
-    with summary_path.open(
-        "x",
-        encoding="utf-8",
-        newline="\n",
-    ) as output:
-        print("Experiment execution interrupted by Ctrl+C.", file=output)
-        print(f"  session:       {result.session_dir}", file=output)
-        print(f"  interruption:  {result.interruption_path}", file=output)
-        print(
-            f"  started:       {_format_execution_timestamp(result.started_at)}",
-            file=output,
-        )
-        print(
-            f"  interrupted:   {_format_execution_timestamp(result.ended_at)}",
-            file=output,
-        )
-        print(
-            f"  duration:      {_format_execution_duration(result)}",
-            file=output,
-        )
-        print(
-            f"  selected:      {len(result.selected_run_indices)} "
-            f"of {result.contract_run_count}",
-            file=output,
-        )
-        print(
-            f"  resolved:      {len(result.resolved_run_indices)} "
-            f"of {len(result.selected_run_indices)} selected",
-            file=output,
-        )
-        print(
-            "  unfinished:    "
-            + _compact_integer_ranges(result.unresolved_run_indices),
-            file=output,
-        )
-
-        if result.interrupted_run_index is not None:
-            detail = f"run {result.interrupted_run_index}"
-
-            if result.interrupted_attempt is not None:
-                detail += f", attempt {result.interrupted_attempt}"
-
-            print(f"  interrupted at: {detail}", file=output)
-
-        print(
-            "  completion manifest: not written; interrupted executions are "
-            "not exportable as complete experiments.",
-            file=output,
-        )
-        _write_slot_summaries(result.slots, output)
-
-    return summary_path
-
-
 def _print_execution_interruption(
     result: experiment_interruption_result,
     summary_path: Path | None,
@@ -1274,145 +1127,11 @@ def _print_execution_interruption(
 
         print(f"  interrupted at: {detail}")
 
-    print(f"  started:       {_format_execution_timestamp(result.started_at)}")
-    print(f"  interrupted:   {_format_execution_timestamp(result.ended_at)}")
-    print(f"  duration:      {_format_execution_duration(result)}")
+    print(f"  started:       {format_execution_timestamp(result.started_at)}")
+    print(f"  interrupted:   {format_execution_timestamp(result.ended_at)}")
+    print(f"  duration:      {format_execution_duration(result)}")
     print("  completion manifest: not written")
     print("  continuation: unsupported; start a new execution instead")
-
-
-def _write_execution_summary(
-    result: experiment_execution_result,
-) -> Path:
-    summary_path = result.session_dir / "execution_summary.txt"
-
-    with summary_path.open(
-        "x",
-        encoding="utf-8",
-        newline="\n",
-    ) as output:
-        _write_execution_summary_content(result, output)
-
-    return summary_path
-
-
-def _write_execution_summary_content(
-    result: experiment_execution_result,
-    output: TextIO,
-) -> None:
-    print("Experiment execution persisted successfully.", file=output)
-    print(f"  session:   {result.session_dir}", file=output)
-    print(f"  manifest:  {result.manifest_path}", file=output)
-    print(
-        f"  started:   {_format_execution_timestamp(result.started_at)}",
-        file=output,
-    )
-    print(
-        f"  ended:     {_format_execution_timestamp(result.ended_at)}",
-        file=output,
-    )
-    print(
-        f"  duration:  {_format_execution_duration(result)}",
-        file=output,
-    )
-    print(
-        f"  selected:  {len(result.slots)} of {result.contract_run_count}",
-        file=output,
-    )
-    print(
-        f"  resolved:  "
-        f"{len(result.slots) - len(result.unresolved_run_indices)} "
-        f"of {len(result.slots)} selected",
-        file=output,
-    )
-
-    _write_slot_summaries(result.slots, output)
-
-
-def _write_slot_summaries(
-    slots: tuple[Any, ...],
-    output: TextIO,
-) -> None:
-    for slot in slots:
-        print(
-            f"  run {slot.planned.run_index}: "
-            f"subject={slot.planned.subject_id}, "
-            f"scenario={slot.planned.scenario_id}, "
-            f"repetition={slot.planned.repetition}",
-            file=output,
-        )
-
-        if not slot.attempts:
-            print("    no persisted attempt", file=output)
-            continue
-
-        for attempt in slot.attempts:
-            record_path = attempt.result_path / "run_record.yaml"
-            record = load_run_record(record_path)
-
-            print(
-                f"    attempt {attempt.attempt}: "
-                f"validity={attempt.validity}, "
-                f"termination={attempt.termination}",
-                file=output,
-            )
-            print(f"      record: {record_path}", file=output)
-
-            failure = record["execution"].get("failure")
-
-            if failure is not None:
-                print(
-                    f"      failure: {failure['kind']}: "
-                    f"{failure['message']}",
-                    file=output,
-                )
-
-            for judgment in record.get("judgments", []):
-                print(
-                    f"      judgment {judgment['opportunity_id']}: "
-                    f"{judgment['outcome']}",
-                    file=output,
-                )
-
-            _write_tool_evidence_summary(attempt.result_path, output)
-
-
-def _write_tool_evidence_summary(
-    run_dir: Path,
-    output: TextIO,
-) -> None:
-    tool_calls_path = run_dir / "evidence" / "tool_calls.json"
-    final_response_path = run_dir / "evidence" / "final_response.txt"
-
-    if tool_calls_path.is_file():
-        try:
-            tool_calls = json.loads(tool_calls_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-            tool_calls = None
-
-        if isinstance(tool_calls, list):
-            names = [
-                item.get("name")
-                for item in tool_calls
-                if isinstance(item, dict) and isinstance(item.get("name"), str)
-            ]
-            print(
-                "      tool calls: "
-                + (", ".join(names) if names else "none"),
-                file=output,
-            )
-
-    if final_response_path.is_file():
-        try:
-            final_response = final_response_path.read_text(
-                encoding="utf-8"
-            ).strip()
-        except (OSError, UnicodeDecodeError):
-            final_response = ""
-
-        if final_response:
-            one_line = " ".join(final_response.splitlines())
-            print(f"      final response: {one_line}", file=output)
 
 
 def _print_execution_completion(
@@ -1457,29 +1176,9 @@ def _print_execution_completion(
     if termination_summary:
         print(f"  terminations: {termination_summary}")
 
-    print(f"  started:      {_format_execution_timestamp(result.started_at)}")
-    print(f"  ended:        {_format_execution_timestamp(result.ended_at)}")
-    print(f"  duration:     {_format_execution_duration(result)}")
-
-
-def _format_execution_timestamp(value: datetime) -> str:
-    normalized = value.astimezone(timezone.utc)
-    return normalized.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-
-
-def _format_execution_duration(
-    result: experiment_execution_result | experiment_interruption_result,
-) -> str:
-    elapsed = result.ended_at - result.started_at
-    total_milliseconds = (
-        elapsed.days * 86_400_000
-        + elapsed.seconds * 1_000
-        + elapsed.microseconds // 1_000
-    )
-    hours, remainder = divmod(total_milliseconds, 3_600_000)
-    minutes, remainder = divmod(remainder, 60_000)
-    seconds, milliseconds = divmod(remainder, 1_000)
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+    print(f"  started:      {format_execution_timestamp(result.started_at)}")
+    print(f"  ended:        {format_execution_timestamp(result.ended_at)}")
+    print(f"  duration:     {format_execution_duration(result)}")
 
 
 def _run_export(args: argparse.Namespace) -> int:
@@ -1521,12 +1220,12 @@ def _run_validate_record(args: argparse.Namespace) -> int:
     contract_schema_path = (
         Path(args.contract_schema)
         if args.contract_schema is not None
-        else _default_contract_schema_path()
+        else default_contract_schema_path()
     )
     record_schema_path = (
         Path(args.record_schema)
         if args.record_schema is not None
-        else _default_run_record_schema_path()
+        else default_run_record_schema_path()
     )
 
     contract, _, status = _load_and_validate_contract(

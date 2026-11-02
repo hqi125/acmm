@@ -4,6 +4,8 @@ import argparse
 from pathlib import Path
 import sys
 
+from acmm.contract.validator import default_contract_schema_path
+
 from acmm.experiment_package.loader import experiment_package_error, load_experiment_package
 from acmm.experiment_package.model import experiment_package
 from acmm.experiment_package.staging import install_experiment_package
@@ -110,7 +112,7 @@ def run_package_validate(args: argparse.Namespace) -> int:
     try:
         package = load_experiment_package(
             Path(args.source),
-            contract_schema_path=_contract_schema_path(),
+            contract_schema_path=default_contract_schema_path(),
         )
     except (experiment_package_error, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -126,7 +128,7 @@ def run_package_install(args: argparse.Namespace) -> int:
         package = install_experiment_package(
             Path(args.source),
             default_runtime_root().expanduser().resolve(),
-            contract_schema_path=_contract_schema_path(),
+            contract_schema_path=default_contract_schema_path(),
         )
     except (experiment_package_error, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -145,7 +147,7 @@ def run_package_apply(args: argparse.Namespace) -> int:
         package = resolve_installed_experiment_package(
             runtime_root,
             args.selector,
-            contract_schema_path=_contract_schema_path(),
+            contract_schema_path=default_contract_schema_path(),
         )
         cohort = resolve_package_cohort(
             repo_root,
@@ -219,7 +221,7 @@ def run_package_uninstall(args: argparse.Namespace) -> int:
         package = resolve_installed_experiment_package(
             runtime_root,
             args.selector,
-            contract_schema_path=_contract_schema_path(),
+            contract_schema_path=default_contract_schema_path(),
         )
         references = package_deployment_references(
             default_repo_root(),
@@ -236,7 +238,7 @@ def run_package_uninstall(args: argparse.Namespace) -> int:
         installed = uninstall_experiment_package(
             runtime_root,
             args.selector,
-            contract_schema_path=_contract_schema_path(),
+            contract_schema_path=default_contract_schema_path(),
         )
     except (
         experiment_package_store_error,
@@ -279,7 +281,7 @@ def run_package_show(args: argparse.Namespace) -> int:
         package = resolve_installed_experiment_package(
             default_runtime_root().expanduser().resolve(),
             args.selector,
-            contract_schema_path=_contract_schema_path(),
+            contract_schema_path=default_contract_schema_path(),
         )
     except (experiment_package_store_error, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -289,15 +291,6 @@ def run_package_show(args: argparse.Namespace) -> int:
     _print_package_summary(package, installed=True)
     print(f"  selector:         {package.experiment_id}@{package.package_sha256[:12]}")
     return 0
-
-
-def _contract_schema_path() -> Path:
-    return (
-        Path(__file__).resolve().parents[3]
-        / "contracts"
-        / "v0_1"
-        / "contract.schema.json"
-    )
 
 
 def _add_subject_arguments(parser: argparse.ArgumentParser) -> None:

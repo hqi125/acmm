@@ -117,3 +117,108 @@ def _build_interleaved_coordinates(
         return
 
     raise ValueError(f"Unsupported scenario ordering {scenario_ordering!r}.")
+
+
+def parse_run_index_selectors(
+    selectors: list[str] | None,
+    plan: experiment_plan,
+) -> set[int] | None:
+    """Parse CLI-style run index/range selectors against one experiment plan."""
+
+    if selectors is None:
+        return None
+
+    selected: set[int] = set()
+    maximum = plan.run_count - 1
+
+    for selector in selectors:
+        if selector.isdecimal():
+            start = int(selector)
+            end = start
+        else:
+            parts = selector.split("-")
+
+            if (
+                len(parts) != 2
+                or not parts[0].isdecimal()
+                or not parts[1].isdecimal()
+            ):
+                raise ValueError(
+                    "--run-index must be a non-negative index or inclusive "
+                    f"range START-END; got '{selector}'."
+                )
+
+            start = int(parts[0])
+            end = int(parts[1])
+
+            if start > end:
+                raise ValueError(
+                    "--run-index range start must not exceed its end; got "
+                    f"'{selector}'."
+                )
+
+        if start > maximum or end > maximum:
+            raise ValueError(
+                f"Run selector '{selector}' is outside the Contract plan "
+                f"range 0..{maximum}."
+            )
+
+        selected.update(range(start, end + 1))
+
+    return selected
+
+
+def select_planned_runs(
+    plan: experiment_plan,
+    contract: dict[str, Any],
+    run_selectors: list[str] | None = None,
+    subject_selectors: list[str] | None = None,
+) -> tuple[planned_run, ...]:
+    """Apply deterministic run-index and subject filters to a plan."""
+
+    selected_indices = parse_run_index_selectors(run_selectors, plan)
+    selected_subjects = set(subject_selectors) if subject_selectors else None
+
+    if selected_subjects is not None:
+        contract_subjects = tuple(subject["id"] for subject in contract["subjects"])
+        unknown = sorted(selected_subjects - set(contract_subjects))
+
+        if unknown:
+            raise ValueError(
+                "Unknown --subject selection(s): "
+                + ", ".join(unknown)
+                + ". Contract subjects: "
+                + ", ".join(contract_subjects)
+                + "."
+            )
+
+    selected = tuple(
+        run
+        for run in plan.runs
+        if (selected_indices is None or run.run_index in selected_indices)
+        and (selected_subjects is None or run.subject_id in selected_subjects)
+    )
+
+    if not selected:
+        raise ValueError(
+            "Run selection is empty after applying --run-index and --subject "
+            "filters."
+        )
+
+    return selected
+
+
+def selected_subject_ids(
+    selected_runs: tuple[planned_run, ...],
+) -> tuple[str, ...]:
+    """Return selected subject IDs in first-run encounter order."""
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    for run in selected_runs:
+        if run.subject_id not in seen:
+            ordered.append(run.subject_id)
+            seen.add(run.subject_id)
+
+    return tuple(ordered)

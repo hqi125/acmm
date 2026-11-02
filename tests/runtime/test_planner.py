@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from acmm.contract.loader import load_contract
-from acmm.runtime.planner import build_experiment_plan
+from acmm.runtime.planner import build_experiment_plan, select_planned_runs
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -221,3 +221,25 @@ def test_cyclic_scenario_ordering_resets_as_a_deterministic_subject_phase() -> N
 
     assert starts == ["scenario_a", "scenario_b", "scenario_c"]
 
+
+
+def test_run_selection_intersects_ranges_and_subjects() -> None:
+    contract_path = (
+        ROOT
+        / "experiments"
+        / "examples"
+        / "controlled_tool_use_multiscenario"
+        / "experiment.yaml"
+    )
+    contract = load_contract(contract_path)
+    plan = build_experiment_plan(contract)
+
+    selected = select_planned_runs(
+        plan,
+        contract,
+        ["15-25", "20-30"],
+        ["open_webui_nemotron30b"],
+    )
+
+    assert [run.run_index for run in selected] == list(range(20, 31))
+    assert {run.subject_id for run in selected} == {"open_webui_nemotron30b"}

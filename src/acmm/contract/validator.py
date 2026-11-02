@@ -9,6 +9,17 @@ from jsonschema import Draft202012Validator
 
 from acmm.validation import validation_issue, validation_result, split_issues
 
+
+def default_contract_schema_path() -> Path:
+    """Return the repository Contract v0.1 schema used by ACMM Core."""
+
+    return (
+        Path(__file__).resolve().parents[3]
+        / "contracts"
+        / "v0_1"
+        / "contract.schema.json"
+    )
+
 def load_schema(path: str | Path) -> dict[str, Any]:
     schema_path = Path(path)
 

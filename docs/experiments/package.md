@@ -1146,3 +1146,20 @@ acmm run <selector> --apply-if-needed
 
 This mirrors `--start-if-needed`: both options grant a specific remediation permission without
 weakening the final readiness requirement.
+
+## EP-5H implementation checkpoint: core hardening and observability
+
+Before externalization, ACMM completed a deliberately bounded hardening pass:
+
+- scanned `src/acmm/cli.py` by responsibility and moved only logic with an existing clear owner;
+- moved run selection into `acmm.runtime.planner`;
+- centralized default Contract/Run Record schema locations in their validator modules;
+- moved human-readable execution-summary persistence into `acmm.runtime.execution_summary`;
+- defined `experiment_execution.yaml` with a versioned standalone JSON Schema while keeping YAML
+  as the persisted artifact;
+- added best-effort Ollama Cloud before/after usage telemetry for debugging/provenance only.
+
+This checkpoint is intentionally not a new architecture stage. It is the final core cleanup before
+EP-6 externalization, and further framework polishing should be justified by problems found during
+externalization or substantive experiments rather than by code tidiness alone.
+

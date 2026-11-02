@@ -13,7 +13,9 @@ import uuid
 import yaml
 
 from acmm.runtime.execution import execute_planned_run
+from acmm.runtime.execution_manifest import EXPERIMENT_EXECUTION_SCHEMA_VERSION
 from acmm.runtime.planner import build_experiment_plan, planned_run
+from acmm.runtime.provider_usage import execution_provider_usage_monitor
 from acmm.runtime.registry import execution_registry
 from acmm.runtime.result_store import persist_executed_run_to
 
@@ -131,6 +133,7 @@ def execute_experiment(
     session_ready: Callable[[Path], None] | None = None,
     package_provenance: Mapping[str, str | None] | None = None,
     deployment_reconciliation: Mapping[str, object] | None = None,
+    provider_usage_monitor: execution_provider_usage_monitor | None = None,
 ) -> experiment_execution_result:
     """
     Execute every selected planned slot in one experiment execution session.
@@ -214,6 +217,10 @@ def execute_experiment(
         _remove_empty_session(session_dir)
         raise
 
+    provider_usage_started = _begin_provider_usage_monitor(
+        provider_usage_monitor,
+        report,
+    )
     started_at = clock()
     publish_session(session_dir)
 
@@ -310,6 +317,11 @@ def execute_experiment(
                 wait(inter_run_delay_seconds)
 
         ended_at = clock()
+        provider_usage = _finish_provider_usage_monitor(
+            provider_usage_monitor,
+            provider_usage_started,
+            report,
+        )
         manifest = _build_manifest(
             execution_id=execution_id,
             experiment_id=experiment_id,
@@ -324,6 +336,7 @@ def execute_experiment(
             subject_llm_baselines=subject_llm_baselines,
             package_provenance=package_provenance,
             deployment_reconciliation=deployment_reconciliation,
+            provider_usage=provider_usage,
             slots=tuple(slots),
             session_dir=session_dir,
         )
@@ -341,6 +354,11 @@ def execute_experiment(
         )
     except KeyboardInterrupt:
         ended_at = clock()
+        provider_usage = _finish_provider_usage_monitor(
+            provider_usage_monitor,
+            provider_usage_started,
+            report,
+        )
         interruption_slots = list(slots)
 
         if active_planned is not None:
@@ -367,6 +385,7 @@ def execute_experiment(
             subject_llm_baselines=subject_llm_baselines,
             package_provenance=package_provenance,
             deployment_reconciliation=deployment_reconciliation,
+            provider_usage=provider_usage,
             slots=tuple(interruption_slots),
             interrupted_run_index=(
                 active_planned.run_index
@@ -497,6 +516,7 @@ def _build_interruption_manifest(
     subject_llm_baselines: dict[str, str],
     package_provenance: Mapping[str, str | None] | None,
     deployment_reconciliation: Mapping[str, object] | None,
+    provider_usage: Mapping[str, object] | None,
     slots: tuple[slot_execution, ...],
     interrupted_run_index: int | None,
     interrupted_attempt: int | None,
@@ -551,9 +571,10 @@ def _build_interruption_manifest(
     }
     _attach_package_provenance(execution, package_provenance)
     _attach_deployment_reconciliation(execution, deployment_reconciliation)
+    _attach_provider_usage(execution, provider_usage)
 
     return {
-        "schema_version": "0.1",
+        "schema_version": EXPERIMENT_EXECUTION_SCHEMA_VERSION,
         "execution": execution,
         "slots": _build_slot_records(slots, session_dir),
     }
@@ -573,6 +594,7 @@ def _build_manifest(
     subject_llm_baselines: dict[str, str],
     package_provenance: Mapping[str, str | None] | None,
     deployment_reconciliation: Mapping[str, object] | None,
+    provider_usage: Mapping[str, object] | None,
     slots: tuple[slot_execution, ...],
     session_dir: Path,
 ) -> dict:
@@ -604,12 +626,52 @@ def _build_manifest(
     }
     _attach_package_provenance(execution, package_provenance)
     _attach_deployment_reconciliation(execution, deployment_reconciliation)
+    _attach_provider_usage(execution, provider_usage)
 
     return {
-        "schema_version": "0.1",
+        "schema_version": EXPERIMENT_EXECUTION_SCHEMA_VERSION,
         "execution": execution,
         "slots": slot_records,
     }
+
+
+def _begin_provider_usage_monitor(
+    monitor: execution_provider_usage_monitor | None,
+    report: Callable[[str], None],
+) -> bool:
+    if monitor is None:
+        return False
+
+    try:
+        monitor.begin()
+    except Exception as exc:
+        report(f"Provider usage telemetry unavailable before execution: {exc}")
+        return False
+    return True
+
+
+def _finish_provider_usage_monitor(
+    monitor: execution_provider_usage_monitor | None,
+    started: bool,
+    report: Callable[[str], None],
+) -> Mapping[str, object] | None:
+    if monitor is None or not started:
+        return None
+
+    try:
+        return dict(monitor.finish())
+    except Exception as exc:
+        report(f"Provider usage telemetry unavailable after execution: {exc}")
+        return None
+
+
+def _attach_provider_usage(
+    execution: dict,
+    provider_usage: Mapping[str, object] | None,
+) -> None:
+    if provider_usage is None:
+        return
+    execution["provider_usage"] = dict(provider_usage)
 
 
 def _attach_deployment_reconciliation(

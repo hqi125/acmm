@@ -14,9 +14,14 @@ from typing import Any, Iterable
 import yaml
 
 from acmm.contract.loader import contract_load_error, load_contract
-from acmm.contract.validator import load_schema, validate_contract
+from acmm.contract.validator import (
+    default_contract_schema_path,
+    load_schema,
+    validate_contract,
+)
 from acmm.record.loader import load_run_record, run_record_load_error
 from acmm.record.validator import (
+    default_run_record_schema_path,
     load_run_record_schema,
     sha256_file,
     validate_run_record,
@@ -228,7 +233,7 @@ def _load_and_validate_contract(
     schema_path = (
         Path(contract_schema_path)
         if contract_schema_path is not None
-        else _default_contract_schema_path()
+        else default_contract_schema_path()
     )
 
     try:
@@ -255,7 +260,7 @@ def _load_record_schema(
     schema_path = (
         Path(run_record_schema_path)
         if run_record_schema_path is not None
-        else _default_run_record_schema_path()
+        else default_run_record_schema_path()
     )
 
     try:
@@ -884,21 +889,3 @@ def _validate_directory_component(
 
 def _sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
-
-
-def _default_contract_schema_path() -> Path:
-    return (
-        Path(__file__).resolve().parents[3]
-        / "contracts"
-        / "v0_1"
-        / "contract.schema.json"
-    )
-
-
-def _default_run_record_schema_path() -> Path:
-    return (
-        Path(__file__).resolve().parents[3]
-        / "records"
-        / "v0_1"
-        / "run_record.schema.json"
-    )
