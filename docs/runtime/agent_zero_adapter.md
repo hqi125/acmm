@@ -41,13 +41,12 @@ settings response rather than persisting another secret in the repository.
 
 ## Controlled Tool state
 
-The repository-managed `acmm_tools` plugin reads its state with Agent Zero's normal
-`helpers.plugins.get_plugin_config(...)` resolution path. Run-specific fixture state is saved
-through `/api/plugins` immediately before execution. Newer experiments can pass an arbitrary
-JSON Tool configuration through the generic fixture envelope; the original magic-number
-configuration remains supported for the frozen experiments. When a fixture supplies a generic
-baseline configuration, the adapter restores that baseline in cleanup. ACMM does not mutate a
-private experiment-state file.
+A package-owned Tool plugin reads its state with Agent Zero's normal
+`helpers.plugins.get_plugin_config(...)` resolution path. Run-specific fixture state is supplied
+through the generic `ACMM_TOOL_CONFIG_JSON` envelope and saved through `/api/plugins` immediately
+before execution. When cleanup restoration is enabled, the fixture must also supply
+`ACMM_TOOL_BASELINE_JSON`; the adapter restores that exact package-declared baseline after the run.
+ACMM does not encode study-specific configuration fields in the adapter.
 
 ## Evidence mapping
 
@@ -62,7 +61,7 @@ shape used by Hermes and Open WebUI:
 - `final_response`: final assistant text returned by the external message API.
 
 All observed Agent Zero Tool log records are normalized into ACMM Tool evidence. The qualified
-Agent Profile and selected experiment apparatus remain responsible for restricting which Tools are
+Agent Profile and selected package apparatus remain responsible for restricting which Tools are
 available. Preserving every observed Tool record keeps the adapter experiment-independent and
 makes unexpected Tool activity visible rather than silently filtering it out.
 
@@ -71,18 +70,14 @@ subject provenance. The context id is provenance only; the corresponding context
 terminated and its persisted chat removed after evidence capture.
 
 The qualified `acmm` profile owns a coherent communication/continuation compatibility bundle for
-the pinned Agent Zero v2.14 + Nemotron subject. It uses a two-field visible JSON Tool envelope,
-preserves Agent Zero's required user-first bootstrap ordering with the inert upstream `Hello!`
-seed, identifies Tool-result and framework metadata as continuation context, removes conflicting
-legacy response examples, and prevents already-completed Tool work from being restarted. The
-bundle was frozen only after a 60-run subject-only stress qualification completed without timeout,
-malformed arguments, duplicate/restarted cycles, or late-run bootstrap task loss.
+the pinned Agent Zero v2.14 integration. It uses a two-field visible JSON Tool envelope, preserves
+Agent Zero's required user-first bootstrap ordering with the inert upstream `Hello!` seed, identifies
+Tool-result/framework metadata as continuation context, removes conflicting response examples, and
+prevents already-completed Tool work from being restarted.
 
-This remains profile behavior, not an adapter rewrite: the adapter preserves whatever Tool calls
-and final response Agent Zero actually produces. The two-field shape is a qualified adaptation for
-this pinned v2.14 subject rather than a claim of universal Agent Zero compatibility. See
-`docs/integration/agent_zero_qualification.md` for the failure history, qualification evidence,
-and upgrade policy.
+This remains profile behavior, not an adapter rewrite: the adapter preserves whatever Tool calls and
+final response Agent Zero actually produces. Compatibility changes must be requalified against the
+active registered LLM before they become part of the baseline.
 
 ## Termination qualification
 
@@ -98,34 +93,22 @@ Agent Zero v2.14 does not expose an exact supported per-run mapping for the Cont
 `termination.max_steps` budget. Its internal message loop continues until the agent produces a
 final response or execution is otherwise interrupted. The qualified subject binding therefore
 advertises timeout-only termination support, and `acmm run` rejects an Agent Zero Contract
-containing `max_steps` before acquisition. The frozen Experiment 1 Contract remains ineligible
+containing `max_steps` before acquisition. A Contract requesting exact `max_steps` remains ineligible
 for this binding until its termination policy is deliberately revised or an exact
 upstream-supported mapping becomes available.
 
 ## Live smoke qualification
 
-The standalone live smoke program lives under `tools/` rather than in a separate integration
-tree:
+The standalone engineering smoke program lives under `tools/`:
 
 ```text
 python tools/smoke_agent_zero.py
 ```
 
-Run it only after the persistent Agent Zero service is qualified and ready:
+Run it only after the persistent Agent Zero service is qualified and ready. The smoke uses the
+shared controlled-Tool engineering fixture and timeout-only termination policy. It requires the
+expected Tool dependency path, normalized evidence, and correct final result; redundant successful
+Tool calls and provider request counts are preserved as operational observations rather than ACMM
+judgments.
 
-```text
-acmm-infra agent-zero up
-acmm-infra agent-zero doctor
-```
-
-The smoke program is intentionally outside `pytest` because it invokes the live cloud-backed
-model. It shares the controlled success fixture and checker with the Open WebUI smoke. The
-shared smoke termination policy is timeout-only (`timeout_seconds: 120`) so both HTTP-based
-agents exercise the same enforceable termination vocabulary. The checker requires the successful
-retrieval-then-addition dependency path and final result, while reporting additional successful
-controlled Tool calls as observations rather than infrastructure failures.
-
-The Agent Zero freeze-candidate end-to-end smoke completed successfully with a correct final
-result. The last qualification run also produced one redundant `get_magic_number` call and four
-upstream Ollama model requests. The redundant call remains preserved agent behavior. Upstream
-request count is recorded externally and is not a smoke pass criterion.
+The smoke is intentionally outside `pytest` because it invokes the live cloud-backed model.

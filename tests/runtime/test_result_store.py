@@ -21,7 +21,7 @@ def _sample_result() -> executed_run:
             id="tool_calls",
             channel="tool_calls",
             artifact="evidence/tool_calls.json",
-            content=b'[{"name":"get_magic_number"}]',
+            content=b'[{"name":"get_fixture_value"}]',
         ),
         captured_evidence(
             id="final_response",
@@ -45,7 +45,7 @@ def _sample_result() -> executed_run:
         "schema_version": "0.1",
         "run": {
             "id": RUN_ID,
-            "experiment_id": "magic_number_tool_use_v1",
+            "experiment_id": "runtime_execution_fixture_v1",
             "run_index": 0,
             "subject_id": "hermes_nemotron30b",
             "scenario_id": "magic_plus_13",
@@ -73,7 +73,7 @@ def _sample_result() -> executed_run:
                 },
             },
             "environment": {
-                "fixture": "magic_number_environment_v1",
+                "fixture": "synthetic_environment_v1",
             },
         },
         "evidence": evidence,
@@ -100,7 +100,7 @@ def _sample_result() -> executed_run:
 def _final_path(root: Path) -> Path:
     return (
         root
-        / "magic_number_tool_use_v1"
+        / "runtime_execution_fixture_v1"
         / f"run_000000_{RUN_ID}"
     )
 
@@ -115,7 +115,7 @@ def test_persist_executed_run_writes_complete_bundle(tmp_path: Path) -> None:
 
     assert (
         run_dir / "evidence" / "tool_calls.json"
-    ).read_bytes() == b'[{"name":"get_magic_number"}]'
+    ).read_bytes() == b'[{"name":"get_fixture_value"}]'
 
     assert (
         run_dir / "evidence" / "final_response.txt"
@@ -243,7 +243,7 @@ def test_mid_write_failure_leaves_no_published_or_temp_result(
     with pytest.raises(result_write_error, match="simulated write failure"):
         persist_executed_run(result, tmp_path)
 
-    experiment_dir = tmp_path / "magic_number_tool_use_v1"
+    experiment_dir = tmp_path / "runtime_execution_fixture_v1"
 
     assert not _final_path(tmp_path).exists()
     assert list(experiment_dir.iterdir()) == []

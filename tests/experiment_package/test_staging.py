@@ -17,8 +17,8 @@ from acmm.experiment_package import (
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_SCHEMA = ROOT / "contracts" / "v0_1" / "contract.schema.json"
-VALID_CONTRACT = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "magic_number.yaml"
-EXPERIMENT_ID = "magic_number_tool_use_v1"
+VALID_CONTRACT = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "package_fixture.yaml"
+EXPERIMENT_ID = "package_fixture_v1"
 
 
 def _write_minimal_package(root: Path) -> None:

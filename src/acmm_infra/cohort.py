@@ -4,9 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from acmm.contract.loader import load_contract
 from acmm.experiment_package import experiment_package, open_staged_experiment_package
-from acmm.experiments.catalog import lookup_experiment_execution_binding
 from acmm.subjects.catalog import (
     lookup_subject_execution_binding,
     registered_subject_ids,
@@ -23,7 +21,6 @@ from acmm_infra.profiles.llm import (
     load_llm_baseline,
     primary_requested_context_window,
 )
-from acmm_infra.profiles.experiments import experiment_apparatus_sha256
 from acmm_infra.readiness import (
     deployed_subject_doctor_result,
     doctor_deployed_subject,
@@ -119,39 +116,6 @@ class cohort_doctor_result:
         return self.doctor.is_ready and self.release_error is None
 
 
-def resolve_experiment_cohort(
-    repo_root: str | Path,
-    experiment_id: str,
-    selected_subject_ids: Iterable[str] = (),
-) -> experiment_cohort:
-    repo = Path(repo_root).expanduser().resolve()
-    binding = lookup_experiment_execution_binding(experiment_id)
-    if binding is None:
-        raise infrastructure_error(
-            f"Experiment '{experiment_id}' is not registered in the ACMM catalog."
-        )
-
-    contract_path = (repo / binding.canonical_contract).resolve()
-    contract = load_contract(contract_path)
-    observed_id = contract.get("experiment", {}).get("id")
-    if observed_id != experiment_id:
-        raise infrastructure_error(
-            f"Canonical Contract '{contract_path}' declares experiment "
-            f"'{observed_id}', expected '{experiment_id}'."
-        )
-
-    for subject in contract["subjects"]:
-        _require_contract_llm_binding(repo, subject)
-
-    subject_ids = tuple(item["id"] for item in contract["subjects"])
-    subjects = _resolve_subjects(subject_ids, selected_subject_ids)
-    return experiment_cohort(
-        experiment_id=experiment_id,
-        canonical_contract=contract_path,
-        subjects=subjects,
-    )
-
-
 def resolve_package_cohort(
     repo_root: str | Path,
     package: experiment_package,
@@ -214,26 +178,25 @@ def resolve_deployed_cohort(
         )
         experiment_id = context.experiment_id
         if experiment_id is not None:
-            if context.package_sha256 is not None:
-                package = open_staged_experiment_package(
-                    runtime,
-                    experiment_id,
-                    context.package_sha256,
-                    contract_schema_path=(
-                        repo / "contracts" / "v0_1" / "contract.schema.json"
-                    ),
+            if context.package_sha256 is None:
+                raise infrastructure_error(
+                    f"Deployed experiment '{experiment_id}' is not backed by an "
+                    "Experiment Package. Legacy built-in experiment deployments are "
+                    "no longer supported; run 'acmm env set-llm <llm-id>' to "
+                    "reconcile the subject baseline."
                 )
-                matches = _package_cohort_subjects(
-                    package.contract.get("subjects", []),
-                    infrastructure_subject,
-                )
-            else:
-                experiment = resolve_experiment_cohort(repo, experiment_id)
-                matches = tuple(
-                    item
-                    for item in experiment.subjects
-                    if item.infrastructure_subject == infrastructure_subject
-                )
+            package = open_staged_experiment_package(
+                runtime,
+                experiment_id,
+                context.package_sha256,
+                contract_schema_path=(
+                    repo / "contracts" / "v0_1" / "contract.schema.json"
+                ),
+            )
+            matches = _package_cohort_subjects(
+                package.contract.get("subjects", []),
+                infrastructure_subject,
+            )
             if len(matches) != 1:
                 raise infrastructure_error(
                     f"Deployed experiment '{experiment_id}' does not resolve exactly "
@@ -334,7 +297,6 @@ def apply_cohort(
                 repo_root,
                 runtime_root,
                 subject.infrastructure_subject,
-                cohort.experiment_id,
                 subject.llm_baseline_id,
             )
         contexts.append((subject, context))
@@ -990,24 +952,16 @@ def _apparatus_state(
     package_expected_sha256: str | None = None,
     package_managed: bool = False,
 ) -> str:
+    del repo_root, infrastructure_subject
     if package_managed:
         return (
             "match"
             if observed_sha256 == package_expected_sha256
             else "mismatch"
         )
-    if experiment_id is None or observed_sha256 is None:
+    if experiment_id is None and observed_sha256 is None:
         return "none"
-    try:
-        expected = experiment_apparatus_sha256(
-            repo_root,
-            infrastructure_subject,
-            experiment_id,
-        )
-    except (profile_error, OSError, ValueError):
-        return "unavailable"
-    return "match" if observed_sha256 == expected else "mismatch"
-
+    return "unavailable"
 
 def _require_applied_context(
     observed: cohort_subject_status,

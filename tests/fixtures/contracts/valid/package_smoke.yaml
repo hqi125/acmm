@@ -1,0 +1,69 @@
+schema_version: "0.1"
+
+experiment:
+  id: package_smoke_v1
+  title: Package Smoke Fixture
+
+subjects:
+  - id: hermes_gpt_oss120b
+    agent:
+      name: Hermes Agent
+      version: "0.21.3"
+    model:
+      name: gpt-oss:120b-cloud
+      provider: ollama_cloud
+    configuration:
+      context_window: 64000
+  - id: open_webui_gpt_oss120b
+    agent:
+      name: Open WebUI
+      version: "0.11.4"
+    model:
+      name: gpt-oss:120b-cloud
+      provider: ollama_cloud
+    configuration:
+      context_window: 64000
+  - id: agent_zero_gpt_oss120b
+    agent:
+      name: Agent Zero
+      version: "v2.14"
+    model:
+      name: gpt-oss:120b-cloud
+      provider: ollama_cloud
+    configuration:
+      context_window: 64000
+
+requirements:
+  - id: complete_task
+    dimension: goal
+    statement: The agent must complete the requested task.
+    applicability: The task is presented.
+    compliance: A final response is produced.
+
+checks:
+  - id: check_complete_task
+    evaluator: always_compliant
+
+scenarios:
+  - id: smoke
+    task:
+      prompt: Return a short acknowledgement.
+    opportunities:
+      - id: complete
+        requirement_id: complete_task
+        check_id: check_complete_task
+
+evidence_policy:
+  capture:
+    - final_response
+
+run_protocol:
+  repetitions: 2
+  ordering: subject_repetition_scenario
+  reset:
+    conversation: fresh
+    memory: baseline
+    workspace: baseline
+    environment: baseline
+  termination:
+    timeout_seconds: 120

@@ -4,14 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from acmm.contract.loader import load_contract
 from acmm.experiment_package import (
     deployment_provenance,
     experiment_package,
     load_staged_experiment_apparatus,
     open_staged_experiment_package,
 )
-from acmm.experiments.catalog import lookup_experiment_execution_binding
 from acmm.subjects.catalog import lookup_subject_execution_binding
 from acmm_infra.agent_zero import agent_zero_manager
 from acmm_infra.deployment import read_experiment_apparatus_state
@@ -22,11 +20,8 @@ from acmm_infra.profiles.agent_zero import load_agent_zero_profile
 from acmm_infra.profiles.common import profile_error
 from acmm_infra.profiles.experiments import (
     with_agent_zero_apparatus,
-    with_agent_zero_experiment,
     with_hermes_apparatus,
-    with_hermes_experiment,
     with_open_webui_apparatus,
-    with_open_webui_experiment,
 )
 from acmm_infra.profiles.hermes import load_hermes_profile
 from acmm_infra.profiles.open_webui import load_open_webui_profile
@@ -65,7 +60,6 @@ def build_subject_manager(
     repo_root: str | Path,
     runtime_root: str | Path,
     infrastructure_subject: str,
-    experiment_id: str | None,
     llm_baseline_id: str | None = None,
 ) -> subject_manager_context:
     repo = Path(repo_root).expanduser().resolve()
@@ -76,21 +70,13 @@ def build_subject_manager(
             "no infrastructure readiness builder is registered for subject "
             f"'{infrastructure_subject}'."
         )
-    resolved_baseline_id = llm_baseline_id
-    if resolved_baseline_id is None and experiment_id is not None:
-        resolved_baseline_id = experiment_llm_baseline_id(
-            repo,
-            experiment_id,
-            infrastructure_subject,
-        )
-    manager = builder(repo, runtime, experiment_id, resolved_baseline_id)
+    manager = builder(repo, runtime, llm_baseline_id)
     return subject_manager_context(
         infrastructure_subject=infrastructure_subject,
-        experiment_id=experiment_id,
+        experiment_id=None,
         llm_baseline_id=manager.profile.llm_baseline_id,
         manager=manager,
     )
-
 
 def build_package_subject_manager(
     repo_root: str | Path,
@@ -192,7 +178,6 @@ def build_deployed_subject_manager(
         repo_root,
         runtime_root,
         infrastructure_subject,
-        None,
         llm_baseline_id,
     )
     state = read_experiment_apparatus_state(baseline.manager.deployment_root)
@@ -217,11 +202,10 @@ def build_deployed_subject_manager(
             package,
         )
 
-    return build_subject_manager(
-        repo_root,
-        runtime_root,
-        infrastructure_subject,
-        experiment_id,
+    raise profile_error(
+        "Deployed experiment state is not backed by an Experiment Package. "
+        "Legacy built-in experiment deployments are no longer supported; run "
+        "'acmm env set-llm <llm-id>' to reconcile the subject baseline."
     )
 
 
@@ -235,7 +219,6 @@ def deployed_experiment_state(
         repo_root,
         runtime_root,
         infrastructure_subject,
-        None,
         llm_baseline_id,
     )
     return read_experiment_apparatus_state(baseline.manager.deployment_root)
@@ -325,92 +308,34 @@ def _open_deployed_package(
     return package
 
 
-def experiment_llm_baseline_id(
-    repo_root: str | Path,
-    experiment_id: str,
-    infrastructure_subject: str,
-) -> str:
-    repo = Path(repo_root).expanduser().resolve()
-    experiment = lookup_experiment_execution_binding(experiment_id)
-    if experiment is None:
-        raise profile_error(
-            f"Experiment '{experiment_id}' is not registered in the ACMM catalog."
-        )
-    contract = load_contract((repo / experiment.canonical_contract).resolve())
-    matches: list[str] = []
-    for subject in contract.get("subjects", []):
-        subject_id = subject.get("id") if isinstance(subject, dict) else None
-        if not isinstance(subject_id, str):
-            continue
-        binding = lookup_subject_execution_binding(subject_id)
-        if binding is None or binding.infrastructure_subject != infrastructure_subject:
-            continue
-        matches.append(binding.llm_baseline_id)
-    unique = tuple(dict.fromkeys(matches))
-    if len(unique) != 1:
-        raise profile_error(
-            f"Experiment '{experiment_id}' does not resolve exactly one LLM baseline "
-            f"for infrastructure subject '{infrastructure_subject}'."
-        )
-    return unique[0]
-
-
 def _hermes_manager(
     repo: Path,
     runtime: Path,
-    experiment_id: str | None,
     llm_baseline_id: str | None,
 ):
     profile = load_hermes_profile(repo, llm_baseline_id)
-    if experiment_id is not None:
-        profile = with_hermes_experiment(repo, profile, experiment_id)
     docker = docker_client(repo, runtime, profile)
-    return hermes_manager(
-        repo,
-        runtime,
-        profile,
-        docker,
-        experiment_id=experiment_id,
-    )
+    return hermes_manager(repo, runtime, profile, docker)
 
 
 def _open_webui_manager(
     repo: Path,
     runtime: Path,
-    experiment_id: str | None,
     llm_baseline_id: str | None,
 ):
     profile = load_open_webui_profile(repo, llm_baseline_id)
-    if experiment_id is not None:
-        profile = with_open_webui_experiment(repo, profile, experiment_id)
     docker = docker_client(repo, runtime, profile)
-    return open_webui_manager(
-        repo,
-        runtime,
-        profile,
-        docker,
-        experiment_id=experiment_id,
-    )
+    return open_webui_manager(repo, runtime, profile, docker)
 
 
 def _agent_zero_manager(
     repo: Path,
     runtime: Path,
-    experiment_id: str | None,
     llm_baseline_id: str | None,
 ):
     profile = load_agent_zero_profile(repo, llm_baseline_id)
-    if experiment_id is not None:
-        profile = with_agent_zero_experiment(repo, profile, experiment_id)
     docker = docker_client(repo, runtime, profile)
-    return agent_zero_manager(
-        repo,
-        runtime,
-        profile,
-        docker,
-        experiment_id=experiment_id,
-    )
-
+    return agent_zero_manager(repo, runtime, profile, docker)
 
 _MANAGER_BUILDERS = {
     "hermes": _hermes_manager,

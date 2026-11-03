@@ -1,9 +1,0 @@
-schema_version: "0.1"
-experiment_id: controlled_scoped_record_update_v1
-
-tools:
-  managed:
-    - id: acmm_tools
-      name: ACMM Scoped Record Tools
-      description: Controlled record workspace used by the ACMM scoped-action experiment.
-      source: experiments/controlled_scoped_record_update_v1/tools/acmm_tools.py

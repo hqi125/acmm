@@ -9,14 +9,14 @@ The repository currently contains Experiment Contract v0.1, including:
 - a Draft 2020-12 JSON Schema;
 - a YAML authoring template;
 - a semantic specification;
-- a populated magic-number example;
+- neutral Contract examples and regression fixtures;
 - YAML loading and Contract validation;
 - harness-compatibility validation;
 - deterministic runtime planning;
 - platform-neutral single-run execution orchestration;
 - experiment-level plan execution with explicit invalid-attempt retries;
 - a concrete Hermes Agent adapter using structured JSONL events;
-- a real magic-number fixture/evaluator pilot and Hermes `acmm-tools` plugin;
+- qualified Hermes, Open WebUI, and Agent Zero adapters with package-owned runtime fixtures/evaluators;
 - reproducible Hermes infrastructure management through `acmm-infra`;
 - atomic per-run result persistence;
 - ACMM Run Record v0.1 schema and semantic validation;
@@ -562,7 +562,7 @@ results/<experiment_id>/execution_<execution_id>/
 ```
 
 The session snapshots the exact Contract bytes before running any selected planned slots. By
-default the complete deterministic plan is selected. Engineering/pilot executions may select
+default the complete deterministic plan is selected. Engineering or scoped executions may select
 explicit run indices; the manifest records both the full Contract run count and the selected
 indices so a subset cannot be mistaken for a complete Contract execution.
 
@@ -572,9 +572,8 @@ Valid agent outcomes such as `timeout` or `max_steps` are not retried.
 
 Contracts may additionally specify a fixed `run_protocol.pacing.inter_run_delay_seconds`.
 The executor applies it between selected planned slots, not between retries and not after
-the final slot, and records the configured pacing in the completion manifest. The
-magic-number pilot currently uses a 2-second inter-run delay for conservative Cloud-backed
-acquisition.
+the final slot, and records the configured pacing in the completion manifest. The configured delay is experiment-defined and is recorded as execution provenance rather than
+being inferred by Core.
 
 The session completion manifest, `experiment_execution.yaml`, is written only after the
 selected plan has been traversed. If orchestration or persistence is interrupted, previously
@@ -663,206 +662,67 @@ interactive R/RStudio work; see `analysis/r/README.md`.
 See `docs/analysis/boundary.md`, `docs/analysis/export.md`, `docs/analysis/availability.md`, and
 `analysis/r/README.md`.
 
-## First concrete pilot: Hermes magic number
+## Experiment Package workflow
 
-The first real subject integration is Hermes Agent v0.21.3 with the existing
-`nemotron-3-nano:30b-cloud` model baseline.
-
-The runtime pieces are:
+Research experiments are external Experiment Packages. Core does not contain a built-in experiment
+catalog, experiment Contracts, pilot runtime modules, or per-agent experiment apparatus trees.
+A typical two-repository workspace is:
 
 ```text
-src/acmm/adapters/hermes.py
-    Hermes process/Docker bridge + session-export orchestration
-
-src/acmm/adapters/hermes_session.py
-    persisted Hermes-session parsing + canonical evidence normalization
-
-src/acmm/pilots/magic_number.py
-    magic-number fixture + deterministic opportunity evaluators
-
-infrastructure/hermes/experiments/magic_number_tool_use_v1/plugins/acmm-tools/
-    pilot-owned Hermes plugin exposing get_magic_number and add_numbers
+~/acmm_repo/          ACMM Core, infrastructure, adapters, analysis, and CLI
+~/acmm-experiments/   independently versioned Experiment Packages
+~/acmm_runtime/       mutable deployments and installed package snapshots
 ```
 
-The adapter runs a quiet Hermes one-shot chat and then exports that exact persisted
-session as JSONL rather than scraping the interactive terminal UI. The normal live path
-relies on the already-qualified model/provider route and verifies the model reported by the
-exported session against the Contract. Runtime environment injection is generic: the
-adapter consumes a string environment-variable mapping, while the concrete pilot fixture
-owns translations such as `magic_number=87 -> ACMM_MAGIC_NUMBER=87`.
-
-The magic number is provided by the runtime fixture and injected into the Hermes process or
-Docker container as `ACMM_MAGIC_NUMBER`. It is not hard-coded into the Hermes plugin.
-
-The evaluators judge actual tool calls and tool results. In particular, claiming that the
-magic number was 87 does not satisfy the calculation opportunity if the actual
-`add_numbers` call used a different value.
-
-See:
+A package is validated and installed before ACMM can execute it:
 
 ```text
-docs/runtime/hermes_adapter.md
-docs/infrastructure/hermes.md
-infrastructure/hermes/README.md
-```
-
-Because this checkpoint adds new Python subpackages (`acmm.adapters` and `acmm.pilots`),
-rerun the editable installation once after merging it:
-
-```text
-python -m pip install -e ".[test]"
-pytest
-```
-
-Before the live execution command, the repository now includes a reproducible infrastructure
-management layer.
-
-A new agent should pass a broader qualification workflow before it is treated as a comparative
-ACMM subject: managed desired state, machine-interface study, runtime adapter/evidence
-normalization, exact termination mapping, live smoke, and subject-only stress qualification. See
-`docs/integration/agent_integration.md` for the general integration workflow and coding surface.
-The pinned Agent Zero v2.14 compatibility profile and its 60-run stress qualification are recorded
-in `docs/integration/agent_zero_qualification.md`.
-
-## Second controlled experiment: scoped record update
-
-`controlled_scoped_record_update_v1` adds the first direct empirical coverage of the canonical
-`goal` and `boundary` dimensions. Its controlled workspace exposes `source`, `target`, and
-`protected` records through narrow read/write Tools plus two functional but prohibited bypass
-capabilities. Four scenarios cover normal success, an out-of-scope distractor, source-read
-failure pressure, and target-write failure pressure.
-
-The experiment owns independent apparatus under each subject's
-`infrastructure/<subject>/experiments/controlled_scoped_record_update_v1/` tree. Its fixture uses
-the generic per-run Tool-configuration envelope consumed by Open WebUI and Agent Zero, while
-Hermes continues to receive the same fixture state as ordinary environment variables. The
-adapters therefore remain experiment-independent.
-
-The canonical Contract lives at:
-
-```text
-experiments/examples/controlled_scoped_record_update/experiment.yaml
-```
-
-It plans 60 runs and 150 atomic opportunities: 30 Goal opportunities in the two deliberately
-feasible scenarios and 120 Boundary opportunities across all four scenarios.
-
-## Open WebUI infrastructure checkpoint
-
-Open WebUI now has a repository-managed deployment and Tool baseline alongside Hermes. The
-pinned subject is Open WebUI `v0.11.4` at the qualified image digest recorded in
-`infrastructure/open-webui/profile.yaml`. The lifecycle is:
-
-```text
-acmm-infra open-webui init
-acmm-infra open-webui apply --experiment controlled_tool_use_multiscenario_v1
-acmm-infra open-webui up
-acmm-infra open-webui status
-acmm-infra open-webui doctor
-acmm-infra open-webui down
-```
-
-`apply` without `--experiment` is the experiment-independent Open WebUI baseline reconciler:
-it updates deployment state, temporarily starts the backend, waits for readiness, reconciles
-persistent provider settings, removes active experiment Tools, and then stops the provisioning
-service. `apply --experiment <experiment-id>` composes the baseline with the selected experiment
-apparatus and reconciles that effective state in one provisioning pass. `apply-tools --experiment <experiment-id>` is the narrower
-Tool-only path. `up` waits for `/ready` before returning.
-`status` and `doctor` discover the active experiment context from the deployment marker;
-`doctor` checks the baseline and exact selected Tool state together. ACMM does not modify `webui.db` directly. See
-`infrastructure/open-webui/README.md` for the current boundary.
-
-The experiment-facing Open WebUI runtime adapter now lives under `src/acmm/adapters/`. It
-uses the backend native multi-round Tool loop, creates and removes fresh chat state per run,
-sets controlled Tool Valves from the fixture, and normalizes persisted Tool activity into the
-existing ACMM evidence channels. See `docs/runtime/open_webui_adapter.md`. The frozen Experiment 1 binding remains unchanged.
-
-## Agent Zero infrastructure checkpoint
-
-Agent Zero now has the same repository-managed lifecycle surface as Hermes and Open WebUI.
-The pinned subject is Agent Zero `v2.14` at the immutable multi-platform image digest recorded
-in `infrastructure/agent-zero/profile.yaml`. The managed lifecycle is:
-
-```text
-acmm-infra agent-zero init
-acmm-infra agent-zero apply
-acmm-infra agent-zero apply --experiment controlled_tool_use_multiscenario_v1
-acmm-infra agent-zero up
-acmm-infra agent-zero status
-acmm-infra agent-zero doctor
-acmm-infra agent-zero down
-```
-
-Agent Zero persists only its `/a0/usr` user-state tree into the ACMM runtime root; framework
-code remains owned by the pinned image. Baseline `apply` reconciles deployment state, the `acmm`
-Agent Profile, the v2.14 `_model_config` `Default` preset, and experiment-isolation files,
-including narrow local-model communication/solving/initial-message prompt overrides. It also
-removes active experiment plugins and returns the Tool allow-list to empty.
-`apply --experiment <experiment-id>` composes that baseline with the selected experiment
-plugin and Tool allow-list, then reconciles the effective state in one provisioning pass. `apply-tools --experiment <experiment-id>` applies only
-the experiment-facing Tool/plugin layer.
-
-The qualified Agent Zero baseline pins main and utility roles to
-`nemotron-3-nano:30b-cloud` through Windows Ollama with 64K contexts. The `acmm` profile
-blocks all experiment Tools, Skills, and MCP Tools by default; a selected experiment apparatus
-adds only its own Tool allow-list. The baseline also disables memory
-recall/memorization/consolidation and automatic chat naming, and disables MCP/A2A servers,
-update checks, project inheritance, and automatic RFC Docker behavior. `doctor` verifies
-persistent settings, effective model config, and model availability in addition to the
-deployment layer. See `infrastructure/agent-zero/README.md`.
-
-The experiment-facing Agent Zero runtime adapter now lives under `src/acmm/adapters/`. It
-reuses the persistent running Agent Zero service, configures per-run `acmm_tools` state through
-the supported plugin API, creates and removes a fresh context, executes through the external
-API, and normalizes Agent Zero Tool logs into the existing ACMM evidence channels. See
-`docs/runtime/agent_zero_adapter.md`; the standalone live smoke helper is
-`tools/smoke_agent_zero.py`.
-
-## Infrastructure management
-
-`acmm` now separates experiment-package lifecycle from subject-environment lifecycle. A normal
-experiment workflow is:
-
-```text
-acmm package validate ../acmm-experiments/minimal_agent_baseline_v1
-acmm package install ../acmm-experiments/minimal_agent_baseline_v1
-acmm package apply minimal_agent_baseline_v1
-acmm run minimal_agent_baseline_v1 --preview
-acmm run minimal_agent_baseline_v1
-
-# Or let run reconcile selected experiment context when needed:
-acmm run minimal_agent_baseline_v1 --apply-if-needed
-```
-
-Experiment Package source directories are validated and copied into the ACMM-managed package store
-before their runtime code or apparatus is consumed. `package apply` accepts only an already-installed
-package selector; it never acquires package source implicitly. Multiple revisions of the same
-experiment may be installed simultaneously. A plain experiment ID selects it only when one revision
-is installed; otherwise use `EXPERIMENT_ID@SHA_PREFIX`, as printed by `package install` and
-`package list`. Package sources are local filesystem directories; ACMM does not install them with
-`pip` or automatically download executable experiment code.
-
-Package management also provides:
-
-```text
+acmm package validate ~/acmm-experiments/<experiment-id>
+acmm package install ~/acmm-experiments/<experiment-id>
 acmm package list
-acmm package show minimal_agent_baseline_v1
-acmm package detach minimal_agent_baseline_v1
-acmm package uninstall minimal_agent_baseline_v1
+acmm package show <experiment-id>
 ```
 
-`package detach` removes the selected package revision from subjects that currently carry that exact
-package provenance while preserving each subject's LLM binding declared by the package. It prints the
-subjects it actually detached. `package uninstall` still refuses to remove an attached revision by
-default; `--detach-if-applied` explicitly grants permission to detach the revision first and then
-uninstall it.
+`acmm package apply <selector>` prepares the complete package cohort. `acmm run` remains strict by
+default and requires an explicit installed-package selector:
 
-`acmm run` consumes only already-installed Experiment Packages. It does not accept a raw Contract
-path, acquire a package source implicitly, or infer an experiment from deployment state. The
-experiment/package selector is mandatory.
+```text
+acmm package apply <experiment-id>
+acmm run <experiment-id> --preview
+acmm run <experiment-id>
+```
 
-`acmm env` no longer selects or applies experiments. Its only state-setting operation is explicit
-LLM selection:
+For convenience, `--apply-if-needed` grants `run` permission to reconcile only the subjects needed by
+the selected run set. ACMM always repeats the strict deployment preflight after reconciliation and
+aborts if the persisted package context still does not match:
+
+```text
+acmm run <experiment-id> --subject <subject-id> --run-index 0-9 --apply-if-needed
+```
+
+`--preview` is non-mutating. When package context diverges it reports whether strict execution would
+fail or whether `--apply-if-needed` would permit reconciliation. `--start-if-needed` independently
+grants permission to start a correctly deployed but stopped subject runtime. Neither option weakens
+the final readiness checks.
+
+Package detachment and removal are explicit:
+
+```text
+acmm package detach <experiment-id>
+acmm package uninstall <experiment-id>
+acmm package uninstall <experiment-id> --detach-if-applied
+```
+
+`detach` restores only subjects carrying that exact package revision to the LLM bindings declared by
+the package. Uninstall is strict by default and refuses to remove a revision still referenced by
+subject deployment provenance.
+
+See `docs/experiments/package.md` for the package architecture and lifecycle.
+
+## Subject environment management
+
+Subject baselines are Core infrastructure rather than experiment definitions. The researcher-facing
+environment surface is:
 
 ```text
 acmm env set-llm <llm-id>
@@ -871,209 +731,75 @@ acmm env doctor --start-if-needed
 acmm env stop
 ```
 
-`set-llm` reconciles the selected qualified subjects to that registered LLM and removes any active
-experiment apparatus from them. `status` and `doctor` may still report observed package/deployment
-provenance because that is useful diagnostic evidence, but they do not choose an experiment. `stop`
-only stops running qualified subject runtimes and does not mutate apparatus.
+`set-llm` reconciles qualified subjects to a registered LLM and removes active package apparatus.
+The internal `acmm-infra <subject> ...` commands remain detailed baseline/lifecycle escape hatches;
+they do not select research experiments.
 
-`acmm-infra` remains strictly subject-facing: `acmm-infra hermes ...`, `open-webui ...`, and
-`agent-zero ...` are the detailed lifecycle and diagnostic escape hatches.
+The current LLM comes from `infrastructure/llm-baselines/catalog.yaml`. Subject profiles remain
+model-independent where possible and are composed with that registered LLM definition. See
+`docs/infrastructure/llm_rebasing.md` and the subject-specific infrastructure READMEs.
 
-For Hermes:
+## Execution selection and persistence
 
-```text
-~/acmm_repo/
-└── infrastructure/hermes/
-    ├── profile.yaml
-    ├── defaults/
-    └── experiments/<experiment-id>/
-        ├── apparatus.yaml
-        └── plugins/...
-
-~/acmm_runtime/
-└── hermes/
-    ├── compose.yaml
-    ├── .env
-    └── data/
-```
-
-The preferred fresh workflow is now fully non-interactive on the Hermes configuration side:
+`acmm run` supports deterministic execution selection. Each `--run-index` accepts one index or an
+inclusive range, and repeatable `--subject` filters select Contract subject IDs. Selector types are
+intersected; overlapping run-index selectors are deduplicated.
 
 ```text
-acmm-infra hermes init
-acmm-infra hermes apply
-acmm-infra hermes up
-acmm-infra hermes doctor
+acmm run <experiment-id> --subject <subject-id> --run-index 20-39 --preview
 ```
 
-`apply` reproduces the qualified Windows-Ollama route:
+Every real execution verifies exact package, Contract, runtime, and per-subject apparatus provenance
+before acquisition. Package runtime code is activated only from the verified immutable staged
+snapshot and is composed with Core-owned adapters. Completed executions persist the Contract
+snapshot, Run Records, evidence, execution summary, package provenance, and optional diagnostics.
+Interrupted acquisition preserves already-written records plus `experiment_interruption.yaml` and
+never writes a completed `experiment_execution.yaml`.
+
+`--capture-runtime-logs` records sanitized container diagnostics without adding them to scientific
+evidence. Provider usage telemetry is likewise operational provenance only. When `OLLAMA_API_KEY` is
+available, `acmm run` can record best-effort Ollama Cloud before/after usage snapshots; missing or
+ambiguous telemetry never affects experiment validity or ACMM scoring. See
+`docs/runtime/provider_usage.md` and `docs/security/secrets.md`.
+
+## Infrastructure and adapter boundaries
+
+Core owns the qualified Hermes, Open WebUI, and Agent Zero baselines, their lifecycle managers, and
+runtime adapters. Experiment Packages may provide subject-specific apparatus, but Core receives that
+apparatus only from the installed staged package and never reconstructs it from a repository-local
+`experiments/<id>` directory.
+
+The internal baseline workflow remains available for diagnostics and integration work:
 
 ```text
-provider       custom
-base URL       http://host.docker.internal:11434/v1
-API mode       chat_completions
-model          nemotron-3-nano:30b-cloud
-context        64000
-reasoning      medium
-terminal       local
-Blank Slate    enabled
+acmm-infra <subject> init
+acmm-infra <subject> apply
+acmm-infra <subject> up
+acmm-infra <subject> status
+acmm-infra <subject> doctor
+acmm-infra <subject> down
 ```
 
-The Blank Slate baseline keeps only `file`, `skills`, `terminal`, and `vision` in the
-default CLI toolset surface; disables compression, memory/user profile, checkpoints, and
-smart model routing; uses a 90-turn baseline; and opts out of the full bundled-skill
-catalog while retaining Hermes's essential skill. The `acmm` plugin toolset is an explicit
-experiment overlay rather than a default toolset.
+`apply-tools` remains an engineering/baseline tool-policy operation where supported; it is not an
+experiment selector. Research apparatus is applied through `acmm package apply` or permissioned
+`acmm run --apply-if-needed`.
 
-ACMM then applies a separate experiment-isolation policy on top of official Blank Slate:
-automatic title generation and background review are disabled, and Hermes Tool Search is
-set to `off`. These are ACMM methodological controls intended to remove auxiliary model
-calls and tool-routing indirection; they are not part of Hermes's definition of Blank
-Slate.
+See `infrastructure/README.md`, `docs/integration/agent_integration.md`, and the adapter documents under
+`docs/runtime/`.
 
-Experiment apparatus is reconciled separately from the qualified baseline:
+## Analysis workflow
+
+Completed executions remain exportable and analyzable independently of package ownership:
 
 ```text
-acmm-infra hermes down
-acmm-infra hermes apply --experiment controlled_tool_use_multiscenario_v1
-acmm-infra hermes up
-acmm-infra hermes doctor
+acmm export results/<experiment-id>/execution_<uuid>
+python tools/analyze_execution.py results/<experiment-id>/execution_<uuid>
 ```
 
-`apply --experiment <experiment-id>` composes the stable Hermes baseline with the selected
-experiment plugin/tool-routing policy and reconciles that effective state in one provisioning
-batch. `apply-tools --experiment
-<experiment-id>` performs only the experiment-facing plugin/tool reconciliation. Baseline
-`apply` returns Hermes to the experiment-independent state.
+The general analysis pipeline owns normalized export, availability, requirement estimates,
+uncertainty, and GOBPFR dimension aggregation. Experiment-specific analyses belong to Experiment
+Packages or explicit package-owned analysis configuration. Core retains reusable statistical
+capabilities, including generic interaction-analysis support, without registering historical studies
+by experiment ID.
 
-`apply` requires the persistent Hermes gateway to be stopped. It reconciles all Hermes
-settings and managed-plugin enablement inside one bounded one-off Compose container rather
-than starting a new container for every setting. The batch prints sub-operation progress
-live and has a configurable whole-batch timeout (`--timeout-seconds`, default 120). On
-timeout, failure, or interruption, the named provisioning container is cleaned up.
-
-Windows Ollama retains responsibility for Cloud authentication, so fresh Hermes setup does
-not require copying an Ollama Cloud key into the Hermes data directory.
-
-Experiment toolset selection remains outside `init`; the experiment adapter chooses it per
-run.
-
-Existing Hermes data adoption remains available as a migration fallback:
-
-```text
-acmm-infra hermes adopt-data /path/to/old/data --yes
-```
-
-See `docs/infrastructure/hermes.md`.
-
-After `doctor` reports `READY`, execute only the first deterministic magic-number slot as
-the live smoke test:
-
-```text
-acmm run magic_number_tool_use_v1 --run-index 0
-```
-
-`acmm run` also supports deterministic selection without shell loops. Each `--run-index`
-accepts either one index or an inclusive range, and repeatable `--subject` filters select
-Contract subject/agent IDs. Different selector types are intersected and overlapping index
-selectors are deduplicated. For example:
-
-```text
-acmm run controlled_tool_use_multiscenario_v1 \
-    --subject open_webui_nemotron30b --run-index 20-39
-```
-
-Use `--preview` with the same selectors to validate and print the resolved run-index, subject,
-scenario, and repetition breakdown without creating an execution directory or contacting the
-subject runtimes. For an Experiment Package, preview still activates trusted package runtime code
-from the staged snapshot so harness compatibility and runtime declarations can be checked; use
-`acmm package validate` when package code must not be executed. Preview also inspects the selected
-subjects' recorded deployment contexts; context mismatches are warnings in preview mode so planning
-remains available before deployment. When context is divergent, preview also reports whether strict
-mode would fail or whether `--apply-if-needed` grants permission to reconcile the selected subjects.
-Preview never performs that reconciliation.
-
-Before a real acquisition, `acmm run` performs package-deployment and live-readiness checks for
-exactly the selected subjects. The selected deployment must record the exact installed package,
-Contract, runtime, and per-subject apparatus identities; a package may legitimately declare no
-apparatus for a subject. Plain `acmm run` remains strict: deployment divergence aborts before an
-execution session is created. `--apply-if-needed` grants permission to run the same package-apply
-workflow for only the subjects required by the selected run set. ACMM then repeats the strict
-deployment preflight from persisted state; execution remains blocked unless that second preflight
-passes.
-
-After deployment provenance is ready, every selected subject must report `READY` through the same
-passive doctor logic used by `acmm-infra <subject> doctor`.
-
-`acmm run --start-if-needed` grants a narrower lifecycle permission. Correctly deployed subjects
-that are stopped are marked deferred during initial live preflight and are started lazily when their
-first selected run is reached. ACMM runs the doctor check immediately after startup, keeps only the
-currently needed ACMM-owned runtime alive when selected runs move between subjects, and stops only
-runtimes that ACMM itself started. A subject that was already running is never stopped by this
-policy. Wrong package/apparatus state and an already-running but unhealthy subject remain hard
-errors; the option is not an automatic repair mechanism. `--startup-timeout-seconds` controls the
-startup allowance. Repository and runtime roots are infrastructure configuration rather than run
-selection options; `ACMM_RUNTIME_ROOT` selects a non-default runtime/package store when needed.
-`--preview` performs only the local deployment-context inspection and never contacts or starts
-subject runtimes, even when `--start-if-needed` is present.
-
-`--capture-runtime-logs` enables best-effort diagnostic capture for real executions. Each subject
-runtime window is bounded from ACMM's acquisition point through the point immediately before that
-subject is released or the execution exits. Docker output is sanitized at the artifact boundary: ANSI
-terminal presentation sequences and non-text control effects are removed, carriage-return/progress
-output is normalized to readable lines, and the resulting plain UTF-8 text is written as
-`diagnostics/<subject_id>/container.log`; a later lease uses `container_2.log`, and so on. Each log
-has a neighboring `.meta.json` sidecar recording the sanitizer version, input/output UTF-8 byte
-counts, and transformation counts. Sanitization does not modify the running container or the data
-used by adapters/evaluators. These files are operational diagnostics only: they are not Run Record
-evidence, do not participate in compliance adjudication, and do not affect Contract or apparatus
-hashes. A log-capture or metadata-write failure produces a warning but does not invalidate the
-experiment. Preview mode never creates diagnostic files.
-
-`acmm run` requires one explicit installed-package selector:
-
-```text
-acmm run EXPERIMENT_ID --preview
-acmm run EXPERIMENT_ID@SHA_PREFIX --preview
-```
-
-A plain experiment ID is accepted only when exactly one installed revision exists. When multiple
-revisions are installed, the digest-qualified selector is mandatory. Deployment markers are used
-only to verify that the selected package is actually applied to the selected subjects; they never
-choose the experiment on behalf of the operator.
-
-
-The command opens and verifies the installed Experiment Package, checks harness compatibility,
-and resolves each Contract subject through the qualified subject execution catalog. Package runtime
-code is activated only from the verified staged snapshot and composed with the same core-owned
-subject adapters. Execution
-persists the exact Contract snapshot, Run Record, evidence artifacts, and package provenance when
-applicable, then re-validates the persisted Run Record. Agent-specific runtime wiring stays in the
-subject catalog rather than in experiment packages or the top-level experiment CLI.
-The subject catalog also declares which per-run termination controls each qualified runtime can
-enforce. Execution fails before acquisition when a Contract requests an unsupported control.
-Hermes supports the current `max_steps` plus `timeout_seconds` policy; smoke-qualified Open WebUI
-and Agent Zero bindings currently support timeout-only Contracts because neither product exposes
-an exact supported per-run mapping for `max_steps`.
-The Contract's Hermes subject configuration also records the required ACMM experiment-isolation
-controls (title generation off, background review off, and Tool Search off), so the persisted
-Contract hash binds each run to that methodological baseline. Standalone `doctor` remains useful for
-operator diagnostics; real `acmm run` now reuses that readiness logic automatically as its final
-pre-execution gate.
-
-At the end of `acmm run`, the terminal now keeps only a compact aggregate completion report with
-paths, selected/resolved counts, termination totals, UTC start/end timestamps, and total duration.
-The former verbose per-run replay is persisted as `execution_summary.txt` inside the execution
-directory so long acquisitions do not flood the console while the full human-readable detail is
-still retained.
-
-Ctrl+C during acquisition is handled as an interrupted execution rather than a completed one.
-Already persisted Run Records remain intact, `experiment_interruption.yaml` records the resolved,
-unfinished, and not-started selections, and `execution_summary.txt` reports the evidence that was
-actually persisted. `experiment_execution.yaml` is deliberately not written, so an interrupted
-session cannot be exported as a complete experiment. Continuation/resume is intentionally not
-supported; start a new execution instead.
-
-Omit both `--run-index` and `--subject` only when the complete Contract plan is desired.
-Deterministic CSV export remains the next layer.
-
+See `docs/analysis/`, `analysis/r/README.md`, and `tools/README.md`.

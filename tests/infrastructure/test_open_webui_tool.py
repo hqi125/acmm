@@ -9,22 +9,10 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXPERIMENT_IDS = (
-    "magic_number_tool_use_v1",
-    "controlled_tool_use_multiscenario_v1",
+TOOL_PATH = (
+    ROOT / "tools" / "fixtures" / "llm_behavioral_tool_smoke"
+    / "open-webui" / "tools" / "acmm_tools.py"
 )
-
-
-def _tool_path(experiment_id: str) -> Path:
-    return (
-        ROOT
-        / "infrastructure"
-        / "open-webui"
-        / "experiments"
-        / experiment_id
-        / "tools"
-        / "acmm_tools.py"
-    )
 
 
 class _field_definition:
@@ -55,7 +43,7 @@ def _field(*, default=None, **_kwargs):
     return _field_definition(default)
 
 
-def _load_tools_class(experiment_id: str):
+def _load_tools_class():
     # Open WebUI owns the real Pydantic dependency inside its pinned container.
     # ACMM's host-side unit tests stub only the small BaseModel/Field surface the
     # managed Tool needs so the ACMM package does not inherit Open WebUI's
@@ -70,7 +58,7 @@ def _load_tools_class(experiment_id: str):
     try:
         spec = importlib.util.spec_from_file_location(
             "acmm_open_webui_tools",
-            _tool_path(experiment_id),
+            TOOL_PATH,
         )
         assert spec is not None
         assert spec.loader is not None
@@ -84,18 +72,16 @@ def _load_tools_class(experiment_id: str):
             sys.modules["pydantic"] = previousPydantic
 
 
-@pytest.mark.parametrize("experiment_id", EXPERIMENT_IDS)
-def test_acmm_tool_initializes_runtime_valves(experiment_id: str) -> None:
-    tools = _load_tools_class(experiment_id)()
+def test_acmm_tool_initializes_runtime_valves() -> None:
+    tools = _load_tools_class()()
 
     assert tools.valves.magic_number is None
     assert tools.valves.retrieval_mode == "success"
     assert tools.valves.addition_mode == "success"
 
 
-@pytest.mark.parametrize("experiment_id", EXPERIMENT_IDS)
-def test_acmm_tool_uses_controlled_valves(experiment_id: str) -> None:
-    tools = _load_tools_class(experiment_id)()
+def test_acmm_tool_uses_controlled_valves() -> None:
+    tools = _load_tools_class()()
     tools.valves.magic_number = 87
 
     retrieval = json.loads(asyncio.run(tools.get_magic_number()))
@@ -105,9 +91,8 @@ def test_acmm_tool_uses_controlled_valves(experiment_id: str) -> None:
     assert addition == {"result": 87}
 
 
-@pytest.mark.parametrize("experiment_id", EXPERIMENT_IDS)
-def test_acmm_tool_exposes_controlled_failure_modes(experiment_id: str) -> None:
-    tools = _load_tools_class(experiment_id)()
+def test_acmm_tool_exposes_controlled_failure_modes() -> None:
+    tools = _load_tools_class()()
     tools.valves.retrieval_mode = "failure"
 
     with pytest.raises(RuntimeError, match="retrieval failure"):

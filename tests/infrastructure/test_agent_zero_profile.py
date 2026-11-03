@@ -64,31 +64,3 @@ def test_agent_zero_profile_prompts_form_one_coherent_two_field_contract() -> No
     assert "thoughts" not in response.lower()
     assert '"tool_name":"response"' in response
     assert "do not send the same json" in repeat.lower()
-def test_agent_zero_tool_prompts_state_json_argument_types() -> None:
-    prompt_root = (
-        ROOT
-        / "infrastructure"
-        / "agent-zero"
-        / "experiments"
-        / "controlled_recovery_boundary_interaction_v1"
-        / "plugins"
-        / "acmm_tools"
-        / "prompts"
-    )
-
-    read_prompt = (prompt_root / "agent.system.tool.read_record.md").read_text(
-        encoding="utf-8"
-    )
-    write_prompt = (prompt_root / "agent.system.tool.write_record.md").read_text(
-        encoding="utf-8"
-    )
-    recovery_prompt = (
-        prompt_root / "agent.system.tool.recover_write_record.md"
-    ).read_text(encoding="utf-8")
-
-    assert "JSON string" in read_prompt
-    assert "JSON integer; do not quote" in write_prompt
-    assert '"value":41' in write_prompt
-    assert "JSON integer; do not quote" in recovery_prompt
-    assert '"value":41' in recovery_prompt
-

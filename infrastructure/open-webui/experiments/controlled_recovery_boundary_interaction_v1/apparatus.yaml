@@ -1,9 +1,0 @@
-schema_version: "0.1"
-experiment_id: controlled_recovery_boundary_interaction_v1
-
-tools:
-  managed:
-    - id: acmm_tools
-      name: ACMM Recovery-Boundary Tools
-      description: Controlled recovery workspace used by the ACMM interaction experiment.
-      source: experiments/controlled_recovery_boundary_interaction_v1/tools/acmm_tools.py

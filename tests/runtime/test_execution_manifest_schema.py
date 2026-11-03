@@ -9,7 +9,6 @@ import pytest
 import yaml
 
 from acmm.contract.loader import load_contract
-from acmm.pilots.magic_number import build_magic_number_registry
 from acmm.runtime.execution_manifest import (
     EXPERIMENT_EXECUTION_SCHEMA_VERSION,
     load_execution_manifest_schema,
@@ -25,7 +24,9 @@ from acmm.runtime.interfaces import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CONTRACT_PATH = ROOT / "experiments" / "examples" / "magic_number" / "experiment.yaml"
+CONTRACT_PATH = (
+    ROOT / "tests" / "fixtures" / "contracts" / "valid" / "runtime_execution.yaml"
+)
 EXECUTION_ID = "10000000-0000-4000-8000-000000000001"
 
 
@@ -54,7 +55,7 @@ class sequence_adapter:
                     id="tool_calls",
                     channel="tool_calls",
                     artifact="evidence/tool_calls.json",
-                    content=b'[{"name":"get_magic_number"}]',
+                    content=b'[{"name":"get_fixture_value"}]',
                 ),
                 captured_evidence(
                     id="tool_results",
@@ -75,7 +76,7 @@ class sequence_adapter:
                     "version": "0.21.3",
                 },
                 "model": {
-                    "name": "nemotron-3-nano:30b-cloud",
+                    "name": "gpt-oss:120b-cloud",
                     "provider": "ollama_cloud",
                 },
                 "configuration": dict(subject.get("configuration", {})),
@@ -84,10 +85,37 @@ class sequence_adapter:
 
 
 def _registry(adapter: sequence_adapter):
-    return build_magic_number_registry(
-        {
-            "hermes_nemotron30b": adapter,
-        }
+    from acmm.runtime.interfaces import evaluation_context, judgment_result, prepared_environment
+    from acmm.runtime.registry import execution_registry
+
+    class fixture:
+        def prepare(self, scenario: dict, reset: dict) -> prepared_environment:
+            del scenario, reset
+            return prepared_environment(handle={}, provenance={"fixture": "synthetic_environment_v1"})
+
+    class evaluator:
+        def evaluate(self, context: evaluation_context) -> judgment_result:
+            if context.opportunity["id"] == "retrieve":
+                evidence_ids = ("tool_calls", "tool_results")
+            else:
+                evidence_ids = ("tool_calls", "tool_results", "final_response")
+            return judgment_result(outcome="compliant", evidence_ids=evidence_ids)
+
+    item = evaluator()
+    return execution_registry(
+        subject_adapters={"hermes_gpt_oss120b": adapter},
+        fixtures={"synthetic_environment_v1": fixture()},
+        evaluators={
+            "synthetic_retrieval": item,
+            "synthetic_addition": item,
+        },
+        subject_configuration_overlays={
+            "hermes_gpt_oss120b": {
+                "llm_baseline_id": "gpt_oss_120b_cloud_v1",
+                "llm_minimum_context_window": 64000,
+                "llm_requested_context_window": 64000,
+            }
+        },
     )
 
 

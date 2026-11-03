@@ -3,21 +3,16 @@ from pathlib import Path
 from acmm.cli import _build_parser
 from acmm_infra.deployment import write_experiment_apparatus_state
 from experiment_package.support import (
-    CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+    PACKAGE_SMOKE_CONTRACT,
+    SMOKE_RUNTIME_SOURCE,
     install_test_package,
     write_package_context,
 )
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CONTRACT = (
-    ROOT
-    / "experiments"
-    / "examples"
-    / "controlled_tool_use_multiscenario"
-    / "experiment.yaml"
-)
-EXPERIMENT_ID = "controlled_tool_use_multiscenario_v1"
+CONTRACT = PACKAGE_SMOKE_CONTRACT
+EXPERIMENT_ID = "package_smoke_v1"
 
 
 def test_real_run_rejects_wrong_deployment_context_before_execution(
@@ -29,11 +24,11 @@ def test_real_run_rejects_wrong_deployment_context_before_execution(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
     write_experiment_apparatus_state(
         runtime_root / "hermes",
-        experiment_id="magic_number_tool_use_v1",
+        experiment_id="other_package_v1",
         source_sha256=None,
         application_scope="experiment",
         resources=[],
@@ -62,7 +57,7 @@ def test_real_run_rejects_wrong_deployment_context_before_execution(
     assert args.handler(args) == 2
     assert not (tmp_path / "results").exists()
     captured = capsys.readouterr()
-    assert "active experiment is 'magic_number_tool_use_v1'" in captured.err
+    assert "active experiment is 'other_package_v1'" in captured.err
     assert "no execution session was created" in captured.err
 
 
@@ -83,12 +78,12 @@ def test_real_run_requires_selected_subjects_to_converge_on_contract_experiment(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
-    write_package_context(package, runtime_root, "hermes_nemotron30b")
+    write_package_context(package, runtime_root, "hermes_gpt_oss120b")
     write_experiment_apparatus_state(
         runtime_root / "open-webui",
-        experiment_id="magic_number_tool_use_v1",
+        experiment_id="other_package_v1",
         source_sha256=None,
         application_scope="experiment",
         resources=[],
@@ -102,7 +97,7 @@ def test_real_run_requires_selected_subjects_to_converge_on_contract_experiment(
             "--run-index",
             "0",
             "--run-index",
-            "20",
+            "2",
             "--results-root",
             str(tmp_path / "results"),
         ]
@@ -112,9 +107,9 @@ def test_real_run_requires_selected_subjects_to_converge_on_contract_experiment(
     assert not (tmp_path / "results").exists()
 
     captured = capsys.readouterr()
-    assert "  hermes_nemotron30b:\n    context:           ready" in captured.out
-    assert "  open_webui_nemotron30b:\n    context:           not-ready" in captured.out
-    assert "active experiment is 'magic_number_tool_use_v1'" in captured.err
+    assert "  hermes_gpt_oss120b:\n    context:           ready" in captured.out
+    assert "  open_webui_gpt_oss120b:\n    context:           not-ready" in captured.out
+    assert "active experiment is 'other_package_v1'" in captured.err
     assert "no execution session was created" in captured.err
 
 
@@ -135,26 +130,26 @@ def test_real_run_rejects_live_not_ready_before_adapter_construction(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
-    write_package_context(package, runtime_root, "hermes_nemotron30b")
+    write_package_context(package, runtime_root, "hermes_gpt_oss120b")
 
     binding = _binding_with_builder(
-        "hermes_nemotron30b",
+        "hermes_gpt_oss120b",
         lambda: (_ for _ in ()).throw(
             AssertionError("adapter construction must not occur after live failure")
         ),
     )
     monkeypatch.setattr(
         "acmm.cli.lookup_subject_execution_binding",
-        lambda subject_id: binding if subject_id == "hermes_nemotron30b" else None,
+        lambda subject_id: binding if subject_id == "hermes_gpt_oss120b" else None,
     )
     monkeypatch.setattr(
         "acmm.cli.inspect_live_readiness",
         lambda **kwargs: live_readiness_preflight_result(
             subjects=(
                 subject_live_readiness(
-                    subject_id="hermes_nemotron30b",
+                    subject_id="hermes_gpt_oss120b",
                     infrastructure_subject="hermes",
                     experiment_id=EXPERIMENT_ID,
                     checks=(
@@ -187,7 +182,7 @@ def test_real_run_rejects_live_not_ready_before_adapter_construction(
 
     captured = capsys.readouterr()
     assert "Live readiness preflight:" in captured.out
-    assert "  hermes_nemotron30b:\n    readiness: not-ready" in captured.out
+    assert "  hermes_gpt_oss120b:\n    readiness: not-ready" in captured.out
     assert "[container_running]" in captured.err
     assert "no execution session was created" in captured.err
 
@@ -201,9 +196,9 @@ def test_preview_does_not_run_live_readiness(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
-    write_package_context(package, runtime_root, "hermes_nemotron30b")
+    write_package_context(package, runtime_root, "hermes_gpt_oss120b")
 
     def forbidden_live_readiness(**kwargs):
         del kwargs
@@ -247,10 +242,10 @@ def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
-    write_package_context(package, runtime_root, "hermes_nemotron30b")
-    write_package_context(package, runtime_root, "open_webui_nemotron30b")
+    write_package_context(package, runtime_root, "hermes_gpt_oss120b")
+    write_package_context(package, runtime_root, "open_webui_gpt_oss120b")
 
     events: list[str] = []
 
@@ -279,8 +274,8 @@ def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
             return True
 
     leases = {
-        "hermes_nemotron30b": fake_lease("hermes_nemotron30b"),
-        "open_webui_nemotron30b": fake_lease("open_webui_nemotron30b"),
+        "hermes_gpt_oss120b": fake_lease("hermes_gpt_oss120b"),
+        "open_webui_gpt_oss120b": fake_lease("open_webui_gpt_oss120b"),
     }
     monkeypatch.setattr(
         "acmm.cli._discover_runtime_leases",
@@ -309,7 +304,7 @@ def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
         before_run(
             planned_run(
                 run_index=0,
-                subject_id="hermes_nemotron30b",
+                subject_id="hermes_gpt_oss120b",
                 scenario_id="single_addition_success",
                 repetition=1,
             )
@@ -317,7 +312,7 @@ def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
         before_run(
             planned_run(
                 run_index=20,
-                subject_id="open_webui_nemotron30b",
+                subject_id="open_webui_gpt_oss120b",
                 scenario_id="single_addition_success",
                 repetition=1,
             )
@@ -334,7 +329,7 @@ def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
             "--run-index",
             "0",
             "--run-index",
-            "20",
+            "2",
             "--start-if-needed",
             "--startup-timeout-seconds",
             "30",
@@ -345,10 +340,10 @@ def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
 
     assert args.handler(args) == 2
     assert events == [
-        "start:hermes_nemotron30b",
-        "stop:hermes_nemotron30b",
-        "start:open_webui_nemotron30b",
-        "stop:open_webui_nemotron30b",
+        "start:hermes_gpt_oss120b",
+        "stop:hermes_gpt_oss120b",
+        "start:open_webui_gpt_oss120b",
+        "stop:open_webui_gpt_oss120b",
     ]
 
     output = capsys.readouterr().out
@@ -368,10 +363,10 @@ def test_preview_start_if_needed_remains_non_contacting(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=CONTROLLED_TOOL_USE_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
-    write_package_context(package, runtime_root, "hermes_nemotron30b")
-    write_package_context(package, runtime_root, "open_webui_nemotron30b")
+    write_package_context(package, runtime_root, "hermes_gpt_oss120b")
+    write_package_context(package, runtime_root, "open_webui_gpt_oss120b")
 
     monkeypatch.setattr(
         "acmm.cli._discover_runtime_leases",

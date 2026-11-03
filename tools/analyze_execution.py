@@ -16,20 +16,13 @@ from acmm.analysis.availability_workbook import (
     availability_workbook_error,
     build_availability_workbook,
 )
-from acmm.analysis.interaction_workbook import (
-    INTERACTION_WORKBOOK_NAME,
-    build_interaction_workbook,
-    interaction_workbook_error,
-)
 from acmm.analysis.layout import (
     AVAILABILITY_SCOPE,
     COMPLIANCE_SCOPE,
-    INTERACTION_SCOPE,
     analysis_data_dir,
     analysis_log_dir,
     analysis_output_dir,
 )
-from acmm.analysis.supplementary import get_supplementary_analysis
 from acmm.analysis.workbook import (
     WORKBOOK_NAME,
     analysis_workbook_error,
@@ -160,7 +153,7 @@ def _resolve_program(name: str) -> str:
     return path
 
 
-def _preflight(supplementary_script_name: str | None = None) -> tuple[str, str]:
+def _preflight() -> tuple[str, str]:
     acmm_command = _resolve_program("acmm")
     rscript_command = _resolve_program("Rscript")
 
@@ -172,9 +165,6 @@ def _preflight(supplementary_script_name: str | None = None) -> tuple[str, str]:
 
     script_names = [stage[1] for stage in _R_STAGES]
     script_names.append(_AVAILABILITY_SCRIPT_NAME)
-    if supplementary_script_name is not None:
-        script_names.append(supplementary_script_name)
-
     for script_name in script_names:
         script_path = _R_SCRIPT_ROOT / script_name
 
@@ -362,22 +352,8 @@ def run_analysis_workflow(
         )
 
     execution_id, experiment_id = _load_execution_identity(execution_dir)
-    supplementary = get_supplementary_analysis(experiment_id)
-    supplementary_design_path = (
-        _REPO_ROOT / supplementary.design_path
-        if supplementary is not None
-        else None
-    )
-    total_stages = BASE_TOTAL_STAGES + (2 if supplementary is not None else 0)
-    if supplementary is None:
-        acmm_command, rscript_command = _preflight()
-    else:
-        acmm_command, rscript_command = _preflight(supplementary.script_name)
-        if supplementary_design_path is None or not supplementary_design_path.is_file():
-            raise analysis_workflow_error(
-                "Registered supplementary analysis design is missing: "
-                f"'{supplementary_design_path}'."
-            )
+    total_stages = BASE_TOTAL_STAGES
+    acmm_command, rscript_command = _preflight()
     export_dir = _EXPORT_ROOT / experiment_id / f"execution_{execution_id}"
 
     if export_dir.exists():
@@ -411,7 +387,6 @@ def run_analysis_workflow(
     compliance_data_dir = analysis_data_dir(export_dir, COMPLIANCE_SCOPE)
     compliance_log_dir = analysis_log_dir(export_dir, COMPLIANCE_SCOPE)
     availability_log_dir = analysis_log_dir(export_dir, AVAILABILITY_SCOPE)
-    interaction_log_dir = analysis_log_dir(export_dir, INTERACTION_SCOPE)
 
     population_policy, selected_count, resolved_count = _resolve_population_policy(
         export_dir
@@ -540,54 +515,6 @@ def run_analysis_workflow(
         return 1
     print(f"      output: {availability_workbook_path}")
 
-    interaction_workbook_path = None
-    if supplementary is not None:
-        supplementary_stage = BASE_TOTAL_STAGES + 1
-        supplementary_output = interaction_log_dir / supplementary.text_output_name
-        supplementary_command = (
-            rscript_command,
-            str(_R_SCRIPT_ROOT / supplementary.script_name),
-            str(export_dir),
-            str(BOOTSTRAP_REPLICATES),
-            str(BOOTSTRAP_SEED),
-            str(CONFIDENCE_LEVEL),
-            str(output_dir),
-            str(supplementary_design_path),
-            f"--population-policy={population_policy}",
-        )
-        print(
-            f"[{supplementary_stage}/{total_stages}] "
-            f"Running {supplementary.label}..."
-        )
-        return_code = _run_and_save(supplementary_command, supplementary_output)
-        if return_code != 0:
-            print(
-                f"ERROR: {supplementary.script_name} failed with exit code "
-                f"{return_code}.",
-                file=sys.stderr,
-            )
-            print(
-                f"Failed output: {_failed_output_path(supplementary_output)}",
-                file=sys.stderr,
-            )
-            print("Analysis stopped.", file=sys.stderr)
-            return return_code if return_code > 0 else 1
-        print(f"      output: {supplementary_output}")
-
-        interaction_workbook_path = output_dir / INTERACTION_WORKBOOK_NAME
-        print(f"[{total_stages}/{total_stages}] Building interaction workbook...")
-        try:
-            build_interaction_workbook(
-                export_dir,
-                interaction_workbook_path,
-                supplementary_design_path,
-            )
-        except interaction_workbook_error as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            print("Analysis stopped.", file=sys.stderr)
-            return 1
-        print(f"      output: {interaction_workbook_path}")
-
     print("\nAnalysis workflow completed successfully.")
     print(f"  execution:       {execution_id}")
     print(f"  experiment:      {experiment_id}")
@@ -599,8 +526,6 @@ def run_analysis_workflow(
     print(f"  analysis output: {output_dir}")
     print(f"  Excel report:    {workbook_path}")
     print(f"  Availability:    {availability_workbook_path}")
-    if interaction_workbook_path is not None:
-        print(f"  Interaction:     {interaction_workbook_path}")
     return 0
 
 

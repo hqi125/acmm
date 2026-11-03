@@ -20,11 +20,6 @@ from acmm_infra.deployment import (
     write_llm_baseline_state,
 )
 from acmm_infra.docker import docker_client, require_success
-from acmm_infra.profiles.experiments import (
-    experiment_apparatus_sha256,
-    registered_experiment_apparatus_ids,
-    with_hermes_experiment,
-)
 from acmm_infra.profiles.hermes import hermes_profile, managed_hermes_plugin
 from acmm_infra.source_tree import (
     copytree_ignore_generated,
@@ -45,6 +40,7 @@ class hermes_manager:
         docker: docker_client,
         experiment_id: str | None = None,
         deployment_provenance: experiment_deployment_provenance | None = None,
+        apparatus_source_sha256: str | None = None,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.runtime_root = Path(runtime_root).expanduser().resolve()
@@ -52,6 +48,7 @@ class hermes_manager:
         self.docker = docker
         self.experiment_id = experiment_id
         self.deployment_provenance = deployment_provenance
+        self.apparatus_source_sha256 = apparatus_source_sha256
         self._validate_deployment_provenance("hermes")
         self.client = hermes_client(docker)
         self.deployment_root = (
@@ -92,13 +89,15 @@ class hermes_manager:
         infrastructure_subject: str,
         experiment_id: str,
     ) -> str | None:
+        del infrastructure_subject
         provenance = self.deployment_provenance
         if provenance is not None:
             return provenance.apparatus_sha256
-        return experiment_apparatus_sha256(
-            self.repo_root,
-            infrastructure_subject,
-            experiment_id,
+        if self.apparatus_source_sha256 is not None:
+            return self.apparatus_source_sha256
+        raise infrastructure_error(
+            f"Experiment apparatus '{experiment_id}' has no package provenance or "
+            "explicit apparatus source identity."
         )
 
     def init_runtime(self) -> None:
@@ -1234,27 +1233,6 @@ class hermes_manager:
                         name,
                         destination,
                         tuple(item for item in toolsets_value.split(",") if item),
-                    )
-
-        for experiment_id in registered_experiment_apparatus_ids(
-            self.repo_root,
-            "hermes",
-        ):
-            profile = with_hermes_experiment(
-                self.repo_root,
-                self.profile,
-                experiment_id,
-            )
-            for plugin in profile.plugins:
-                deployed = _safe_runtime_target(
-                    self.data_root,
-                    plugin.destination,
-                )
-                if deployed.exists():
-                    add_stale(
-                        plugin.name,
-                        plugin.destination.as_posix(),
-                        plugin.toolsets,
                     )
 
         return list(stale.values())

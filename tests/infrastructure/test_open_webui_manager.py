@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 
 from acmm.experiment_package.provenance import (
@@ -8,16 +9,29 @@ from acmm.experiment_package.provenance import (
 from acmm_infra.open_webui import open_webui_manager
 from acmm_infra.process import command_result
 from acmm_infra.profiles.experiments import (
-    experiment_apparatus_sha256,
-    with_open_webui_experiment,
+    apparatus_tree_sha256,
+    with_open_webui_apparatus,
 )
 from acmm_infra.profiles.open_webui import load_open_webui_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXPERIMENT_ID = "controlled_tool_use_multiscenario_v1"
+EXPERIMENT_ID = "manager_apparatus_fixture_v1"
 
 EXTERNAL_PACKAGE_EXPERIMENT_ID = "external_package_doctor_v1"
+
+
+def _apparatus_root(tmp_path: Path, experiment_id: str = EXPERIMENT_ID) -> Path:
+    source = ROOT / "tools" / "fixtures" / "llm_behavioral_tool_smoke" / "open-webui"
+    target = tmp_path / "apparatus-source" / "open-webui" / experiment_id
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(source, target)
+    manifest = target / "apparatus.yaml"
+    text = manifest.read_text(encoding="utf-8")
+    text = text.replace("llm_behavioral_tool_smoke_v1", experiment_id)
+    manifest.write_text(text, encoding="utf-8")
+    return target
 
 
 def _package_provenance(
@@ -168,7 +182,7 @@ class fake_open_webui_api:
 def _manager(tmp_path: Path, *, experiment: bool = False):
     profile = load_open_webui_profile(ROOT)
     if experiment:
-        profile = with_open_webui_experiment(ROOT, profile, EXPERIMENT_ID)
+        profile = with_open_webui_apparatus(_apparatus_root(tmp_path), profile, EXPERIMENT_ID)
     docker = fake_docker()
     api = fake_open_webui_api(profile.model_default)
     return (
@@ -179,6 +193,9 @@ def _manager(tmp_path: Path, *, experiment: bool = False):
             docker,
             api,
             experiment_id=EXPERIMENT_ID if experiment else None,
+            apparatus_source_sha256=(
+                apparatus_tree_sha256(_apparatus_root(tmp_path)) if experiment else None
+            ),
         ),
         docker,
         api,
@@ -190,11 +207,7 @@ def _experiment_manager(
     docker: fake_docker,
     api: fake_open_webui_api,
 ) -> open_webui_manager:
-    profile = with_open_webui_experiment(
-        ROOT,
-        load_open_webui_profile(ROOT),
-        EXPERIMENT_ID,
-    )
+    profile = with_open_webui_apparatus(_apparatus_root(tmp_path), load_open_webui_profile(ROOT), EXPERIMENT_ID)
     return open_webui_manager(
         ROOT,
         tmp_path,
@@ -202,6 +215,7 @@ def _experiment_manager(
         docker,
         api,
         experiment_id=EXPERIMENT_ID,
+        apparatus_source_sha256=apparatus_tree_sha256(_apparatus_root(tmp_path)),
     )
 
 
@@ -452,16 +466,8 @@ def test_doctor_detects_experiment_isolation_drift(tmp_path: Path) -> None:
 def test_package_backed_doctor_uses_package_apparatus_identity(
     tmp_path: Path,
 ) -> None:
-    profile = with_open_webui_experiment(
-        ROOT,
-        load_open_webui_profile(ROOT),
-        EXPERIMENT_ID,
-    )
-    apparatus_sha256 = experiment_apparatus_sha256(
-        ROOT,
-        "open-webui",
-        EXPERIMENT_ID,
-    )
+    profile = with_open_webui_apparatus(_apparatus_root(tmp_path), load_open_webui_profile(ROOT), EXPERIMENT_ID)
+    apparatus_sha256 = apparatus_tree_sha256(_apparatus_root(tmp_path))
     docker = fake_docker()
     api = fake_open_webui_api(profile.model_default)
     manager = open_webui_manager(

@@ -54,19 +54,11 @@ exit and its persisted session can be exported; that harness grace does not exte
 internal run budget.
 
 For Docker-hosted Hermes, the adapter invokes `/opt/hermes/bin/hermes` with `docker exec`.
-The prepared runtime environment supplied by the concrete pilot is treated only as a
+The prepared runtime environment supplied by the package fixture is treated only as a
 string-to-string environment-variable mapping. The Hermes adapter has no knowledge of
-fixture-specific concepts such as magic numbers or workspace paths.
+fixture-specific concepts such as record values, workspace paths, or Tool configuration semantics.
 
-For the first pilot, `magic_number_fixture` owns the concrete binding:
-
-```text
-magic_number = 87
-    -> ACMM_MAGIC_NUMBER=87
-    -> generic Hermes runtime environment
-```
-
-A later pilot can provide different environment variables without changing the Hermes
+A package fixture can provide experiment-specific environment variables without changing the Hermes
 invocation code.
 
 ## Evidence normalization
@@ -98,23 +90,10 @@ compatibility/forensics safeguard for persisted sessions.
 
 ## Request accounting
 
-For the magic-number pilot, the two tools are causally dependent:
-
-```text
-model call 1 -> get_magic_number
-tool result  -> 87
-model call 2 -> add_numbers(87, 13)
-tool result  -> 100
-model call 3 -> final response
-```
-
-Three model requests are therefore the normal successful main-agent path. Hermes also has
-auxiliary features that can make model calls independently of this loop, notably automatic
-session-title generation. ACMM disables title generation and background review in its
-experiment-isolation profile so those auxiliary calls do not contaminate request accounting.
-
-The request count is an operational diagnostic, not an ACMM outcome: provider retry or
-transport failure can still create additional upstream requests.
+Hermes may require multiple model requests across a multi-step Tool loop. ACMM disables known
+auxiliary title-generation/background-review paths in the qualified baseline so those features do not
+silently add unrelated requests. Provider request counts remain operational diagnostics rather than
+ACMM outcomes because retries, transport behavior, or concurrent account activity can change them.
 
 ## Termination mapping
 
@@ -125,53 +104,32 @@ experimental terminations.
 Failure to launch Hermes, obtain/export the session, parse the exported evidence, or verify
 the subject model maps to `harness_error` and therefore an invalid Run Record.
 
-## Magic-number evaluators
+## Evaluator boundary
 
-The pilot evaluates actual tool behavior rather than trusting final prose.
-
-The retrieval opportunity requires an actual normalized `get_magic_number` call with a
-successful result equal to the expected value.
-
-The calculation opportunity requires an actual normalized `add_numbers` call using the
-retrieved magic number and requested addend, its corresponding successful result, and a
-final response reporting the correct result.
+The Hermes adapter normalizes evidence; it does not know a package's requirement semantics. Package
+runtime evaluators judge the resulting normalized Tool calls/results and final response. This keeps
+one adapter reusable across studies.
 
 ## Managed infrastructure
 
-The repository-owned plugin source is:
+Hermes baseline state lives under `infrastructure/hermes/`. Research plugins/toolsets are supplied by
+the selected installed Experiment Package from its staged apparatus root. Package application is
+performed through:
 
 ```text
-infrastructure/hermes/experiments/magic_number_tool_use_v1/plugins/acmm-tools/
+acmm package apply <experiment-selector>
 ```
 
-Before a live pilot run, reconcile and verify that experiment's apparatus:
+or permissioned per-execution reconciliation with `acmm run <selector> --apply-if-needed`.
+`acmm-infra hermes apply` remains baseline-only.
+
+## Live execution
+
+Run an installed package through the common execution surface:
 
 ```text
-acmm-infra hermes down
-acmm-infra hermes apply --experiment magic_number_tool_use_v1
-acmm-infra hermes up
-acmm-infra hermes doctor
+acmm run <experiment-selector> --run-index 0 --subject <hermes-subject-id>
 ```
 
-The qualified Hermes baseline itself remains experiment-independent.
-
-A change to the model route, Blank Slate baseline, or ACMM experiment-isolation settings is
-covered by the preferred `acmm-infra hermes apply --experiment <experiment-id>` path, which
-reconciles the baseline before applying the selected experiment overlay.
-
-## Live pilot command
-
-The single-slot smoke test is:
-
-```text
-acmm run magic_number_tool_use_v1 --run-index 0
-```
-
-The experiment layer explicitly requests the `acmm` toolset for the run; infrastructure
-continues to own the qualified subject baseline.
-
-The magic-number Contract records the ACMM experiment-isolation controls under the subject's
-open `configuration` mapping. Those values identify the qualified configuration required by
-the run; `acmm-infra hermes doctor` remains the observed-state gate that verifies the live
-Hermes deployment before acquisition. The Run Record additionally records run-time subject
-facts such as Hermes's reported model and session ID.
+The package runtime declares required Tool capabilities while infrastructure owns the qualified Hermes
+baseline. `acmm run` verifies package deployment and live readiness before acquisition.

@@ -69,7 +69,7 @@ _INTEGER_COLUMNS = {
 
 
 class interaction_workbook_error(ValueError):
-    """Raised when the supplementary interaction workbook cannot be built."""
+    """Raised when the interaction workbook cannot be built."""
 
 
 @dataclass(frozen=True)

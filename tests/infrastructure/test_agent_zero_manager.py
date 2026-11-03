@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 
 from acmm.experiment_package.provenance import (
@@ -9,15 +10,28 @@ from acmm_infra.agent_zero import agent_zero_manager
 from acmm_infra.process import command_result
 from acmm_infra.profiles.agent_zero import load_agent_zero_profile
 from acmm_infra.profiles.experiments import (
-    experiment_apparatus_sha256,
-    with_agent_zero_experiment,
+    apparatus_tree_sha256,
+    with_agent_zero_apparatus,
 )
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXPERIMENT_ID = "controlled_tool_use_multiscenario_v1"
+EXPERIMENT_ID = "manager_apparatus_fixture_v1"
 
 EXTERNAL_PACKAGE_EXPERIMENT_ID = "external_package_doctor_v1"
+
+
+def _apparatus_root(tmp_path: Path, experiment_id: str = EXPERIMENT_ID) -> Path:
+    source = ROOT / "tools" / "fixtures" / "llm_behavioral_tool_smoke" / "agent-zero"
+    target = tmp_path / "apparatus-source" / "agent-zero" / experiment_id
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(source, target)
+    manifest = target / "apparatus.yaml"
+    text = manifest.read_text(encoding="utf-8")
+    text = text.replace("llm_behavioral_tool_smoke_v1", experiment_id)
+    manifest.write_text(text, encoding="utf-8")
+    return target
 
 
 def _package_provenance(
@@ -200,7 +214,7 @@ class fake_api:
 def _manager(tmp_path: Path, *, experiment: bool = False):
     profile = load_agent_zero_profile(ROOT)
     if experiment:
-        profile = with_agent_zero_experiment(ROOT, profile, EXPERIMENT_ID)
+        profile = with_agent_zero_apparatus(_apparatus_root(tmp_path), profile, EXPERIMENT_ID)
     docker = fake_docker()
     api = fake_api(profile)
     manager = agent_zero_manager(
@@ -210,6 +224,9 @@ def _manager(tmp_path: Path, *, experiment: bool = False):
         docker,
         api=api,
         experiment_id=EXPERIMENT_ID if experiment else None,
+        apparatus_source_sha256=(
+            apparatus_tree_sha256(_apparatus_root(tmp_path)) if experiment else None
+        ),
     )
     docker.host_data_root = manager.data_root
     manager._probe_ready = lambda: (True, "HTTP 200")
@@ -221,11 +238,7 @@ def _experiment_manager(
     docker: fake_docker,
     api: fake_api,
 ) -> agent_zero_manager:
-    profile = with_agent_zero_experiment(
-        ROOT,
-        load_agent_zero_profile(ROOT),
-        EXPERIMENT_ID,
-    )
+    profile = with_agent_zero_apparatus(_apparatus_root(tmp_path), load_agent_zero_profile(ROOT), EXPERIMENT_ID)
     manager = agent_zero_manager(
         ROOT,
         tmp_path,
@@ -233,6 +246,7 @@ def _experiment_manager(
         docker,
         api=api,
         experiment_id=EXPERIMENT_ID,
+        apparatus_source_sha256=apparatus_tree_sha256(_apparatus_root(tmp_path)),
     )
     docker.host_data_root = manager.data_root
     manager._probe_ready = lambda: (True, "HTTP 200")
@@ -320,15 +334,9 @@ def test_apply_experiment_repairs_plugin_drift(tmp_path: Path) -> None:
     result = manager.apply_experiment(EXPERIMENT_ID)
 
     assert result["plugins_synchronized"] == ("acmm_tools",)
-    source = (
-        ROOT
-        / "infrastructure"
-        / "agent-zero"
-        / "experiments"
-        / EXPERIMENT_ID
-        / "plugins"
-        / "acmm_tools"
-    )
+    plugin = manager.profile.plugins[0]
+    assert plugin.source_root is not None
+    source = plugin.source_root / plugin.source
     assert destination.read_bytes() == (source / "plugin.yaml").read_bytes()
 
 
@@ -713,16 +721,8 @@ def test_doctor_detects_agent_zero_image_drift(tmp_path: Path) -> None:
 def test_package_backed_doctor_uses_package_apparatus_identity(
     tmp_path: Path,
 ) -> None:
-    profile = with_agent_zero_experiment(
-        ROOT,
-        load_agent_zero_profile(ROOT),
-        EXPERIMENT_ID,
-    )
-    apparatus_sha256 = experiment_apparatus_sha256(
-        ROOT,
-        "agent-zero",
-        EXPERIMENT_ID,
-    )
+    profile = with_agent_zero_apparatus(_apparatus_root(tmp_path), load_agent_zero_profile(ROOT), EXPERIMENT_ID)
+    apparatus_sha256 = apparatus_tree_sha256(_apparatus_root(tmp_path))
     docker = fake_docker()
     api = fake_api(profile)
     manager = agent_zero_manager(

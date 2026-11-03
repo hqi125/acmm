@@ -1,149 +1,60 @@
 # Experiment Package Architecture
 
-## Status
-
-This document defines the EP-0 architecture for ACMM Experiment Packages. It is the design
-baseline for the package loader, runtime boundary, apparatus refactor, provenance model, and later
-externalization work.
-
-The design deliberately preserves the existing ACMM Experiment Contract, runtime execution model,
-subject adapters, qualified subject catalog, LLM-baseline workflow, and agent infrastructure. The
-purpose of Experiment Package work is to move experiment-specific ownership out of the main
-repository without redesigning those stable layers unnecessarily.
-
 ## Purpose
 
-An **Experiment Package** is a self-contained research artifact containing the material specific to
-one experiment that ACMM needs to validate, deploy, execute, evaluate, analyze, and reproduce.
+An Experiment Package is the sole research-experiment identity used by current ACMM. Core owns the
+measurement/runtime platform; packages own study-specific scientific and executable material.
 
-The package is not a Python distribution and is not installed with `pip`. ACMM infrastructure owns
-package acquisition and deployment. The initial package form is a validated filesystem directory;
-future archive, registry, Git-release, or Python-distribution transports may be added without
-changing the logical package contract.
+A package is a self-contained, versioned research artifact containing everything specific to one
+experiment that ACMM needs to validate, stage, deploy, execute, evaluate, analyze, and reproduce.
+Package identity is exact: the human-readable experiment ID identifies the study, while the package
+SHA-256 identifies one immutable package revision.
 
-The architectural goal is:
-
-```text
-ACMM main repo
-    |
-    +-- Experiment Contract/schema validation
-    +-- package loader and staging
-    +-- subject catalog and LLM baselines
-    +-- subject adapters
-    +-- agent infrastructure/deployment engines
-    +-- runtime orchestration and evidence normalization
-    +-- ACMM scoring and generic analysis
-    +-- persistence and provenance
-    |
-    v
-Experiment Package
-    |
-    +-- experiment.yaml
-    +-- experiment-specific runtime code
-    +-- experiment-specific apparatus/configuration
-    +-- experiment-specific analysis declarations/resources
-    +-- experiment assets and documentation
-```
-
-The main repo knows **how to run an experiment package**. It should not need a source-code edit to
-know **which experiments exist**.
-
-## Non-goals
-
-Experiment Package work does not move or redesign subject adapters. Adapter externalization, if it
-is ever useful, is a separate packaging problem.
-
-EP-0 also does not define:
-
-- a public package registry;
-- remote package download;
-- `pip` installation of experiments;
-- package-specific Python dependency installation;
-- a new subject/model identity system;
-- a replacement for the Experiment Contract;
-- a replacement for the existing ACMM execution registry internals;
-- arbitrary package-controlled changes to qualified agent baselines; or
-- secret/credential storage inside an experiment package.
-
-## Terminology
-
-The following terms have distinct responsibilities.
-
-### Experiment Package
-
-The complete external research artifact. A package binds the Contract, executable experiment
-runtime, subject-specific apparatus, analysis resources, assets, and documentation.
-
-### Package Manifest
-
-`experiment-package.yaml` at package root. It identifies the package components and declares the
-Experiment Package schema/runtime API versions required to consume them. The main repo owns each
-versioned manifest schema as a standalone JSON Schema file under
-`src/acmm/experiment_package/schemas/`; packages conform to that schema but do not carry their own
-copy.
-
-### Experiment Contract
-
-The existing ACMM experiment declaration, normally `experiment.yaml`. It remains the scientific
-and normative description of subjects, scenarios, requirements, opportunities, checks, evidence
-policy, reset behavior, run ordering, pacing, and termination.
-
-### Experiment Runtime
-
-Trusted experiment-specific Python code providing fixtures, evaluators, and harness capability
-metadata through a narrow public ACMM API. It does not own subject adapters or infrastructure.
-
-### Experiment Apparatus
-
-Experiment-specific deployment/configuration layered onto a qualified subject baseline. Apparatus
-may include tools, plugins, MCP configuration, or an explicitly manipulated agent feature when the
-experiment requires it. The main repo owns the mechanism that validates and applies those deltas.
-
-### Experiment Analysis
-
-Experiment-specific analysis declarations, designs, scripts, or other resources. Generic ACMM
-analysis remains in the main repo.
-
-### Package Source
-
-The researcher-selected directory containing an Experiment Package before ACMM acquisition.
-
-### Staged Package
-
-The validated, digest-identified snapshot copied into the ACMM runtime root. Deployment and
-execution consume the staged package rather than continuing to depend on mutable source files.
+Core does **not** contain a built-in experiment catalog, canonical research Contracts, pilot runtime
+modules, or per-agent research apparatus directories.
 
 ## Ownership boundary
 
-The package/main-repo boundary is intentionally strict.
+ACMM Core owns:
 
-| Concern | Main repo | Experiment package |
-| --- | --- | --- |
-| Contract schema and semantics | Owns | Uses |
-| Package schema/loader/stager | Owns | Conforms |
-| Subject catalog | Owns | References subject IDs |
-| LLM baseline catalog/rebasing | Owns | Does not implement |
-| Subject adapters | Owns | Does not implement |
-| Evidence normalization | Owns | Consumes normalized evidence in evaluators |
-| Agent baseline profiles | Owns | Supplies experiment deltas only |
-| Docker/service lifecycle | Owns | Does not implement agent lifecycle |
-| Tool/MCP/feature deployment mechanism | Owns | Declares experiment-specific apparatus |
-| Experiment scenarios and requirements | Validates | Owns |
-| Experiment fixtures/evaluators | Provides API | Owns when experiment-specific |
-| ACMM scoring/aggregation | Owns | Does not reimplement |
-| Generic analysis | Owns | Uses |
-| Supplementary experiment analysis | Invokes/validates | Owns |
-| Package assets | Does not own | Owns |
-| Credentials/secrets | Resolves outside package | Must not store |
-| Results/runtime mutable state | Owns locations/lifecycle | Must not store |
+- Experiment Package schema and loader/stager;
+- Experiment Contract schema/validation;
+- public `acmm.experiment_api`;
+- subject catalog and qualified subject bindings;
+- subject adapters and evidence normalization;
+- registered LLM definitions and LLM Rebasing;
+- subject infrastructure/lifecycle managers;
+- execution planning, persistence, retries, interruption handling, and Run Record validation;
+- generic ACMM scoring, availability analysis, export, and reusable statistical machinery; and
+- package/deployment provenance verification.
 
-A package may depend on stable ACMM package APIs, but it must not reach into CLI code,
-`acmm_infra` implementation internals, subject adapters, deployment managers, or repository-relative
-paths.
+An Experiment Package owns:
 
-## Initial directory model
+- `experiment-package.yaml`;
+- `experiment.yaml`;
+- study README/protocol documentation;
+- runtime fixtures/evaluators and other study-specific Python code;
+- optional per-subject apparatus;
+- experiment-specific analysis configuration/code where supported; and
+- static package assets.
 
-The preferred v0.1 shape is deliberately shallow:
+Adapters never belong to an Experiment Package. If adapters are externalized in the future, that is
+a separate packaging problem.
+
+## Repository model
+
+The intended research workspace uses two source repositories plus mutable runtime state:
+
+```text
+~/acmm_repo/          ACMM Core
+~/acmm-experiments/   Experiment Packages
+~/acmm_runtime/       subject deployments and installed package snapshots
+```
+
+A package source is an ordinary local directory. ACMM does not require it to be a Python
+distribution and does not install experiment code with `pip`.
+
+The initial package shape is:
 
 ```text
 <experiment-package>/
@@ -153,8 +64,6 @@ The preferred v0.1 shape is deliberately shallow:
 
     runtime/
         __init__.py
-        fixtures.py
-        evaluators.py
         ...
 
     apparatus/
@@ -173,712 +82,90 @@ The preferred v0.1 shape is deliberately shallow:
 
     assets/
         ...
+
+    tests/
+        ...
 ```
 
-Only `experiment-package.yaml` and `experiment.yaml` are inherently required by the package model.
-Other directories are present only when the experiment needs them.
+Only components declared by the package manifest are part of the package interface. A package may
+legitimately omit runtime, apparatus, analysis, or assets when its scientific design does not need
+them. In particular, a no-tool Minimal Agent Baseline does not need dummy apparatus merely to obtain
+an experiment identity.
 
-Keeping `experiment.yaml` at package root preserves the current authoring convention and avoids a
-one-file `contract/` directory that adds little information.
+## Package manifest
 
-### `runtime/`
+`experiment-package.yaml` describes how Core consumes the package. `experiment.yaml` remains the
+scientific/run Contract. Keeping these responsibilities separate prevents software-packaging details
+from polluting the Contract.
 
-`runtime/` is a Python package loaded by ACMM under an ACMM-generated private module namespace. It
-may contain as many internal modules as the experiment needs. It is not installed into the Python
-environment and should not require its package name to be globally unique.
-
-### `apparatus/`
-
-Each child directory is keyed by ACMM's infrastructure-subject identifier, not by Contract subject
-ID. This allows one apparatus description to serve the qualified subject bound to that
-infrastructure integration.
-
-A package may omit apparatus entirely. This is important for a minimal-agent baseline whose
-scientific treatment requires no experiment-specific deployment delta.
-
-### `analysis/`
-
-This directory contains only analysis material specific to the experiment. A package should not
-copy generic ACMM export, availability, aggregation, or scoring code merely to become
-self-contained.
-
-### `assets/`
-
-Static task material, seed data, repository templates, controlled documents, or similar
-experiment-owned inputs belong here. Live credentials, mutable external state, and execution
-results do not.
-
-## Package manifest v0.1 direction
-
-EP-1 should formalize a schema, but EP-0 adopts the following minimal shape as the design target:
-
-```yaml
-schema_version: "0.1"
-experiment_id: github_repository_operations_v1
-
-contract: experiment.yaml
-
-runtime:
-  api_version: "0.1"
-  root: runtime
-  entrypoint: build_runtime
-
-apparatus:
-  hermes: apparatus/hermes
-  open-webui: apparatus/open-webui
-  agent-zero: apparatus/agent-zero
-
-analysis:
-  supplementary:
-    - kind: interaction
-      configuration: analysis/interaction_analysis.yaml
-```
-
-Sections that are not required by an experiment may be omitted. For example, a no-apparatus
-baseline can omit `apparatus`, and an experiment with no supplementary analysis can omit
-`analysis`.
-
-The manifest intentionally does **not** duplicate scenario, subject, requirement, run-protocol, or
-evidence-policy fields from `experiment.yaml`.
-
-### Identity
-
-`experiment_id` must match `experiment.id` in the Contract and any experiment identity embedded in
-subject apparatus declarations. The existing versioned experiment-ID convention remains the
-human-readable scientific identity, for example `github_repository_operations_v1`.
-
-EP-0 does not introduce a second semantic package version number. Exact package revision is
-identified by its canonical digest. This avoids competing meanings between an experiment `_v1`, a
-package `version: 1`, and the actual bytes used during acquisition.
-
-## Executable runtime boundary
-
-Experiment Packages are allowed to contain executable Python code. This is necessary because real
-experiments require custom fixtures and evaluators that cannot be represented cleanly in YAML.
-
-The code is **trusted research code**. Manifest validation does not sandbox it. Loading the runtime
-entrypoint is equivalent to executing local code selected by the researcher. Initial ACMM commands
-must therefore consume explicit local package paths rather than automatically downloading and
-executing remote packages.
-
-### Public API rule
-
-Package runtime code must depend on a deliberately public Experiment API rather than arbitrary
-main-repo internals. EP-2 should introduce a facade such as:
+The package manifest schema is owned by Core as a standalone versioned JSON Schema:
 
 ```text
-acmm.experiment_api
+src/acmm/experiment_package/schemas/experiment-package-v0.1.schema.json
 ```
 
-The facade should expose the small set of stable runtime concepts experiment code legitimately
-needs, including:
+Packages reference the supported schema version; they do not ship their own schema copies.
 
-- `experiment_runtime`;
-- `experiment_runtime_context`;
-- `harness_capabilities`;
-- fixture/evaluator protocols and result/context data structures; and
-- normalized evidence helper functions needed by evaluators.
+The manifest binds the package to its Contract and optional runtime/apparatus/analysis components.
+Declared paths are package-relative and must remain valid when the source directory is moved.
 
-Existing pilot imports from `acmm.runtime.interfaces`, `acmm.runtime.registry`,
-`acmm.harness.capabilities`, and `acmm.evidence.*` provide the initial evidence for what belongs in
-that public facade.
+## Package filesystem rules
 
-Package code must not import `acmm_infra`, CLI modules, concrete adapters, subject-manager code, or
-repository-private pilot modules.
+Managed package content follows conservative filesystem rules:
 
-### Runtime entrypoint
+- declared paths must resolve inside the package root;
+- managed symlinks are rejected in v0.1;
+- generated/VCS/editor/result artifacts are excluded from package identity;
+- declared managed resources cannot live inside excluded directories; and
+- package apparatus sources use component-relative paths rather than main-repository paths.
 
-The manifest names one callable from `runtime/__init__.py`. The initial API should conceptually be:
+These rules make hashing, staging, and WSL/Windows portability deterministic.
 
-```python
-def build_runtime(
-    context: experiment_runtime_context,
-) -> experiment_runtime:
-    ...
-```
+## Validation, hashing, and installation
 
-`experiment_runtime_context` supplies package identity and safe access to the staged package root.
-It does **not** provide subject adapters or infrastructure managers.
-
-The returned `experiment_runtime` supplies only experiment-owned execution contributions:
-
-```text
-experiment_runtime
-    capabilities
-    fixtures
-    evaluators
-```
-
-The main repo then composes those contributions with the selected subject adapters and core-owned
-subject provenance/configuration to produce the existing internal `execution_registry` used by the
-execution engine.
-
-This is a deliberate improvement over current built-in pilot builders, which receive subject
-adapters directly. Adapters are not an experiment concern and should not cross the package API.
-
-### Runtime dependencies
-
-For v0.1, package runtime code should use only:
-
-- the Python standard library; and
-- the public ACMM Experiment API.
-
-Silent package-specific third-party Python dependencies are not allowed. If real experiments later
-require such dependencies, ACMM should add an explicit infrastructure-managed dependency mechanism
-rather than asking researchers to `pip install` packages manually.
-
-## Apparatus boundary
-
-Current apparatus resolution assumes:
-
-```text
-<main-repo>/infrastructure/<subject>/experiments/<experiment-id>/
-```
-
-External packages require the infrastructure layer to consume a **resolved apparatus root** instead
-of reconstructing a path from `repo_root + experiment_id`.
-
-The target relationship is:
-
-```text
-package loader
-    |
-    +-- resolves staged package apparatus/hermes
-    |
-    v
-Hermes infrastructure
-    |
-    +-- validates Hermes apparatus schema
-    +-- resolves apparatus-local source paths
-    +-- applies supported experiment deltas
-```
-
-The same pattern applies to Open WebUI and Agent Zero.
-
-Apparatus-internal source paths must be relative to the apparatus directory (or another explicitly
-documented package-relative root), never to the ACMM main repository. A package must remain valid
-when its source directory is moved elsewhere.
-
-### Experimental agent features
-
-The new research program intentionally manipulates agent-side variables. Experiment apparatus is
-therefore broader than "tool files." It is the experiment-specific delta layered onto a qualified
-agent baseline.
-
-For example, an apparatus may eventually request:
-
-```text
-qualified minimal-agent baseline
-    + GitHub MCP
-```
-
-or:
-
-```text
-qualified minimal-agent baseline
-    + GitHub MCP
-    + native memory enabled
-```
-
-The package owns the requested treatment. The main repo owns the supported mechanism for applying
-it. Apparatus must not gain an unrestricted "patch arbitrary agent files" escape hatch merely to
-make feature experiments easy.
-
-This distinction keeps the manipulated variable visible and validates that all changes remain on
-known experimental surfaces.
-
-## Package acquisition and staging
-
-ACMM should not keep executing directly from the mutable source directory supplied by a researcher.
-The package lifecycle should include an explicit acquisition step:
-
-```text
-source package path
-        |
-        v
-structural validation
-        |
-        v
-Contract/manifest cross-validation
-        |
-        v
-canonical package digest
-        |
-        v
-stage immutable snapshot under ACMM runtime root
-        |
-        +------------------+
-        |                  |
-        v                  v
-apparatus deployment   runtime execution
-```
-
-A suitable conceptual runtime location is:
-
-```text
-<ACMM_RUNTIME_ROOT>/_experiment_packages/
-    <experiment_id>/
-        <package_sha256>/
-            ...staged package snapshot...
-```
-
-The exact directory spelling is an EP-1/EP-3 implementation detail.
-
-### Why staging is required
-
-Staging provides several properties that a source-path-only design cannot guarantee:
-
-1. deployment and execution use exactly the bytes that were validated and hashed;
-2. editing the source package during a run cannot silently mutate the active experiment;
-3. `status` and `doctor` can reconstruct active experiment state without requiring the user to
-   remember or re-enter an external source path;
-4. all three agent deployments can be checked against the same package digest;
-5. a package source may be moved or deleted after successful staging without changing an already
-   deployed experiment; and
-6. package deployment remains an ACMM infrastructure concept rather than a Python installation
-   workflow.
-
-The staged package should be treated as immutable ACMM-managed state. Re-acquiring changed source
-bytes produces a different digest and therefore a distinct staged snapshot.
-
-## Path and filesystem rules
-
-All manifest-selected resources and apparatus source paths must remain inside the package root or
-their documented component root.
-
-For the first package schema, ACMM should reject path traversal and symlink-based escapes rather
-than attempting to model external filesystem dependencies. This makes digesting and staging
-unambiguous.
-
-Generated caches such as `__pycache__`, editor state, Git metadata, result directories, and similar
-non-source artifacts must not participate in package staging or canonical hashing. The exact ignore
-set should be small, deterministic, and owned by ACMM rather than package-defined ignore files.
-
-## Digests and provenance
-
-Every acquired package receives one canonical package SHA-256 digest. The digest should cover all
-managed package source files after applying ACMM's fixed exclusions.
-
-Executions should additionally preserve component digests where they improve diagnosis and
-comparability, including at least:
-
-- package digest;
-- Experiment Contract digest;
-- runtime digest when runtime exists;
-- per-subject apparatus digest when apparatus exists; and
-- experiment-specific analysis/configuration digest when applicable.
-
-The package digest is the exact artifact identity. Component digests explain which part changed.
-
-A future execution manifest should therefore be able to say, conceptually:
-
-```text
-experiment_id: github_repository_operations_v1
-package_schema_version: 0.1
-runtime_api_version: 0.1
-package_sha256: ...
-contract_sha256: ...
-apparatus:
-    hermes: ...
-    open-webui: ...
-    agent-zero: ...
-```
-
-Active deployment markers should record the package digest as well as the experiment ID. Cohort
-readiness should require selected subjects to converge on both values, not merely on a matching
-experiment ID.
-
-## Credentials and live external resources
-
-Real-tool experiments will eventually require credentials and live services, for example a GitHub
-token or repository under test.
-
-Secrets must never be committed to, hashed as part of, or staged from an Experiment Package.
-Packages may later declare named credential/resource requirements, but resolution belongs to ACMM
-infrastructure or an explicit external configuration surface.
-
-Similarly, an experiment may package deterministic seed assets or repository templates while the
-live remote repository created from them remains mutable experiment state managed by fixtures or
-infrastructure.
-
-The exact credential/resource declaration schema is intentionally deferred until the first real
-external-tool experiment provides concrete requirements.
-
-## Analysis ownership
-
-Generic ACMM analysis remains main-repo code. This includes ordinary score aggregation,
-availability analysis, export mechanics, and other analyses that are meaningful across experiments.
-
-Experiment-specific analysis belongs to the package. The existing interaction-analysis pattern is
-a useful example: the generic R analysis engine can remain core-owned while the experiment-specific
-factor/design declaration moves into the package.
-
-EP-0 permits package-owned custom analysis code in principle, but does not freeze a custom analysis
-entrypoint API. That API should be introduced only when a real study cannot be expressed through
-core analysis plus package-owned configuration. This avoids designing a second plugin system before
-it is needed.
-
-## Validation phases
-
-Package validation should occur in layers so failures remain understandable.
-
-### Phase 1: source structure
-
-Validate that:
-
-- package root exists;
-- `experiment-package.yaml` is readable;
-- schema version is supported;
-- required manifest fields have valid types;
-- all declared paths are safe package-relative paths; and
-- required files/directories exist.
-
-No package Python code is executed in this phase.
-
-### Phase 2: Contract and identity
-
-Load the existing Experiment Contract and validate:
-
-- Contract schema/semantics;
-- manifest `experiment_id` equals Contract experiment ID; and
-- apparatus identities, when present, agree with the same experiment ID.
-
-### Phase 3: package snapshot
-
-Compute the canonical digest and stage the exact managed source tree. Revalidate the staged copy or
-verify that its digest matches the acquired source digest.
-
-### Phase 4: runtime API
-
-Only after the package is staged should ACMM load trusted runtime code. Validate:
-
-- supported runtime API version;
-- entrypoint exists and is callable;
-- returned object has the required public API type; and
-- runtime declarations are internally valid.
-
-### Phase 5: harness compatibility
-
-Use the runtime's capabilities with the existing Contract compatibility validator. This preserves
-the current contract-versus-harness safety check.
-
-### Phase 6: infrastructure compatibility
-
-Validate that each required subject has a registered core subject binding and that any declared
-apparatus uses features supported by that subject's infrastructure integration.
-
-These phases can support both a standalone `validate` command and preflight validation for
-apply/run.
-
-## CLI direction
-
-The execution CLI is now package-oriented. Experiment Package source management and execution are
-separate operations:
+The researcher-facing source workflow is:
 
 ```text
 acmm package validate <package-directory>
 acmm package install <package-directory>
-acmm package apply EXPERIMENT_ID
-acmm package list
-acmm run EXPERIMENT_ID --preview
-acmm run EXPERIMENT_ID@SHA_PREFIX
 ```
 
-`acmm run` accepts only an installed package selector. It does not accept a raw Contract, a package
-source path, or an omitted experiment operand, and it never infers experiment identity from deployed
-subject state. Deployment markers remain important as evidence that the explicitly selected package
-is actually applied, but they are not a package-selection mechanism.
+`validate` is non-executing. It loads the manifest, validates safe paths and the Contract, checks
+cross-component identity, and computes deterministic component/package digests without importing
+package runtime Python.
 
-Repository and runtime roots are not run-selection options. The repository location belongs to the
-installed infrastructure implementation, while `ACMM_RUNTIME_ROOT` selects the runtime/package store
-when the default is unsuitable. `--results-root` remains on `acmm run` because result destination is
-an execution-output concern.
-
-`status` and `doctor` continue to work without requiring the original package source path.
-Experiment deployment belongs to `acmm package apply`; experiment-independent LLM selection
-uses `acmm env set-llm <llm-id>`.
-
-## Relationship to the current execution registry
-
-The existing `execution_registry` remains a useful internal object. EP-0 does not replace it.
-
-Current built-in pilot flow:
+`install` performs the same validation and copies an immutable snapshot into the managed store:
 
 ```text
-catalog lookup
-    -> pilot registry_builder(subject_adapters)
-    -> execution_registry
+<ACMM_RUNTIME_ROOT>/_experiment_packages/<experiment-id>/<package-sha256>/
 ```
 
-Target package flow:
+The default runtime root is `~/acmm_runtime`; `ACMM_RUNTIME_ROOT` may select another infrastructure
+root. Research commands do not expose per-command runtime-root overrides.
+
+Installed snapshots are digest-addressed. Reinstalling identical bytes converges on the same
+revision. Multiple revisions of one experiment may coexist.
+
+Selectors use:
 
 ```text
-staged Experiment Package
-    -> build_runtime(context)
-    -> experiment_runtime
-
-core subject resolution
-    -> subject adapters
-    -> core subject provenance/configuration
-
-experiment_runtime + core subject components
-    -> execution_registry
-    -> existing execution engine
+EXPERIMENT_ID
+EXPERIMENT_ID@SHA_PREFIX
 ```
 
-This preserves the tested execution machinery while removing adapter ownership from experiment
-code.
+A plain ID is accepted only when it resolves unambiguously.
 
-## Relationship to LLM Rebasing
+## Digests and provenance
 
-Experiment Packages reference qualified subject IDs from the core subject catalog. They do not
-select provider URLs, instantiate models, or implement LLM baseline resolution.
+ACMM computes an exact package SHA-256 plus component digests for the Contract, runtime, each declared
+apparatus component, and analysis configuration where present. Executions and deployments carry the
+exact installed package identity rather than the original source path.
 
-This allows LLM Rebasing to remain a core infrastructure qualification workflow. New experiments
-can use the promoted baseline subjects without embedding current model configuration in package
-runtime code or apparatus unless a scientifically meaningful experiment explicitly requires a
-model-related treatment.
-
-Package validation and execution should therefore help detect stale model leakage rather than
-creating another place where model names are copied as defaults.
-
-## Transition from built-in experiments
-
-Externalization should be incremental.
-
-During transition, ACMM may support two sources:
+A package-backed deployment marker records enough information to reopen and verify the staged
+snapshot without access to the source repository, including:
 
 ```text
-legacy built-in experiment
-    -> current catalog/pilot/main-repo apparatus path
-
-new experiment
-    -> Experiment Package loader/stager
-```
-
-New research studies should use packages once the package path is operational. Existing historical
-experiments should not be rewritten merely to prove the abstraction.
-
-EP-6 externalizes `controlled_authoritative_state_interference_v1` completely as the first
-integration proof. Its Contract, package runtime, three agent apparatus implementations, README, and
-experiment-specific tests live in the external experiments workspace rather than the main repo. The
-scientific record is unchanged; only code/artifact ownership moved.
-
-The main repo deliberately retains no built-in catalog binding, pilot runtime module, Contract copy,
-or authoritative-state apparatus directory for that experiment. It keeps only generic package
-machinery and a regression assertion that the externalized experiment does not re-enter Core.
-Remaining historical experiments may coexist with packages until the later legacy-archive cleanup.
-
-## EP-0 decisions
-
-The following decisions are considered part of the initial architecture unless implementation work
-reveals a concrete contradiction:
-
-1. Experiment Packages may contain executable Python runtime code.
-2. Packages are not Python distributions and are not installed with `pip` in the initial design.
-3. ACMM infrastructure owns package acquisition, staging, and deployment.
-4. Deployment/execution consume a staged digest-identified package snapshot.
-5. Subject adapters, subject bindings, LLM baselines, and agent lifecycle remain main-repo concerns.
-6. Package runtime code receives no subject adapters.
-7. Package runtime code depends on a narrow public ACMM Experiment API.
-8. `experiment.yaml` remains the Experiment Contract and stays separate from package metadata.
-9. Apparatus paths become package/component-relative rather than main-repo-relative.
-10. Apparatus may represent deliberate agent-feature treatments as well as tool deployment.
-11. The package digest is the exact package revision; no duplicate semantic package version is
-    introduced in v0.1.
-12. Explicit source paths are used for initial package acquisition; automatic remote code retrieval
-    is out of scope.
-13. Secrets and live credentials are never package contents.
-14. Generic analysis stays in the main repo; experiment-specific analysis material stays in the
-    package.
-15. Legacy built-in experiments may coexist with packages during migration.
-16. The main repo owns each Experiment Package manifest schema as a standalone, versioned JSON
-    Schema file; packages reference a schema version and do not carry schema copies.
-
-## Deferred design points
-
-These topics should remain open until a concrete experiment requires them:
-
-- credential/resource requirement declaration;
-- package-specific third-party dependency provisioning;
-- custom executable analysis API;
-- remote package registries/distribution;
-- archive/package transport formats;
-- shared external service provisioning across agents;
-- whether any package metadata should record a source Git commit in addition to the digest; and
-- final archive layout for the historical built-in experiments.
-
-Deferring these is intentional. None is necessary to establish a clean package boundary.
-
-## EP-1 implementation target
-
-EP-1 should implement only the package model and acquisition boundary, not the full apparatus
-externalization at once.
-
-A successful EP-1 should be able to:
-
-1. load an `experiment-package.yaml` from an explicit directory;
-2. validate its initial schema and safe paths;
-3. load and validate its existing `experiment.yaml` Contract;
-4. enforce experiment-ID consistency;
-5. enumerate declared runtime/apparatus/analysis components without executing package code;
-6. compute deterministic package/component digests;
-7. stage a digest-identified package snapshot beneath the runtime root;
-8. reopen and verify the staged package independently of the source directory; and
-9. expose a small typed package model that later runtime, infrastructure, and CLI work can consume.
-
-EP-1 should not yet replace the built-in experiment catalog, dynamically load runtime code, or
-refactor subject apparatus application. Those belong to subsequent steps and can be tested against
-the stable package model created here.
-
-## EP-1 implementation checkpoint
-
-EP-1 implements the package model and acquisition/staging boundary described above without changing
-legacy experiment execution or subject apparatus application.
-
-The initial implementation lives under `acmm.experiment_package` and provides:
-
-- typed package, runtime, apparatus, and supplementary-analysis component models;
-- `experiment-package.yaml` loading through the standalone versioned `experiment-package-v0.1.schema.json`;
-- existing Experiment Contract schema/semantic validation and experiment-ID cross-validation;
-- safe package-relative resource resolution;
-- rejection of managed symlinks and declared resources excluded from package management;
-- deterministic package, Contract, runtime, apparatus, and analysis-configuration SHA-256 values;
-- fixed exclusion of generated/editor/VCS/result artifacts from package hashing and staging;
-- digest-addressed staging beneath `<runtime-root>/_experiment_packages/`;
-- staged-package reopening and digest verification independent of the original source directory; and
-- idempotent reacquisition of an already staged package snapshot.
-
-EP-1 intentionally does not load package runtime Python, compose subject adapters, change the
-built-in experiment catalog, or apply package apparatus. Those remain subsequent Experiment Package
-steps.
-
-## EP-2 implementation checkpoint
-
-EP-2 establishes the executable Experiment Runtime boundary while preserving the existing subject
-adapter and legacy catalog ownership model.
-
-The public package-facing API is `acmm.experiment_api` version `0.1`. It exposes only the runtime
-concepts experiment code needs:
-
-- `experiment_runtime` and `experiment_runtime_context`;
-- `harness_capabilities`;
-- fixture/evaluator protocols and their context/result structures; and
-- normalized evidence access/text helpers used by experiment evaluators.
-
-The facade deliberately does not export subject adapters, `execution_registry`, infrastructure
-managers, subject catalogs, or CLI implementation details. This API boundary is a dependency
-contract for package authors rather than a Python sandbox; Experiment Package runtime remains
-trusted local research code.
-
-Runtime activation now:
-
-1. accepts only a package located in the ACMM staged-package layout;
-2. rechecks the package and runtime-component digests immediately before code import;
-3. imports `runtime/__init__.py` under an ACMM-generated private module namespace;
-4. supports ordinary relative imports inside the runtime directory without installing the package;
-5. constructs an `experiment_runtime_context` containing package identity and staged-root access;
-6. invokes the manifest-selected entrypoint;
-7. requires the entrypoint to return `experiment_runtime`;
-8. validates fixture/evaluator declarations and callable protocol surfaces; and
-9. runs the existing Contract-versus-harness compatibility validation against the returned
-   capabilities.
-
-`experiment_runtime_context.resolve_resource()` provides a convenient checked package-relative
-resource lookup for package-owned assets. The runtime remains trusted Python, so this helper is not
-presented as a security boundary.
-
-The returned runtime contains only experiment-owned contributions:
-
-```text
-experiment_runtime
-    capabilities
-    fixtures
-    evaluators
-```
-
-Core code composes those contributions with core-owned subject adapters and subject configuration
-overlays through `compose_execution_registry()`. Subject adapters therefore never cross the public
-Experiment API boundary.
-
-As a compatibility probe, the built-in `magic_number` pilot now constructs the same
-`experiment_runtime` contribution model and then composes it into the legacy `execution_registry`.
-Its catalog identity, Contract, adapter ownership, and historical execution path remain unchanged.
-This demonstrates that the package runtime model can represent an existing real ACMM experiment
-without requiring a redesign of the execution engine.
-
-EP-2 does not yet make the CLI discover or run external packages, replace the built-in experiment
-catalog, or apply package-owned apparatus. Those remain later package milestones. The next major
-boundary is EP-3: make agent infrastructure consume resolved apparatus roots from staged packages
-instead of reconstructing main-repository experiment paths.
-
-
-## EP-3 implementation checkpoint
-
-EP-3 establishes the Experiment Apparatus boundary without replacing legacy experiment discovery
-or the existing agent lifecycle.
-
-Staged package apparatus is now resolved through `load_staged_experiment_apparatus()`. Resolution:
-
-1. requires the package to be in the ACMM staged-package layout;
-2. rechecks the full package digest;
-3. rechecks the selected apparatus component digest; and
-4. returns the already typed apparatus component/root from the validated package model.
-
-The agent infrastructure layer now accepts a resolved apparatus root through:
-
-- `with_hermes_apparatus()`;
-- `with_open_webui_apparatus()`; and
-- `with_agent_zero_apparatus()`.
-
-These functions validate the apparatus identity and interpret managed source paths relative to the
-apparatus root. Package apparatus therefore uses paths such as `plugins/acmm-tools` or
-`tools/acmm_tools.py` rather than paths rooted in the ACMM repository.
-
-Managed Hermes plugins, Open WebUI tools, and Agent Zero plugins now carry an optional explicit
-`source_root`. Their `source` remains a safe relative path. Agent managers resolve managed content
-against `source_root` when present and against their historical main-repo root otherwise. This
-keeps package apparatus portable without weakening path-containment checks or storing absolute
-paths as package declarations.
-
-The existing `with_*_experiment()` functions remain as compatibility wrappers for built-in legacy
-experiments. Their source paths and `source_root=None` behavior are unchanged, so the historical
-main-repo apparatus layout continues to work during migration. Package apparatus provenance uses
-the component digest already carried by the staged package model, while the existing ID-based
-digest helper remains available for legacy callers.
-
-As an integration proof, all three agent managers have tests that consume package-local tool/plugin
-content from an ACMM-staged snapshot after the original source package has been removed. This
-demonstrates that deployment-facing source resolution no longer depends on the main repository or
-the original package source directory.
-
-EP-3 intentionally does not yet make `acmm env`, `status`, `doctor`, or `acmm run` discover an
-external package automatically. It also does not yet persist package identity in deployment state.
-Those higher-level lifecycle/provenance changes belong to the next package milestones.
-
-## EP-4 implementation checkpoint
-
-EP-4 establishes digest-bearing Experiment Package provenance in deployed subject state and makes
-passive deployment reconstruction package-aware without introducing package-oriented CLI commands
-yet.
-
-Package provenance is represented explicitly by:
-
-- `experiment_package_provenance`, which records experiment ID, package schema version, package
-  SHA-256, Contract SHA-256, and runtime SHA-256 when runtime code exists; and
-- `experiment_deployment_provenance`, which binds that package identity to one infrastructure
-  subject and records its apparatus component SHA-256 when the package declares apparatus for that
-  subject.
-
-There is intentionally still no independent semantic package version. The experiment ID remains the
-human-readable scientific identity and the package SHA-256 remains the exact package revision.
-
-The existing `.acmm-experiment-apparatus.json` deployment marker advances to schema `0.3`. The file
-name is retained for backward compatibility even though schema `0.3` now serves as the broader
-experiment deployment-context marker. Legacy schema `0.1` and `0.2` markers remain readable.
-Package-backed markers can additionally persist:
-
-```text
+experiment ID
 package schema version
 package SHA-256
 Contract SHA-256
@@ -887,370 +174,189 @@ infrastructure subject
 apparatus SHA-256, when present
 ```
 
-The marker validates that an apparatus SHA-256, when present, agrees with the existing
-`source_sha256` field. A package deployment may also legitimately record no apparatus SHA-256 and no
-`source_sha256`. This is required for realistic no-apparatus studies such as the planned minimal
-agent baseline; ACMM does not require a dummy tool merely to give that experiment a deployable
-identity.
+A package may intentionally declare no apparatus for a subject. Such a deployment is valid when both
+expected and observed apparatus identities are absent.
 
-Package-aware subject-manager construction now:
+Passive reconstruction requires package provenance. Historical non-package experiment deployment
+markers are unsupported; reconcile those subjects to a qualified baseline with
+`acmm env set-llm <llm-id>`.
 
-1. resolves the subject's LLM baseline from qualified subject IDs in the package Contract;
-2. applies staged package apparatus when that subject declares apparatus;
-3. otherwise retains the qualified baseline profile unchanged;
-4. carries package deployment provenance into the normal agent manager; and
-5. persists the package/component identity when experiment state is written.
+## Executable runtime boundary
 
-Passive manager reconstruction reads the persisted package digest, reopens the corresponding staged
-snapshot from `<runtime-root>/_experiment_packages/`, and revalidates the package schema identity,
-Contract digest, runtime digest, infrastructure subject, apparatus digest, and deployed source
-digest before rebuilding the manager. The original external package source directory is therefore
-not required by `status`, `doctor`, or runtime lifecycle reconstruction.
+Packages may contain trusted executable Python runtime code. The entrypoint is loaded only from a
+verified staged package snapshot, never directly from an arbitrary mutable source tree.
 
-Cohort status now carries package SHA-256 in addition to experiment ID. Context convergence requires
-subjects to agree on package revision whenever package provenance is present. Two subjects reporting
-the same `experiment_id` but different package SHA-256 values are `divergent`; mixing package-backed
-and legacy deployments under the same experiment ID is also divergent. A package-backed subject
-with no apparatus is considered apparatus-matched when both its expected and observed apparatus
-identities are absent.
-
-Deployment-context discovery also exposes observed package digests and accepts package-backed
-subjects that intentionally declare no apparatus. Existing legacy ID-based apparatus preflight is
-left intact; package-aware run preflight and package-path command selection belong to EP-5.
-
-As a proof of independence, EP-4 tests reconstruct a staged package using an experiment ID that is
-not registered in the built-in experiment catalog. This demonstrates that deployed package identity
-is now sufficient for passive reconstruction rather than merely annotating the historical catalog
-path.
-
-EP-4 does not yet add `acmm env apply <package-path>`, `acmm run <package-path>`, package discovery,
-or package provenance to execution result manifests. Those are integration responsibilities for the
-next milestone rather than deployment-state concerns.
-
-## EP-5 implementation checkpoint
-
-Historical note: the CLI forms in this EP-5 checkpoint record the intermediate EP-5
-implementation. They are superseded by the later installed-package and environment-boundary
-cleanups documented below.
-
-EP-5 exposes the Experiment Package architecture through the normal ACMM researcher workflow while
-preserving the built-in experiment catalog as a legacy compatibility path.
-
-The top-level CLI now provides explicit package lifecycle commands:
+Package runtime code depends on the narrow public interface:
 
 ```text
-acmm package validate <package-directory>
-acmm package acquire <package-directory> [--runtime-root <root>]
+acmm.experiment_api
 ```
 
-`validate` parses the package manifest, validates the Contract, checks managed paths, and computes
-component/package digests without staging or executing package runtime code. `acquire` performs the
-same validation and then stages the immutable digest-addressed snapshot under
-`<runtime-root>/_experiment_packages/`. Both commands consume only explicit local filesystem paths;
-EP-5 does not introduce remote package discovery or downloading.
+The API exposes experiment-facing runtime/context types, fixtures/evaluators, harness capabilities,
+and normalized evidence helpers. It intentionally does not expose subject adapters or the internal
+execution registry.
 
-At the EP-5 checkpoint, environment application temporarily accepted a package source directly
-(the form below is now retired):
+The package runtime returns an `experiment_runtime` contribution. Core composes that contribution
+with Core-owned subject adapters and configuration overlays to form the normal execution registry.
+This keeps the execution engine shared while preserving the adapter boundary.
 
-```text
-acmm env apply --package <package-directory>
-```
+Runtime activation:
 
-The command acquires the package first, resolves its qualified Contract subjects and LLM baselines,
-and builds package-aware subject managers. `--package` and legacy `--experiment` are mutually
-exclusive, and neither package Contracts nor built-in experiment Contracts may be overridden by an
-independent `--llm-baseline` selection. Package-backed cohort application verifies the exact package
-SHA-256 after each subject is reconciled. Packages that declare no apparatus remain valid experiment
-contexts and therefore do not require a synthetic tool layer.
+1. requires a staged package;
+2. verifies package/runtime digests before import;
+3. imports under a private ACMM namespace with relative imports supported;
+4. prevents `__pycache__` writes into the staged snapshot;
+5. invokes the declared runtime entrypoint with a checked runtime context; and
+6. re-verifies package identity after the entrypoint returns.
 
-Experiment execution accepts either an explicit package source or a package already represented by
-deployed subject state:
+Package runtime code may use the Python standard library and the public Experiment API. Silent
+package-specific third-party Python dependencies are not part of v0.1; any future dependency
+mechanism should remain infrastructure-managed rather than requiring ad hoc researcher `pip`
+installs.
 
-```text
-acmm run --package <package-directory> --preview
-acmm run --package <package-directory>
-acmm run --preview
-```
+## Apparatus boundary
 
-The explicit `--package` path validates/acquires the source, activates runtime code only from the
-staged snapshot, and composes the returned experiment runtime with core-owned subject adapters and
-LLM provenance overlays. A positional legacy Contract and `--package` cannot be combined.
+Research apparatus is an experiment-specific delta layered onto a qualified subject baseline. It can
+represent tools/plugins as well as deliberate agent-feature treatments such as enabling a native
+memory capability.
 
-When neither a Contract nor `--package` is supplied, deployment-context inference now recognizes
-package provenance. If the selected contexts converge on one experiment ID and one package SHA-256,
-ACMM reopens that staged snapshot and runs it even when the experiment ID is absent from the built-in
-catalog. Mixed legacy/package state or differing package revisions are rejected rather than silently
-choosing one source.
+Core resolves a declared staged apparatus component, verifies its digest, and passes its root to the
+subject-specific apparatus compiler. The infrastructure layer never reconstructs research apparatus
+from `repo_root + experiment_id`.
 
-Package-aware execution preflight verifies the exact staged deployment identity for every selected
-subject:
+The package-aware compilers are:
 
-- experiment ID and full `experiment` application scope;
-- package schema version and package SHA-256;
-- Contract and runtime component SHA-256 values;
-- infrastructure/apparatus subject identity; and
-- apparatus component/deployed-source SHA-256 when apparatus exists.
+- `with_hermes_apparatus()`;
+- `with_open_webui_apparatus()`; and
+- `with_agent_zero_apparatus()`.
 
-A package that intentionally declares no apparatus passes when both the package provenance and
-deployment state record no apparatus for that subject. Preview mode retains the existing warning-only
-preflight behavior and never contacts subject runtimes. Package preview does activate the package's
-trusted runtime code from the staged snapshot because ACMM must validate harness compatibility and
-construct the experiment-owned fixture/evaluator declarations; `acmm package validate` remains the
-non-executing package inspection path.
+Managed Tool/plugin sources retain relative paths plus an explicit apparatus `source_root`. Subject
+managers resolve those bytes against the staged component, preserving path-containment checks and
+package portability.
 
-Completed and interrupted execution manifests remain schema `0.1` and now optionally carry an
-`execution.package` mapping containing the package schema version, package SHA-256, Contract
-SHA-256, and runtime SHA-256. Built-in legacy executions omit this mapping, preserving their
-historical manifest shape while package-backed results bind execution evidence to the exact staged
-research artifact.
+Subject `doctor()` uses the same package-aware apparatus identity during live readiness. This was
+verified in EP-6 field testing after an early leak was found where live doctor checks still attempted
+to hash a removed main-repository experiment directory.
 
-EP-5 deliberately does not migrate the historical experiments out of the main repository or remove
-the built-in experiment catalog. The next milestone, EP-6, should prove the boundary by moving one
-representative experiment completely outside the main repo and exercising validation, acquisition,
-environment application, preview/execution resolution, and analysis from that external package.
+## LLM and subject boundary
 
+Packages bind qualified subject IDs in their Contract. Core resolves those subject identities to
+agent infrastructure/adapters and registered LLM definitions. Package runtime code does not select
+provider URLs, instantiate models, or implement LLM Rebasing.
 
-## EP-5 package-store refinement
+This keeps the research focus on agent-side treatments while allowing the qualified model baseline to
+be changed/revalidated centrally. A frozen package may bind a historical registered LLM; changing
+that binding creates a different package revision/study configuration rather than silently rebasing
+the old artifact.
 
-After EP-5, Experiment Package ownership is tightened further before legacy `run` and `env` source
-paths are retired. The package lifecycle now uses installation terminology at the researcher-facing
-CLI boundary:
+## CLI lifecycle
+
+### Package management
 
 ```text
-acmm package validate <package-directory>
-acmm package install <package-directory>
+acmm package validate <source>
+acmm package install <source>
 acmm package list
 acmm package show <selector>
-acmm package uninstall <selector>
-```
-
-`install` is the public package-management operation. Internally it still reuses the established
-validate, hash, immutable-copy, and digest-verification staging machinery. `acquire` remains only as
-a compatibility Python API for EP-5 callers that have not yet been migrated; it is no longer a
-researcher-facing package subcommand.
-
-The installed package store remains physically located at
-`<runtime-root>/_experiment_packages/`. Researcher-facing package commands no longer accept a
-per-command runtime-root override; the store location follows the shared `ACMM_RUNTIME_ROOT`
-infrastructure configuration (defaulting to `~/acmm_runtime`). The package identity model remains
-independent of the concrete store path.
-
-Installed revisions are addressed with an explicit package selector:
-
-```text
-EXPERIMENT_ID
-EXPERIMENT_ID@SHA_PREFIX
-```
-
-A plain experiment ID resolves only when exactly one revision of that experiment is installed. If
-multiple package digests exist, selection is rejected as ambiguous and the operator must provide a
-lowercase hexadecimal SHA-256 prefix of at least eight characters. CLI output prints a stable
-12-character selector for convenience while the full 64-character digest remains the authoritative
-revision identity. This selector abstraction is intended to become the future mandatory experiment
-operand for `acmm run`; aliases can later resolve to the same exact installed revision without
-changing the underlying identity model.
-
-Package-store discovery is independent of active deployment markers. It enumerates the managed
-store by experiment ID and digest and rejects unsafe/symlinked store entries. `show` reopens and
-fully verifies the selected immutable package before reporting it. `uninstall` likewise requires a
-unique, verified revision and removes only that digest-addressed snapshot, preserving other
-installed revisions of the same experiment.
-
-The first CLI-boundary cleanup is now complete for execution. `acmm run` accepts exactly one
-mandatory installed-package selector and no longer accepts a positional Contract, `--package`,
-`--schema`, `--repo-root`, or `--runtime-root`. It never acquires package source implicitly and never
-infers experiment identity from deployment markers. `--results-root` remains because output
-destination is an execution concern rather than experiment semantics. Repository location is
-resolved from the installed ACMM code, while `ACMM_RUNTIME_ROOT` remains infrastructure
-configuration for the runtime/package store.
-
-The second CLI-boundary cleanup moves experiment deployment out of `acmm env`.
-`acmm package apply <selector>` now resolves only an installed immutable package, selects subjects
-from its Contract, and reconciles the corresponding package-aware subject managers. Environment
-model selection is flattened to `acmm env set-llm <llm-id>`; the former `env apply`, `--experiment`,
-`--package`, and `--llm-baseline` interface is retired.
-
-This establishes three separate responsibilities:
-
-```text
-package install/apply/uninstall  -> experiment artifact and deployment lifecycle
-env set-llm/status/doctor/stop   -> qualified subject environment lifecycle
-run <selector>                   -> experiment execution
-```
-
-Installed package removal is deployment-aware at the CLI boundary. `acmm package detach <selector>`
-restores only subjects carrying that exact package revision to the LLM bindings declared by the
-package, removing experiment apparatus and package provenance without changing unrelated subjects.
-The command reports every subject it detached. `package uninstall` refuses to delete an attached
-staged revision by default; `--detach-if-applied` explicitly grants permission to run the same detach
-workflow before removal.
-
-
-## CLI surface cleanup checkpoint
-
-The Experiment Package boundary is now the sole researcher-facing experiment boundary. The raw
-Contract commands `acmm validate <experiment.yaml>` and `acmm plan <experiment.yaml>` are retired.
-`acmm package validate <package-directory>` owns source validation, and
-`acmm run <experiment-selector> --preview` owns deterministic planning and execution selection.
-
-Package commands no longer expose `--schema` or `--runtime-root`. The Contract schema is a versioned
-ACMM Core interface, not an operator-selected experiment setting, and the installed package store
-uses the shared `ACMM_RUNTIME_ROOT` configuration. Likewise, `acmm env` no longer exposes
-`--repo-root` or `--runtime-root`; repository location is derived from the installed ACMM code and
-mutable runtime location comes from the same shared infrastructure configuration.
-
-This leaves the ordinary researcher-facing responsibility split as:
-
-```text
-acmm package validate/install/list/show/apply/uninstall
-    -> Experiment Package source, store, and deployment lifecycle
-
-acmm env set-llm/status/doctor/stop
-    -> qualified subject/LLM environment lifecycle
-
-acmm run <experiment-selector> [execution controls]
-    -> planning, selection, and execution of an installed experiment
-```
-
-Raw Contract and schema paths remain available only where they are genuinely artifact-level or
-development concerns (for example dedicated record/schema validation code), not as alternate ways
-to select or execute an experiment.
-
-## Strict run with optional apply-if-needed checkpoint
-
-`acmm run` remains strict by default even though experiment identity is now explicit. A real run
-first inspects the selected subjects' package deployment context. If that context is already
-converged, execution proceeds through the normal live-readiness preflight with no reconciliation
-message or mutation. If deployment context diverges, plain `acmm run <selector>` aborts.
-
-`--apply-if-needed` is an explicit, narrowly scoped mutation permission. When the initial deployment
-preflight is not ready, `run` invokes the same package-cohort application machinery used by
-`acmm package apply`, but only for subjects required by the selected run set. The command then
-re-runs the strict deployment preflight from persisted state. Execution is still prohibited unless
-that second check is ready; a successful apply call is not treated as proof of convergence.
-
-`--preview` remains non-mutating. For divergent context it reports the deployment warnings and then
-states either that strict mode would fail or that `--apply-if-needed` would permit reconciliation
-before execution. Both messages are omitted when the selected context is already converged.
-
-When reconciliation is relevant to an execution, the execution manifest records whether permission
-was granted, whether reconciliation was performed, the affected selected subjects, and the final
-ready state. This keeps an already-converged execution distinguishable from one ACMM reconciled
-immediately before acquisition.
-
-The intended command relationship is therefore:
-
-```text
 acmm package apply <selector>
-    -> explicit preparation of the requested package/subject scope only
-
-acmm run <selector>
-    -> strict execution; fail on deployment divergence
-
-acmm run <selector> --apply-if-needed
-    -> reconcile selected execution subjects only when needed, verify again, then execute
+acmm package detach <selector>
+acmm package uninstall <selector>
+acmm package uninstall <selector> --detach-if-applied
 ```
 
-This mirrors `--start-if-needed`: both options grant a specific remediation permission without
-weakening the final readiness requirement.
+`apply` prepares the full package cohort. `detach` affects only subjects carrying that exact package
+revision and restores each to the LLM binding declared by the package. Uninstall refuses to delete an
+attached revision unless `--detach-if-applied` explicitly grants permission to detach first.
 
-## EP-5H implementation checkpoint: core hardening and observability
-
-Before externalization, ACMM completed a deliberately bounded hardening pass:
-
-- scanned `src/acmm/cli.py` by responsibility and moved only logic with an existing clear owner;
-- moved run selection into `acmm.runtime.planner`;
-- centralized default Contract/Run Record schema locations in their validator modules;
-- moved human-readable execution-summary persistence into `acmm.runtime.execution_summary`;
-- defined `experiment_execution.yaml` with a versioned standalone JSON Schema while keeping YAML
-  as the persisted artifact;
-- added best-effort Ollama Cloud before/after usage telemetry for debugging/provenance only.
-
-This checkpoint is intentionally not a new architecture stage. It is the final core cleanup before
-EP-6 externalization, and further framework polishing should be justified by problems found during
-externalization or substantive experiments rather than by code tidiness alone.
-
-
-
-## EP-6 implementation checkpoint: first complete externalization
-
-EP-6 uses `controlled_authoritative_state_interference_v1` as the first experiment whose ownership
-crosses the repository boundary. The package is maintained in the sibling `acmm-experiments`
-workspace and contains:
+### Execution
 
 ```text
-controlled_authoritative_state_interference_v1/
-    experiment-package.yaml
-    experiment.yaml
-    README.md
-    runtime/
-    apparatus/
-        hermes/
-        open-webui/
-        agent-zero/
-    tests/
+acmm run <selector> [execution selectors/options]
 ```
 
-The package runtime imports only the public `acmm.experiment_api`; the old
-`src/acmm/pilots/authoritative_state.py` implementation is no longer present in Core. Managed tool
-and plugin source paths are component-relative, so the staged package is independent of the source
-workspace and main-repo filesystem layout.
+`run` accepts only an installed package selector. It does not accept raw Contracts, package source
+paths, or infer the experiment from deployment state.
 
-Core no longer registers the experiment in `acmm.experiments.catalog`, stores its Contract under
-`experiments/examples`, or carries its three infrastructure apparatus trees. The experiment-specific
-fixture/evaluator/tool tests moved with the package. Core retains a small boundary regression test
-asserting that those experiment-owned resources remain absent.
+Strict mode is the default. Package-deployment preflight must match exactly before acquisition.
+`--apply-if-needed` grants permission to reconcile only subjects required by the selected run set.
+After reconciliation ACMM re-reads persisted state and repeats the strict deployment preflight; a
+successful apply call alone is never proof of readiness.
 
-The external package has been exercised through the normal package path against a fresh managed
-store:
+`--preview` is non-mutating and reports the selected run plan plus deployment divergence. If context
+is divergent, preview states whether strict mode would fail or whether `--apply-if-needed` would
+permit reconciliation.
+
+`--start-if-needed` is a separate narrow permission to start a correctly deployed but stopped
+runtime. It does not repair package/apparatus mismatch.
+
+### Subject environment
+
+Experiment selection does not belong to `acmm env`:
 
 ```text
-acmm package validate <external-package>
-acmm package install <external-package>
-acmm package list
-acmm package show controlled_authoritative_state_interference_v1
-acmm run controlled_authoritative_state_interference_v1 --preview
-acmm run controlled_authoritative_state_interference_v1 --preview --apply-if-needed --subject hermes_nemotron30b
+acmm env set-llm <llm-id>
+acmm env status
+acmm env doctor --start-if-needed
+acmm env stop
 ```
 
-The preview resolves the installed package, activates its staged runtime, reconstructs the full
-48-run plan, and observes deployment divergence without consulting the built-in catalog. Package
-owned tests also construct package-aware managers for Hermes, Open WebUI, and Agent Zero from the
-staged snapshot, proving that the explicit apply path can be built from external package state
-without repository-local apparatus.
+The internal `acmm-infra <subject> ...` surface is baseline/engineering only. It does not select
+research experiments. Status/doctor may observe package provenance because that is required for
+readiness diagnostics.
 
-Live Docker application and a real agent execution are deliberately not required for this
-externalization proof. The frozen package preserves its historical Nemotron subject bindings, and
-changing them merely to obtain a live rerun would alter the historical study; the original provider
-model may also no longer be available. EP-6 therefore proves source ownership, staging, runtime
-activation, apparatus composition, subject-manager construction, and execution planning without
-claiming a new operational qualification or changing the experiment's scientific conclusions.
+## Execution provenance
 
-## EP-6 live field-validation checkpoint
+Completed `experiment_execution.yaml` manifests preserve exact package provenance and record whether
+permissioned deployment reconciliation was relevant/performed. The manifest remains YAML for human
+inspection and is structurally described by:
 
-EP-6 was followed by a live WSL field pass using the external package repository and a disposable
-GPT-OSS rebinding of the frozen authoritative-state package. The disposable package was used only
-for infrastructure validation and is not a new research result.
+```text
+src/acmm/runtime/schemas/experiment-execution-v0.1.schema.json
+```
 
-The field pass confirmed:
+Operational diagnostics such as captured container logs and provider-usage snapshots remain outside
+ACMM compliance scoring. See `docs/runtime/provider_usage.md` and `docs/security/secrets.md`.
 
-- package source validation, installation, listing, and exact digest-based resolution from the
-  external repository;
-- non-mutating `run --preview` behavior in both strict and `--apply-if-needed` modes;
-- selected-subject reconciliation followed by the required second strict deployment preflight;
-- live package-backed execution through Hermes, Open WebUI, and Agent Zero;
-- runtime startup/restoration and diagnostic log capture;
-- execution package provenance in persisted manifests; and
-- optional Ollama Cloud provider-usage capture without affecting scientific validity.
+## Analysis ownership
 
-The first live Hermes startup exposed one remaining legacy path lookup: each subject manager's
-`doctor()` method still computed apparatus identity from the historical main-repo experiment tree.
-That path was corrected for Hermes, Open WebUI, and Agent Zero so live readiness uses the same
-package-aware apparatus identity helper as package deployment. Regression tests now cover all three
-external-package doctor paths.
+Generic analysis remains Core-owned: normalized export, availability, requirement/dimension
+estimation, uncertainty, and GOBPFR aggregation. Experiment-specific designs belong with the package.
 
-Package removal is also more explicit after the field pass. `acmm package detach <selector>`
-restores only subjects carrying that exact installed package revision to their package-declared LLM
-bindings, and `acmm package uninstall <selector> --detach-if-applied` grants the uninstall command
-permission to perform the same detachment before removing the staged revision.
+Core retains reusable statistical machinery, including interaction-analysis routines, without
+registering experiment IDs or inferring a design from scenario names. A package that needs an
+interaction analysis should provide an explicit scientifically justified design/configuration.
 
+## Credentials and external resources
+
+Secrets are never package contents. A package may describe that an external capability is required,
+but credentials stay in local/runtime secret mechanisms. For Ollama Cloud usage telemetry, for
+example, `OLLAMA_API_KEY` should be stored outside both source repositories.
+
+External resources must be handled reproducibly enough that execution provenance can explain what was
+used. Package hashing cannot make a live remote service immutable, so resource identity/version and
+availability should be captured explicitly when such dependencies become part of a study.
+
+## Current externalization state
+
+The package architecture was field-validated by externalizing
+`controlled_authoritative_state_interference_v1` into the separate experiment-package repository.
+Core does not own its Contract, runtime implementation, apparatus, or experiment-specific tests.
+The external package remains temporarily available as a known debugging package until the new
+Minimal Agent Baseline is operational.
+
+Live WSL field testing validated package source installation, digest-addressed resolution, preview,
+permissioned reconciliation, the required second strict preflight, package-aware live readiness for
+Hermes/Open WebUI/Agent Zero, execution provenance, runtime-log capture, detachment/uninstall safety,
+and optional Ollama usage telemetry.
+
+## Package-only Core checkpoint
+
+The legacy built-in experiment architecture has been removed from Core. Generic Core regression tests
+use neutral synthetic Contract/runtime/apparatus fixtures rather than historical research studies.
+Research experiment code and apparatus must enter through the Experiment Package boundary.
+
+This is the baseline for the next substantive study series:
+
+1. Minimal Agent Baseline;
+2. realistic real-tool control study; and
+3. isolated agent-side feature interventions against the relevant tool-only control.

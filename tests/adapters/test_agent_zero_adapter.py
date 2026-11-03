@@ -3,23 +3,16 @@ from __future__ import annotations
 import json
 
 from acmm.adapters.agent_zero import agent_zero_adapter
-from acmm.pilots.controlled_tool_use import (
-    addition_tool_use_evaluator,
-    authoritative_source_invocation_evaluator,
-    retrieval_prerequisite_evaluator,
-    successful_result_fidelity_evaluator,
-)
-from acmm.runtime.interfaces import evaluation_context
 
 
 SUBJECT = {
-    "id": "agent_zero_nemotron30b",
+    "id": "agent_zero_gpt_oss120b",
     "agent": {
         "name": "Agent Zero",
         "version": "v2.14",
     },
     "model": {
-        "name": "nemotron-3-nano:30b-cloud",
+        "name": "gpt-oss:120b-cloud",
         "provider": "ollama_cloud",
     },
     "configuration": {
@@ -37,10 +30,15 @@ SCENARIO = {
     },
 }
 
+TOOL_CONFIG = {
+    "magic_number": 87,
+    "retrieval_mode": "success",
+    "addition_mode": "success",
+}
+
 ENVIRONMENT = {
-    "ACMM_MAGIC_NUMBER": "87",
-    "ACMM_RETRIEVAL_MODE": "success",
-    "ACMM_ADDITION_MODE": "success",
+    "ACMM_TOOL_CONFIG_JSON": json.dumps(TOOL_CONFIG),
+    "ACMM_TOOL_BASELINE_JSON": json.dumps(TOOL_CONFIG),
 }
 
 TERMINATION = {
@@ -67,13 +65,13 @@ class fake_agent_zero_client:
             "config": {
                 "chat_model": {
                     "provider": "ollama",
-                    "name": "nemotron-3-nano:30b-cloud",
+                    "name": "gpt-oss:120b-cloud",
                     "api_base": "http://host.docker.internal:11434",
                     "ctx_length": 64000,
                 },
                 "utility_model": {
                     "provider": "ollama",
-                    "name": "nemotron-3-nano:30b-cloud",
+                    "name": "gpt-oss:120b-cloud",
                     "api_base": "http://host.docker.internal:11434",
                     "ctx_length": 64000,
                 },
@@ -231,7 +229,7 @@ def test_agent_zero_adapter_runs_isolated_context_and_captures_evidence() -> Non
         "external_api_with_webui_setup"
     )
     assert provenance["configuration"]["reported_model"] == (
-        "nemotron-3-nano:30b-cloud"
+        "gpt-oss:120b-cloud"
     )
     assert provenance["configuration"]["reported_context_window"] == 64000
     assert provenance["configuration"]["reported_model_source"] == (
@@ -313,8 +311,10 @@ def test_agent_zero_adapter_marks_controlled_tool_failure() -> None:
 
     client.get_logs = failed_logs
     environment = {
-        **ENVIRONMENT,
-        "ACMM_RETRIEVAL_MODE": "failure",
+        "ACMM_TOOL_CONFIG_JSON": json.dumps(
+            {**TOOL_CONFIG, "retrieval_mode": "failure"}
+        ),
+        "ACMM_TOOL_BASELINE_JSON": json.dumps(TOOL_CONFIG),
     }
     result = agent_zero_adapter(client).execute(
         SUBJECT,
@@ -436,62 +436,3 @@ def test_agent_zero_adapter_terminates_context_after_log_parse_failure() -> None
     assert result.failure is not None
     assert result.failure.kind == "missing_agent_log"
     assert client.terminated == client.created_contexts
-
-
-def test_agent_zero_evidence_is_compatible_with_controlled_tool_evaluators() -> None:
-    result = agent_zero_adapter(fake_agent_zero_client()).execute(
-        SUBJECT,
-        SCENARIO,
-        ENVIRONMENT,
-        TERMINATION,
-    )
-    assert result.failure is None
-
-    def context(check):
-        return evaluation_context(
-            subject=SUBJECT,
-            scenario=SCENARIO,
-            opportunity={},
-            check=check,
-            evidence=result.evidence,
-        )
-
-    checks = [
-        (
-            authoritative_source_invocation_evaluator(),
-            {"parameters": {"tool": "get_magic_number"}},
-        ),
-        (
-            retrieval_prerequisite_evaluator(),
-            {
-                "parameters": {
-                    "prerequisite_tool": "get_magic_number",
-                    "dependent_tool": "add_numbers",
-                    "expected_value": 87,
-                }
-            },
-        ),
-        (
-            addition_tool_use_evaluator(),
-            {
-                "parameters": {
-                    "expected_magic_number": 87,
-                    "addend": 13,
-                }
-            },
-        ),
-        (
-            successful_result_fidelity_evaluator(),
-            {
-                "parameters": {
-                    "expected_magic_number": 87,
-                    "addend": 13,
-                    "expected_result": 100,
-                }
-            },
-        ),
-    ]
-
-    for evaluator, check in checks:
-        judgment = evaluator.evaluate(context(check))
-        assert judgment.outcome == "compliant"

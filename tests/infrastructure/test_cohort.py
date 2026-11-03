@@ -11,7 +11,6 @@ from acmm_infra.cohort import (
     experiment_cohort,
     package_deployment_references,
     resolve_attached_package_cohort,
-    resolve_experiment_cohort,
     summarize_context,
 )
 from acmm_infra.common import infrastructure_error
@@ -116,51 +115,6 @@ def test_resolve_attached_package_cohort_filters_exact_package_revision(
     assert observed.package is None
     assert observed.subjects == (subjects[0],)
 
-def test_resolve_experiment_cohort_uses_canonical_contract_subjects() -> None:
-    cohort = resolve_experiment_cohort(
-        ROOT,
-        "controlled_tool_use_multiscenario_v1",
-    )
-
-    assert cohort.experiment_id == "controlled_tool_use_multiscenario_v1"
-    assert cohort.canonical_contract == (
-        ROOT
-        / "experiments/examples/controlled_tool_use_multiscenario/experiment.yaml"
-    ).resolve()
-    assert [item.subject_id for item in cohort.subjects] == [
-        "hermes_nemotron30b",
-        "open_webui_nemotron30b",
-        "agent_zero_nemotron30b",
-    ]
-    assert [item.infrastructure_subject for item in cohort.subjects] == [
-        "hermes",
-        "open-webui",
-        "agent-zero",
-    ]
-
-
-def test_resolve_experiment_cohort_can_select_contract_subjects() -> None:
-    cohort = resolve_experiment_cohort(
-        ROOT,
-        "controlled_tool_use_multiscenario_v1",
-        ("agent_zero_nemotron30b", "hermes_nemotron30b"),
-    )
-
-    assert [item.subject_id for item in cohort.subjects] == [
-        "hermes_nemotron30b",
-        "agent_zero_nemotron30b",
-    ]
-
-
-def test_resolve_experiment_cohort_rejects_subject_outside_contract() -> None:
-    with pytest.raises(infrastructure_error, match="not covered by this cohort"):
-        resolve_experiment_cohort(
-            ROOT,
-            "controlled_tool_use_multiscenario_v1",
-            ("not_a_subject",),
-        )
-
-
 def test_llm_observation_distinguishes_configured_context_from_capability_metadata() -> None:
     baseline_id = "nemotron_3_nano_30b_cloud_v1"
     hermes = cohort_module._observe_llm_context(
@@ -233,10 +187,9 @@ def test_apply_cohort_propagates_selected_llm_baseline(monkeypatch, tmp_path: Pa
         repo_root,
         runtime_root,
         infrastructure_subject,
-        experiment_id,
         llm_baseline_id=None,
     ):
-        del repo_root, runtime_root, experiment_id
+        del repo_root, runtime_root
         observed_baselines.append(llm_baseline_id)
         return subject_manager_context(
             infrastructure_subject=infrastructure_subject,

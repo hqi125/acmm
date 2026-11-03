@@ -16,7 +16,7 @@ from acmm_infra.deployment import write_experiment_apparatus_state
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_SCHEMA = ROOT / "contracts" / "v0_1" / "contract.schema.json"
-VALID_CONTRACT = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "magic_number.yaml"
+VALID_CONTRACT = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "package_fixture.yaml"
 EXPERIMENT_ID = "external_package_cli_v1"
 
 
@@ -45,17 +45,17 @@ def build_runtime(context):
     del context
     return experiment_runtime(
         capabilities=harness_capabilities(
-            evaluators=frozenset({"magic_number_retrieval", "magic_number_addition"}),
-            fixtures=frozenset({"magic_number_environment_v1"}),
-            tools=frozenset({"get_magic_number", "add_numbers"}),
+            evaluators=frozenset({"fixture_value_retrieval", "fixture_value_addition"}),
+            fixtures=frozenset({"package_fixture_environment_v1"}),
+            tools=frozenset({"get_fixture_value", "add_numbers"}),
             evidence_channels=frozenset(
                 {"conversation", "tool_calls", "tool_results", "final_response"}
             ),
         ),
-        fixtures={"magic_number_environment_v1": fixture()},
+        fixtures={"package_fixture_environment_v1": fixture()},
         evaluators={
-            "magic_number_retrieval": evaluator(),
-            "magic_number_addition": evaluator(),
+            "fixture_value_retrieval": evaluator(),
+            "fixture_value_addition": evaluator(),
         },
     )
 '''
@@ -182,7 +182,7 @@ def test_run_installed_package_preview_uses_package_runtime(
             "run",
             EXPERIMENT_ID,
             "--subject",
-            "hermes_nemotron30b",
+            "hermes_gpt_oss120b",
             "--preview",
         ]
     )
@@ -228,7 +228,7 @@ def test_run_installed_unregistered_package_uses_explicit_selector(
             "run",
             EXPERIMENT_ID,
             "--subject",
-            "hermes_nemotron30b",
+            "hermes_gpt_oss120b",
             "--preview",
         ]
     )
@@ -287,7 +287,7 @@ def test_package_apply_resolves_installed_package_cohort(
             "apply",
             package.experiment_id,
             "--subject",
-            "hermes_nemotron30b",
+            "hermes_gpt_oss120b",
         ]
     )
     assert args.handler(args) == 0
@@ -339,7 +339,7 @@ def test_package_detach_reports_detached_subjects(
     monkeypatch.setattr(
         package_cli,
         "_detach_installed_package",
-        lambda *args, **kwargs: ("hermes_nemotron30b",),
+        lambda *args, **kwargs: ("hermes_gpt_oss120b",),
     )
 
     parser = _build_parser()
@@ -349,7 +349,7 @@ def test_package_detach_reports_detached_subjects(
     output = capsys.readouterr().out
     assert "Experiment Package detach complete:" in output
     assert "subjects detached: 1" in output
-    assert "hermes_nemotron30b" in output
+    assert "hermes_gpt_oss120b" in output
 
 
 def test_package_uninstall_can_detach_applied_revision(
@@ -377,7 +377,7 @@ def test_package_uninstall_can_detach_applied_revision(
     monkeypatch.setattr(
         package_cli,
         "_detach_installed_package",
-        lambda *args, **kwargs: ("hermes_nemotron30b",),
+        lambda *args, **kwargs: ("hermes_gpt_oss120b",),
     )
 
     parser = _build_parser()
@@ -394,5 +394,5 @@ def test_package_uninstall_can_detach_applied_revision(
     assert not package.root.exists()
     output = capsys.readouterr().out
     assert "Experiment Package detached before uninstall:" in output
-    assert "hermes_nemotron30b" in output
+    assert "hermes_gpt_oss120b" in output
     assert "Experiment Package uninstalled:" in output

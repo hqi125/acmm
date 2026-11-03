@@ -4,95 +4,48 @@ from acmm_infra.commands.agent import STANDARD_AGENT_COMMANDS
 from acmm_infra.cli import AGENT_CLIS, _build_parser
 
 
-def test_cli_exposes_infrastructure_commands() -> None:
+def test_cli_exposes_baseline_infrastructure_commands() -> None:
     parser = _build_parser()
 
     args = parser.parse_args(["hermes", "init"])
     assert args.command == "hermes"
     assert args.hermes_command == "init"
 
-    args = parser.parse_args(["hermes", "up"])
-    assert args.hermes_command == "up"
-
-    args = parser.parse_args(["hermes", "down"])
-    assert args.hermes_command == "down"
-
-    args = parser.parse_args([
-        "hermes",
-        "apply",
-        "--experiment",
-        "controlled_tool_use_multiscenario_v1",
-        "--timeout-seconds",
-        "45",
-    ])
+    args = parser.parse_args(["hermes", "apply", "--timeout-seconds", "45"])
     assert args.hermes_command == "apply"
-    assert args.experiment_id == "controlled_tool_use_multiscenario_v1"
     assert args.timeout_seconds == 45.0
     assert args.quiet is False
     assert args.verbose is False
 
-    args = parser.parse_args(["hermes", "apply", "--quiet"])
-    assert args.quiet is True
-    assert args.verbose is False
-
-    args = parser.parse_args(["hermes", "apply", "--verbose"])
-    assert args.verbose is True
-    assert args.quiet is False
-
-    args = parser.parse_args([
-        "hermes",
-        "apply-tools",
-        "--experiment",
-        "controlled_tool_use_multiscenario_v1",
-        "--timeout-seconds",
-        "30",
-    ])
+    args = parser.parse_args(["hermes", "apply-tools", "--timeout-seconds", "30"])
     assert args.hermes_command == "apply-tools"
-    assert args.experiment_id == "controlled_tool_use_multiscenario_v1"
-    assert args.timeout_seconds == 30.0
-    assert args.quiet is False
-    assert args.verbose is False
-
-    args = parser.parse_args(["hermes", "apply-tools"])
-    assert args.experiment_id is None
-
-    args = parser.parse_args([
-        "hermes",
-        "apply-tools",
-        "--experiment",
-        "controlled_tool_use_multiscenario_v1",
-        "--quiet",
-    ])
-    assert args.quiet is True
-    assert args.verbose is False
-
-    args = parser.parse_args([
-        "hermes",
-        "apply-experiment",
-        "controlled_tool_use_multiscenario_v1",
-        "--timeout-seconds",
-        "30",
-    ])
-    assert args.hermes_command == "apply-experiment"
-    assert args.experiment_id == "controlled_tool_use_multiscenario_v1"
     assert args.timeout_seconds == 30.0
 
     args = parser.parse_args(["hermes", "doctor", "--json"])
     assert args.hermes_command == "doctor"
     assert args.json is True
 
-    for command in ["status", "doctor"]:
-        with pytest.raises(SystemExit):
-            parser.parse_args([
-                "hermes",
-                command,
-                "--experiment",
-                "controlled_tool_use_multiscenario_v1",
-            ])
-
     args = parser.parse_args(["hermes", "reset", "sessions", "--yes"])
     assert args.scope == "sessions"
     assert args.yes is True
+
+
+def test_cli_rejects_retired_experiment_selection_paths() -> None:
+    parser = _build_parser()
+
+    for argv in (
+        ["hermes", "apply", "--experiment", "legacy_v1"],
+        ["hermes", "apply-tools", "--experiment", "legacy_v1"],
+        ["hermes", "apply-experiment", "legacy_v1"],
+        ["open-webui", "apply", "--experiment", "legacy_v1"],
+        ["open-webui", "apply-tools", "--experiment", "legacy_v1"],
+        ["open-webui", "apply-experiment", "legacy_v1"],
+        ["agent-zero", "apply", "--experiment", "legacy_v1"],
+        ["agent-zero", "apply-tools", "--experiment", "legacy_v1"],
+        ["agent-zero", "apply-experiment", "legacy_v1"],
+    ):
+        with pytest.raises(SystemExit):
+            parser.parse_args(argv)
 
 
 def test_cli_exposes_hermes_data_adoption() -> None:
@@ -123,37 +76,14 @@ def test_cli_exposes_open_webui_lifecycle() -> None:
     args = parser.parse_args(["open-webui", "apply"])
     assert args.open_webui_command == "apply"
     assert args.timeout_seconds == 120.0
-    assert args.experiment_id is None
-
-    args = parser.parse_args([
-        "open-webui",
-        "apply-tools",
-        "--experiment",
-        "controlled_tool_use_multiscenario_v1",
-    ])
-    assert args.open_webui_command == "apply-tools"
-    assert args.experiment_id == "controlled_tool_use_multiscenario_v1"
-    assert args.timeout_seconds == 60.0
 
     args = parser.parse_args(["open-webui", "apply-tools"])
-    assert args.experiment_id is None
-
-    args = parser.parse_args([
-        "open-webui",
-        "apply-experiment",
-        "controlled_tool_use_multiscenario_v1",
-    ])
-    assert args.open_webui_command == "apply-experiment"
-    assert args.experiment_id == "controlled_tool_use_multiscenario_v1"
-    assert args.timeout_seconds == 120.0
+    assert args.open_webui_command == "apply-tools"
+    assert args.timeout_seconds == 60.0
 
     for command in ["down", "status", "doctor"]:
         args = parser.parse_args(["open-webui", command])
         assert args.open_webui_command == command
-
-    args = parser.parse_args(["open-webui", "reset", "configuration", "--yes"])
-    assert args.scope == "configuration"
-    assert args.yes is True
 
 
 def test_all_agent_clis_expose_standard_lifecycle() -> None:
@@ -162,7 +92,6 @@ def test_all_agent_clis_expose_standard_lifecycle() -> None:
     for agent in AGENT_CLIS:
         actual = {definition.name for definition in agent.command_definitions()}
         assert expected <= actual
-
 
 
 def test_cli_exposes_agent_zero_lifecycle() -> None:
@@ -179,31 +108,9 @@ def test_cli_exposes_agent_zero_lifecycle() -> None:
     args = parser.parse_args(["agent-zero", "apply"])
     assert args.agent_zero_command == "apply"
     assert args.timeout_seconds == 120.0
-    assert args.experiment_id is None
-
-    for command in ["down", "status", "doctor"]:
-        args = parser.parse_args(["agent-zero", command])
-        assert args.agent_zero_command == command
-
-    args = parser.parse_args([
-        "agent-zero",
-        "apply-tools",
-        "--experiment",
-        "controlled_tool_use_multiscenario_v1",
-    ])
-    assert args.agent_zero_command == "apply-tools"
-    assert args.experiment_id == "controlled_tool_use_multiscenario_v1"
 
     args = parser.parse_args(["agent-zero", "apply-tools"])
-    assert args.experiment_id is None
-
-    args = parser.parse_args([
-        "agent-zero",
-        "apply-experiment",
-        "controlled_tool_use_multiscenario_v1",
-    ])
-    assert args.agent_zero_command == "apply-experiment"
-    assert args.experiment_id == "controlled_tool_use_multiscenario_v1"
+    assert args.agent_zero_command == "apply-tools"
 
     args = parser.parse_args(["agent-zero", "reset", "configuration", "--yes"])
     assert args.scope == "configuration"

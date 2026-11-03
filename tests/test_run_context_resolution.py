@@ -15,16 +15,17 @@ from acmm.subjects.catalog import lookup_subject_execution_binding
 from acmm_infra.deployment import write_experiment_apparatus_state
 from experiment_package.support import (
     CONTRACT_SCHEMA,
-    MAGIC_RUNTIME_SOURCE,
+    PACKAGE_SMOKE_CONTRACT,
+    SMOKE_RUNTIME_SOURCE,
     install_test_package,
     write_package_context,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT = ROOT / "experiments" / "examples" / "magic_number" / "experiment.yaml"
-EXPERIMENT_ID = "magic_number_tool_use_v1"
-SUBJECT_ID = "hermes_nemotron30b"
+CONTRACT = PACKAGE_SMOKE_CONTRACT
+EXPERIMENT_ID = "package_smoke_v1"
+SUBJECT_ID = "hermes_gpt_oss120b"
 
 
 def test_run_preview_resolves_unique_installed_experiment(
@@ -36,7 +37,7 @@ def test_run_preview_resolves_unique_installed_experiment(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=MAGIC_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
 
     parser = _build_parser()
@@ -60,7 +61,7 @@ def test_run_preview_accepts_digest_qualified_selector(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=MAGIC_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
     write_package_context(package, runtime_root, SUBJECT_ID)
     selector = f"{EXPERIMENT_ID}@{package.package_sha256[:12]}"
@@ -84,7 +85,7 @@ def test_run_rejects_ambiguous_installed_experiment_selector(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=MAGIC_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
     source = tmp_path / "package-source"
     (source / "README.md").write_text("second revision\n", encoding="utf-8")
@@ -113,7 +114,7 @@ def test_run_uses_installed_snapshot_after_source_is_removed(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=MAGIC_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
     write_package_context(package, runtime_root, SUBJECT_ID)
     shutil.rmtree(tmp_path / "package-source")
@@ -157,7 +158,7 @@ def test_explicit_run_selector_is_not_replaced_by_deployment_experiment(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=MAGIC_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
     binding = lookup_subject_execution_binding(SUBJECT_ID)
     assert binding is not None
@@ -212,7 +213,7 @@ def test_run_preview_reports_strict_failure_for_diverged_context(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=MAGIC_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
 
     parser = _build_parser()
@@ -237,7 +238,7 @@ def test_run_preview_reports_permitted_reconciliation_without_mutation(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=MAGIC_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
 
     parser = _build_parser()
@@ -274,7 +275,7 @@ def test_run_apply_if_needed_reconciles_only_selected_subjects_and_rechecks(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=MAGIC_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
     selected: list[tuple[str, ...]] = []
 
@@ -315,7 +316,7 @@ def test_run_apply_if_needed_requires_successful_second_preflight(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
-        runtime_source=MAGIC_RUNTIME_SOURCE,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
 
     def fake_apply_selected_package_context(**kwargs) -> None:

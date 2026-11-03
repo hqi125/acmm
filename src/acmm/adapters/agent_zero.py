@@ -89,9 +89,12 @@ class agent_zero_adapter:
         prompt: str | None = None
         model_observation: dict[str, Any] | None = None
         tool_config_applied = False
+        baseline_config: dict[str, Any] | None = None
 
         try:
             runtime_config = _runtime_tool_config(environment)
+            if self._config.restore_tool_baseline_after_run:
+                baseline_config = _baseline_tool_config(environment)
             api_key = self._client.get_external_api_token()
             self._client.update_plugin_config(
                 self._config.plugin_name,
@@ -243,11 +246,15 @@ class agent_zero_adapter:
                 except Exception:
                     pass
 
-            if self._config.restore_tool_baseline_after_run and tool_config_applied:
+            if (
+                self._config.restore_tool_baseline_after_run
+                and tool_config_applied
+                and baseline_config is not None
+            ):
                 try:
                     self._client.update_plugin_config(
                         self._config.plugin_name,
-                        _baseline_tool_config(environment),
+                        baseline_config,
                     )
                 except Exception:
                     pass
@@ -472,58 +479,35 @@ def _normalize_tool_name(name: str, plugin_name: str) -> str:
 def _runtime_tool_config(environment: Any) -> dict[str, Any]:
     if not isinstance(environment, dict):
         raise agent_zero_adapter_error(
-            "Agent Zero controlled-tool execution requires a fixture environment mapping."
+            "Agent Zero Tool execution requires a fixture environment mapping."
         )
 
-    generic_config = environment.get("ACMM_TOOL_CONFIG_JSON")
-
-    if generic_config is not None:
-        return _json_object_configuration(
-            generic_config,
-            "ACMM_TOOL_CONFIG_JSON",
-        )
-
-    try:
-        magic_number = int(environment["ACMM_MAGIC_NUMBER"])
-        retrieval_mode = str(environment["ACMM_RETRIEVAL_MODE"])
-        addition_mode = str(environment["ACMM_ADDITION_MODE"])
-    except (KeyError, TypeError, ValueError) as exc:
+    if "ACMM_TOOL_CONFIG_JSON" not in environment:
         raise agent_zero_adapter_error(
-            "Agent Zero fixture environment is missing controlled tool values."
-        ) from exc
+            "Agent Zero fixture environment is missing ACMM_TOOL_CONFIG_JSON."
+        )
 
-    for name, value in (
-        ("retrieval_mode", retrieval_mode),
-        ("addition_mode", addition_mode),
-    ):
-        if value not in {"success", "failure"}:
-            raise agent_zero_adapter_error(
-                f"Agent Zero {name} must be 'success' or 'failure'."
-            )
-
-    return {
-        "magic_number": magic_number,
-        "retrieval_mode": retrieval_mode,
-        "addition_mode": addition_mode,
-    }
+    return _json_object_configuration(
+        environment["ACMM_TOOL_CONFIG_JSON"],
+        "ACMM_TOOL_CONFIG_JSON",
+    )
 
 
 def _baseline_tool_config(environment: Any) -> dict[str, Any]:
-    if isinstance(environment, dict):
-        generic_baseline = environment.get("ACMM_TOOL_BASELINE_JSON")
+    if not isinstance(environment, dict):
+        raise agent_zero_adapter_error(
+            "Agent Zero Tool execution requires a fixture environment mapping."
+        )
 
-        if generic_baseline is not None:
-            return _json_object_configuration(
-                generic_baseline,
-                "ACMM_TOOL_BASELINE_JSON",
-            )
+    if "ACMM_TOOL_BASELINE_JSON" not in environment:
+        raise agent_zero_adapter_error(
+            "Agent Zero fixture environment is missing ACMM_TOOL_BASELINE_JSON."
+        )
 
-    return {
-        "magic_number": 87,
-        "retrieval_mode": "success",
-        "addition_mode": "success",
-    }
-
+    return _json_object_configuration(
+        environment["ACMM_TOOL_BASELINE_JSON"],
+        "ACMM_TOOL_BASELINE_JSON",
+    )
 
 def _json_object_configuration(value: Any, name: str) -> dict[str, Any]:
     if not isinstance(value, str):

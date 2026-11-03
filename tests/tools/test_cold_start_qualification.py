@@ -25,7 +25,7 @@ _TOOL_SPEC.loader.exec_module(cold_start)
 def test_run_command_preserves_selection_and_diagnostics(tmp_path: Path) -> None:
     command = cold_start._build_run_command(
         acmm_command="acmm",
-        experiment="controlled_tool_use_multiscenario_v1",
+        experiment="package_smoke_v1",
         subject_id="agent_zero_nemotron30b",
         run_indices=("120-123", "128"),
         results_root=tmp_path / "results",
@@ -36,7 +36,7 @@ def test_run_command_preserves_selection_and_diagnostics(tmp_path: Path) -> None
     assert command[:4] == [
         "acmm",
         "run",
-        "controlled_tool_use_multiscenario_v1",
+        "package_smoke_v1",
         "--subject",
     ]
     assert command.count("--run-index") == 2
@@ -77,7 +77,7 @@ Experiment execution persisted successfully.
 def test_preview_command_is_passive_and_preserves_selection(tmp_path: Path) -> None:
     command = cold_start._build_preview_command(
         acmm_command="acmm",
-        experiment="controlled_tool_use_multiscenario_v1",
+        experiment="package_smoke_v1",
         subject_id="agent_zero_nemotron30b",
         run_indices=("120-123",),
     )

@@ -17,8 +17,8 @@ from acmm.experiment_package import (
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_SCHEMA = ROOT / "contracts" / "v0_1" / "contract.schema.json"
-VALID_CONTRACT = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "magic_number.yaml"
-EXPERIMENT_ID = "magic_number_tool_use_v1"
+VALID_CONTRACT = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "package_fixture.yaml"
+EXPERIMENT_ID = "package_fixture_v1"
 
 
 _RUNTIME_COMPONENTS = '''from __future__ import annotations
@@ -59,17 +59,17 @@ def build_runtime(context):
     marker = context.resolve_resource("assets/marker.txt").read_text(encoding="utf-8").strip()
     return experiment_runtime(
         capabilities=harness_capabilities(
-            evaluators=frozenset({"magic_number_retrieval", "magic_number_addition"}),
-            fixtures=frozenset({"magic_number_environment_v1"}),
-            tools=frozenset({"get_magic_number", "add_numbers"}),
+            evaluators=frozenset({"fixture_value_retrieval", "fixture_value_addition"}),
+            fixtures=frozenset({"package_fixture_environment_v1"}),
+            tools=frozenset({"get_fixture_value", "add_numbers"}),
             evidence_channels=frozenset(
                 {"conversation", "tool_calls", "tool_results", "final_response"}
             ),
         ),
-        fixtures={"magic_number_environment_v1": package_fixture(marker)},
+        fixtures={"package_fixture_environment_v1": package_fixture(marker)},
         evaluators={
-            "magic_number_retrieval": package_evaluator("retrieval"),
-            "magic_number_addition": package_evaluator("addition"),
+            "fixture_value_retrieval": package_evaluator("retrieval"),
+            "fixture_value_addition": package_evaluator("addition"),
         },
     )
 '''
@@ -138,12 +138,12 @@ def test_staged_runtime_loads_relative_modules_and_package_resources(tmp_path: P
     assert loaded.context.package_sha256 == package.package_sha256
     assert loaded.context.package_root == package.root
     assert loaded.module_name.startswith(f"_acmm_experiment_{EXPERIMENT_ID}_")
-    assert set(loaded.runtime.fixtures) == {"magic_number_environment_v1"}
+    assert set(loaded.runtime.fixtures) == {"package_fixture_environment_v1"}
     assert set(loaded.runtime.evaluators) == {
-        "magic_number_retrieval",
-        "magic_number_addition",
+        "fixture_value_retrieval",
+        "fixture_value_addition",
     }
-    fixture = loaded.runtime.fixtures["magic_number_environment_v1"]
+    fixture = loaded.runtime.fixtures["package_fixture_environment_v1"]
     assert fixture.marker == "staged-runtime"
     assert package.runtime is not None
     assert not (package.runtime.root / "__pycache__").exists()
@@ -190,7 +190,7 @@ def test_runtime_entrypoint_must_return_public_runtime_type(tmp_path: Path) -> N
 
 def test_runtime_declarations_must_match_capabilities(tmp_path: Path) -> None:
     runtime_init = _RUNTIME_INIT.replace(
-        'fixtures={"magic_number_environment_v1": package_fixture(marker)},',
+        'fixtures={"package_fixture_environment_v1": package_fixture(marker)},',
         "fixtures={},",
     )
     package = _acquire(tmp_path, runtime_init=runtime_init)
@@ -201,10 +201,10 @@ def test_runtime_declarations_must_match_capabilities(tmp_path: Path) -> None:
 
 def test_runtime_capabilities_must_match_contract(tmp_path: Path) -> None:
     runtime_init = _RUNTIME_INIT.replace(
-        'evaluators=frozenset({"magic_number_retrieval", "magic_number_addition"}),',
-        'evaluators=frozenset({"magic_number_retrieval"}),',
+        'evaluators=frozenset({"fixture_value_retrieval", "fixture_value_addition"}),',
+        'evaluators=frozenset({"fixture_value_retrieval"}),',
     ).replace(
-        '            "magic_number_addition": package_evaluator("addition"),\n',
+        '            "fixture_value_addition": package_evaluator("addition"),\n',
         "",
     )
     package = _acquire(tmp_path, runtime_init=runtime_init)

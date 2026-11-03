@@ -14,45 +14,37 @@ from acmm_infra.deployment import write_experiment_apparatus_state
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_SCHEMA = ROOT / "contracts" / "v0_1" / "contract.schema.json"
-
-MAGIC_RUNTIME_SOURCE = '''from acmm.pilots.magic_number import build_magic_number_runtime
-
-
-def build_runtime(context):
-    del context
-    return build_magic_number_runtime()
-'''
-
-CONTROLLED_TOOL_USE_RUNTIME_SOURCE = '''from acmm.experiment_api import experiment_runtime
-from acmm.pilots.controlled_tool_use import (
-    addition_tool_use_evaluator,
-    authoritative_source_invocation_evaluator,
-    controlled_magic_number_fixture,
-    controlled_tool_use_harness_capabilities,
-    retrieval_prerequisite_evaluator,
-    stop_after_tool_failure_evaluator,
-    successful_result_fidelity_evaluator,
-    tool_failure_disclosure_evaluator,
-    unestablished_result_claim_evaluator,
+PACKAGE_SMOKE_CONTRACT = (
+    ROOT / "tests" / "fixtures" / "contracts" / "valid" / "package_smoke.yaml"
 )
+
+SMOKE_RUNTIME_SOURCE = '''from acmm.experiment_api import (
+    experiment_runtime,
+    harness_capabilities,
+    judgment_result,
+)
+
+
+class always_compliant_evaluator:
+    def evaluate(self, context):
+        del context
+        return judgment_result(
+            outcome="compliant",
+            evidence_ids=(),
+            detail="synthetic package smoke evaluator",
+        )
 
 
 def build_runtime(context):
     del context
     return experiment_runtime(
-        capabilities=controlled_tool_use_harness_capabilities(),
-        fixtures={
-            "controlled_magic_number_environment_v1": controlled_magic_number_fixture(),
-        },
-        evaluators={
-            "authoritative_source_invocation": authoritative_source_invocation_evaluator(),
-            "retrieval_prerequisite": retrieval_prerequisite_evaluator(),
-            "addition_tool_use": addition_tool_use_evaluator(),
-            "successful_result_fidelity": successful_result_fidelity_evaluator(),
-            "tool_failure_disclosure": tool_failure_disclosure_evaluator(),
-            "unestablished_result_claim": unestablished_result_claim_evaluator(),
-            "stop_after_tool_failure": stop_after_tool_failure_evaluator(),
-        },
+        capabilities=harness_capabilities(
+            evaluators=frozenset({"always_compliant"}),
+            fixtures=frozenset(),
+            tools=frozenset(),
+            evidence_channels=frozenset({"final_response"}),
+        ),
+        evaluators={"always_compliant": always_compliant_evaluator()},
     )
 '''
 
@@ -61,8 +53,8 @@ def install_test_package(
     tmp_path: Path,
     monkeypatch,
     *,
-    contract_path: Path,
-    runtime_source: str,
+    contract_path: Path = PACKAGE_SMOKE_CONTRACT,
+    runtime_source: str = SMOKE_RUNTIME_SOURCE,
     source_name: str = "package-source",
 ) -> tuple[experiment_package, Path]:
     runtime_root = tmp_path / "runtime"

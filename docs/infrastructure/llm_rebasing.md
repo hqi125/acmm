@@ -268,8 +268,8 @@ deployed across the three-agent cohort, requires one common experiment-independe
 refuses to run while any subject runtime is active or experiment apparatus is present. Candidate
 selection therefore remains an `acmm env set-llm <llm-id>` responsibility.
 
-For each agent, the runner temporarily reuses the frozen `magic_number_tool_use_v1` Tool apparatus
-as an engineering fixture while retaining the deployed LLM baseline. It then starts the runtime and
+For each agent, the runner uses the dedicated engineering apparatus under
+`tools/fixtures/llm_behavioral_tool_smoke` while retaining the deployed LLM baseline. It then starts the runtime and
 executes repeated instances of the same dependency path:
 
 ```text
@@ -312,13 +312,13 @@ stops the runtime again before the next iteration. Three iterations per subject 
 Rebasing promotion gate: nine fresh-runtime attempts in total. This tests startup/provider/profile
 compatibility without inflating qualification into an experiment-sized population.
 
-The runner currently uses the existing frozen magic-number apparatus rather than moving that source
+The runner currently uses the dedicated engineering controlled-Tool apparatus rather than moving that source
 into a shared location. This is intentional: changing the source tree of a frozen experiment would
 alter historical apparatus provenance merely to support Rebasing qualification.
 ## Stage 4: warm behavioral qualification
 
 GPT-OSS was exercised through all three agent frameworks using the engineering-only controlled
-magic-number Tool fixture. Five repeated runs per agent produced 15/15 passes, exactly 30 required
+controlled-Tool smoke fixture. Five repeated runs per agent produced 15/15 passes, exactly 30 required
 Tool calls, zero redundant Tool calls, and only `agent_completed` terminations. The qualification
 artifact ID was:
 

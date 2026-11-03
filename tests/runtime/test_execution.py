@@ -23,13 +23,7 @@ from acmm.runtime.registry import execution_registry
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CONTRACT_PATH = (
-    ROOT
-    / "experiments"
-    / "examples"
-    / "magic_number"
-    / "experiment.yaml"
-)
+CONTRACT_PATH = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "runtime_execution.yaml"
 RECORD_SCHEMA_PATH = (
     ROOT
     / "records"
@@ -46,13 +40,13 @@ class fake_fixture:
         scenario: dict,
         reset: dict,
     ) -> prepared_environment:
-        assert scenario["id"] == "magic_plus_13"
+        assert scenario["id"] == "synthetic_plus_13"
         assert reset["environment"] == "baseline"
 
         return prepared_environment(
-            handle={"magic_number": 87},
+            handle={"fixture_value": 87},
             provenance={
-                "fixture": "magic_number_environment_v1",
+                "fixture": "synthetic_environment_v1",
                 "configuration": {},
             },
         )
@@ -83,9 +77,9 @@ class fake_adapter:
         environment: object,
         termination: dict,
     ) -> adapter_execution_result:
-        assert subject["id"] == "hermes_nemotron30b"
-        assert scenario["id"] == "magic_plus_13"
-        assert environment == {"magic_number": 87}
+        assert subject["id"] == "hermes_gpt_oss120b"
+        assert scenario["id"] == "synthetic_plus_13"
+        assert environment == {"fixture_value": 87}
         assert termination["max_steps"] == 32
 
         return adapter_execution_result(
@@ -101,7 +95,7 @@ class fake_adapter:
                     id="tool_calls",
                     channel="tool_calls",
                     artifact="evidence/tool_calls.json",
-                    content=b'[{"name":"get_magic_number"}]',
+                    content=b'[{"name":"get_fixture_value"}]',
                 ),
                 captured_evidence(
                     id="tool_results",
@@ -122,7 +116,7 @@ class fake_adapter:
                     "version": "0.21.3",
                 },
                 "model": {
-                    "name": "nemotron-3-nano:30b-cloud",
+                    "name": "gpt-oss:120b-cloud",
                     "provider": "ollama_cloud",
                 },
                 "configuration": {
@@ -185,14 +179,14 @@ def _registry(
 ) -> execution_registry:
     return execution_registry(
         subject_adapters={
-            "hermes_nemotron30b": adapter or fake_adapter(),
+            "hermes_gpt_oss120b": adapter or fake_adapter(),
         },
         fixtures={
-            "magic_number_environment_v1": fixture or fake_fixture(),
+            "synthetic_environment_v1": fixture or fake_fixture(),
         },
         evaluators={
-            "magic_number_retrieval": retrieval_evaluator(),
-            "magic_number_addition": second_evaluator or addition_evaluator(),
+            "synthetic_retrieval": retrieval_evaluator(),
+            "synthetic_addition": second_evaluator or addition_evaluator(),
         },
     )
 
@@ -313,15 +307,15 @@ def test_subject_configuration_overlay_is_captured_in_realized_provenance() -> N
             )
 
     registry = execution_registry(
-        subject_adapters={"hermes_nemotron30b": overlay_adapter()},
-        fixtures={"magic_number_environment_v1": fake_fixture()},
+        subject_adapters={"hermes_gpt_oss120b": overlay_adapter()},
+        fixtures={"synthetic_environment_v1": fake_fixture()},
         evaluators={
-            "magic_number_retrieval": retrieval_evaluator(),
-            "magic_number_addition": addition_evaluator(),
+            "synthetic_retrieval": retrieval_evaluator(),
+            "synthetic_addition": addition_evaluator(),
         },
         subject_configuration_overlays={
-            "hermes_nemotron30b": {
-                "llm_baseline_id": "nemotron_3_nano_30b_cloud_v1",
+            "hermes_gpt_oss120b": {
+                "llm_baseline_id": "gpt_oss_120b_cloud_v1",
                 "llm_minimum_context_window": 64000,
                 "llm_requested_context_window": 64000,
             }
@@ -338,7 +332,7 @@ def test_subject_configuration_overlay_is_captured_in_realized_provenance() -> N
     )
 
     configuration = result.record["provenance"]["subject"]["configuration"]
-    assert configuration["llm_baseline_id"] == "nemotron_3_nano_30b_cloud_v1"
+    assert configuration["llm_baseline_id"] == "gpt_oss_120b_cloud_v1"
     assert configuration["llm_minimum_context_window"] == 64000
     assert configuration["llm_requested_context_window"] == 64000
 

@@ -564,41 +564,18 @@ def _function_output_text(value: Any) -> str:
 def _runtime_valves(environment: Any) -> dict[str, Any]:
     if not isinstance(environment, dict):
         raise open_webui_adapter_error(
-            "Open WebUI controlled-tool execution requires a fixture environment mapping."
+            "Open WebUI Tool execution requires a fixture environment mapping."
         )
 
-    generic_config = environment.get("ACMM_TOOL_CONFIG_JSON")
-
-    if generic_config is not None:
-        return _json_object_configuration(
-            generic_config,
-            "ACMM_TOOL_CONFIG_JSON",
-        )
-
-    try:
-        magic_number = int(environment["ACMM_MAGIC_NUMBER"])
-        retrieval_mode = str(environment["ACMM_RETRIEVAL_MODE"])
-        addition_mode = str(environment["ACMM_ADDITION_MODE"])
-    except (KeyError, TypeError, ValueError) as exc:
+    if "ACMM_TOOL_CONFIG_JSON" not in environment:
         raise open_webui_adapter_error(
-            "Open WebUI fixture environment is missing controlled tool values."
-        ) from exc
+            "Open WebUI fixture environment is missing ACMM_TOOL_CONFIG_JSON."
+        )
 
-    for name, value in (
-        ("retrieval_mode", retrieval_mode),
-        ("addition_mode", addition_mode),
-    ):
-        if value not in {"success", "failure"}:
-            raise open_webui_adapter_error(
-                f"Open WebUI {name} must be 'success' or 'failure'."
-            )
-
-    return {
-        "magic_number": magic_number,
-        "retrieval_mode": retrieval_mode,
-        "addition_mode": addition_mode,
-    }
-
+    return _json_object_configuration(
+        environment["ACMM_TOOL_CONFIG_JSON"],
+        "ACMM_TOOL_CONFIG_JSON",
+    )
 
 def _json_object_configuration(value: Any, name: str) -> dict[str, Any]:
     if not isinstance(value, str):

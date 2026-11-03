@@ -117,7 +117,7 @@ def test_experiment_apparatus_state_records_application_scope(
 ) -> None:
     write_experiment_apparatus_state(
         tmp_path,
-        experiment_id="controlled_tool_use_multiscenario_v1",
+        experiment_id="package_fixture_v1",
         source_sha256="abc123",
         application_scope="tools",
         resources=[{"kind": "tool", "id": "acmm_tools"}],
@@ -128,7 +128,7 @@ def test_experiment_apparatus_state_records_application_scope(
     assert state is not None
     assert state["schema_version"] == "0.3"
     assert state["application_scope"] == "tools"
-    assert state["experiment_id"] == "controlled_tool_use_multiscenario_v1"
+    assert state["experiment_id"] == "package_fixture_v1"
 
 
 def test_experiment_apparatus_state_reads_legacy_scope_as_full_experiment(
@@ -138,7 +138,7 @@ def test_experiment_apparatus_state_reads_legacy_scope_as_full_experiment(
     path.write_text(
         "{\n"
         '  "schema_version": "0.1",\n'
-        '  "experiment_id": "controlled_tool_use_multiscenario_v1",\n'
+        '  "experiment_id": "package_fixture_v1",\n'
         '  "source_sha256": "abc123",\n'
         '  "resources": []\n'
         "}\n",

@@ -21,7 +21,8 @@ def schema() -> dict:
     "filename",
     [
         "minimal.yaml",
-        "magic_number.yaml",
+        "runtime_execution.yaml",
+        "package_fixture.yaml",
         "unused_check_warning.yaml",
     ],
 )

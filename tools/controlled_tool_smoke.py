@@ -93,10 +93,17 @@ def build_scenario(*, scenario_id: str) -> dict[str, Any]:
 
 
 def build_environment() -> dict[str, str]:
+    tool_config = {
+        "magic_number": _EXPECTED_MAGIC_NUMBER,
+        "retrieval_mode": "success",
+        "addition_mode": "success",
+    }
     return {
         "ACMM_MAGIC_NUMBER": str(_EXPECTED_MAGIC_NUMBER),
         "ACMM_RETRIEVAL_MODE": "success",
         "ACMM_ADDITION_MODE": "success",
+        "ACMM_TOOL_CONFIG_JSON": json.dumps(tool_config, separators=(",", ":")),
+        "ACMM_TOOL_BASELINE_JSON": json.dumps(tool_config, separators=(",", ":")),
     }
 
 

@@ -16,8 +16,6 @@ The repository is the installation package:
         ├── defaults/
         │   ├── compose.yaml
         │   └── env.defaults
-        └── plugins/
-            └── acmm-tools/
 ```
 
 The initialized deployment is mutable and WSL-native:
@@ -43,7 +41,7 @@ model.provider         custom
 model.base_url         http://host.docker.internal:11434/v1
 model.api_mode         chat_completions
 model.context_length   64000
-model.default          nemotron-3-nano:30b-cloud
+model.default          composed from registered LLM
 agent.reasoning_effort medium
 terminal.backend         local
 Blank Slate              enabled
@@ -100,7 +98,6 @@ tools.tool_search.enabled
 managed plugin enablement
 ```
 
-It also synchronizes repository-managed plugins into the Hermes data volume.
 
 `apply` requires the persistent gateway to be stopped. ACMM first synchronizes managed
 plugin files locally, then launches exactly one named `docker compose run --rm --no-deps`
@@ -173,9 +170,8 @@ baseline.
 The infrastructure profile reproduces the behavior of the pinned Hermes v0.21.3 Blank
 Slate setup rather than treating "Blank Slate" as a descriptive label. ACMM delegates the
 minimal-toolset and minimized-agent mutations to Hermes's own pinned
-`_blank_slate_minimal_toolsets()` and `_blank_slate_minimize_config()` helpers, then removes
-only explicitly declared experiment overlay toolsets such as `acmm` from the resulting hard
-disabled list.
+`_blank_slate_minimal_toolsets()` and `_blank_slate_minimize_config()` helpers, then allows package-aware orchestration to remove only explicitly declared staged apparatus
+toolsets from the resulting hard-disabled list.
 
 The desired minimal tool surface is:
 
@@ -186,14 +182,8 @@ platform_toolsets.cli = [file, skills, terminal, vision]
 Hermes also needs the second hard-suppression layer used by its own setup implementation:
 `agent.disabled_toolsets` is computed from the running pinned image's configurable,
 plugin-provided, and plain toolset registries. ACMM then removes only explicitly declared
-experiment overlays from that disabled set. For the current pilot:
-
-```text
-managed overlay toolset = acmm
-```
-
-`acmm` is therefore available when the subject adapter explicitly requests it, but it is
-not part of the default Hermes CLI surface.
+experiment overlays from that disabled set. Package-declared overlay toolsets can therefore be made available when the subject adapter
+explicitly requests them without becoming part of the default Hermes CLI surface.
 
 The remaining pinned Blank Slate settings are:
 
@@ -241,35 +231,21 @@ READY.
 
 ## Experiment apparatus reconciliation
 
-Experiment-facing plugins are stored under
-`infrastructure/hermes/experiments/<experiment-id>/` rather than in the qualified baseline.
-Apply one explicitly before acquisition:
+Research apparatus is not stored under `infrastructure/hermes/`. An installed Experiment Package may
+declare a Hermes apparatus component, which Core verifies and resolves from the immutable staged
+package snapshot.
 
-```text
-acmm-infra hermes down
-acmm-infra hermes apply --experiment controlled_tool_use_multiscenario_v1
-acmm-infra hermes up
-acmm-infra hermes doctor
-```
+Use `acmm package apply <selector>` for explicit full-package preparation or
+`acmm run <selector> --apply-if-needed` for selected-subject reconciliation. The package-aware Hermes
+manager synchronizes the staged plugin bytes, composes declared tool policy over the qualified
+baseline, and records exact package/apparatus provenance. `doctor` reconstructs and verifies that same
+package-backed state passively.
 
-The preferred `apply --experiment <experiment-id>` composes the stable baseline with the
-selected experiment apparatus, atomically synchronizes the managed plugin bytes, and
-reconciles the resulting settings/plugin/tool-routing state in one bounded provisioning batch.
-`apply-tools --experiment <experiment-id>` performs only the narrower Tool-facing
-reconciliation.
-
-Baseline `apply` returns Hermes to the experiment-independent state and removes active
-repository-managed experiment apparatus. `apply-experiment <experiment-id>` remains a
-compatibility alias for the full experiment-aware apply.
-
-`doctor` discovers the active experiment from the deployment marker and is the pre-run
-qualification gate for the composed
-baseline plus selected apparatus.
-
+`acmm-infra hermes apply` remains baseline-only and removes active research apparatus.
 
 ## Plugin consent
 
-The ACMM pilot plugin does not need to replace Hermes built-in tools. The desired profile
+A package-owned ACMM plugin does not need to replace Hermes built-in tools. The desired profile
 therefore declares:
 
 ```text

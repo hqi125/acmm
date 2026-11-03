@@ -169,8 +169,8 @@ a planned slot belong to a future result-set validator.
 A Run Record can be checked against the exact Experiment Contract artifact with:
 
 ```text
-acmm validate-record records/v0_1/run_record.example.yaml \
-    --contract experiments/examples/magic_number/experiment.yaml
+acmm validate-record <run-record.yaml> \
+    --contract <exact-contract-snapshot.yaml>
 ```
 
 The command first validates the Experiment Contract. If the Contract is invalid, Run Record

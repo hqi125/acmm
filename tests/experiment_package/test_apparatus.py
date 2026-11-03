@@ -33,8 +33,8 @@ from acmm_infra.profiles.open_webui import load_open_webui_profile
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_SCHEMA = ROOT / "contracts" / "v0_1" / "contract.schema.json"
-VALID_CONTRACT = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "magic_number.yaml"
-EXPERIMENT_ID = "magic_number_tool_use_v1"
+VALID_CONTRACT = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "package_fixture.yaml"
+EXPERIMENT_ID = "package_fixture_v1"
 
 
 def _write_apparatus_package(root: Path) -> None:
@@ -97,7 +97,7 @@ def _write_apparatus_package(root: Path) -> None:
         f"experiment_id: {EXPERIMENT_ID}\n"
         "tool_policy:\n"
         "  allowed:\n"
-        "    - plugin:acmm_tools:get_magic_number\n"
+        "    - plugin:acmm_tools:get_fixture_value\n"
         "plugins:\n"
         "  managed:\n"
         "    - name: acmm_tools\n"
@@ -289,7 +289,7 @@ def test_deployed_manager_reopens_package_from_persisted_provenance(
 
     assert reopened.experiment_id == EXPERIMENT_ID
     assert reopened.package_sha256 == package.package_sha256
-    assert reopened.llm_baseline_id == "nemotron_3_nano_30b_cloud_v1"
+    assert reopened.llm_baseline_id == "gpt_oss_120b_cloud_v1"
     assert reopened.manager.deployment_provenance == provenance
     assert reopened.manager.profile.plugins[0].source_root == (
         package.apparatus["hermes"].root
@@ -354,9 +354,9 @@ def test_package_deployment_provenance_supports_no_apparatus_baseline(
         ROOT,
         runtime_root,
         cohort_subject(
-            "hermes_nemotron30b",
+            "hermes_gpt_oss120b",
             "hermes",
-            "nemotron_3_nano_30b_cloud_v1",
+            "gpt_oss_120b_cloud_v1",
         ),
         include_running=False,
     )

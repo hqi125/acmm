@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -13,16 +14,29 @@ from acmm_infra.docker import docker_error
 from acmm_infra.hermes import hermes_manager, infrastructure_error
 from acmm_infra.process import command_result
 from acmm_infra.profiles.experiments import (
-    experiment_apparatus_sha256,
-    with_hermes_experiment,
+    apparatus_tree_sha256,
+    with_hermes_apparatus,
 )
 from acmm_infra.profiles.hermes import load_hermes_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXPERIMENT_ID = "controlled_tool_use_multiscenario_v1"
+EXPERIMENT_ID = "manager_apparatus_fixture_v1"
 
 EXTERNAL_PACKAGE_EXPERIMENT_ID = "external_package_doctor_v1"
+
+
+def _apparatus_root(tmp_path: Path, experiment_id: str = EXPERIMENT_ID) -> Path:
+    source = ROOT / "tools" / "fixtures" / "llm_behavioral_tool_smoke" / "hermes"
+    target = tmp_path / "apparatus-source" / "hermes" / experiment_id
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(source, target)
+    manifest = target / "apparatus.yaml"
+    text = manifest.read_text(encoding="utf-8")
+    text = text.replace("llm_behavioral_tool_smoke_v1", experiment_id)
+    manifest.write_text(text, encoding="utf-8")
+    return target
 
 
 def _package_provenance(
@@ -467,7 +481,7 @@ def _manager(
 ):
     profile = load_hermes_profile(ROOT)
     if experiment:
-        profile = with_hermes_experiment(ROOT, profile, EXPERIMENT_ID)
+        profile = with_hermes_apparatus(_apparatus_root(tmp_path), profile, EXPERIMENT_ID)
     docker_instance = docker or fake_docker()
     manager = hermes_manager(
         repo_root=ROOT,
@@ -475,6 +489,9 @@ def _manager(
         profile=profile,
         docker=docker_instance,
         experiment_id=EXPERIMENT_ID if experiment else None,
+        apparatus_source_sha256=(
+            apparatus_tree_sha256(_apparatus_root(tmp_path)) if experiment else None
+        ),
     )
     return manager, docker_instance
 
@@ -754,15 +771,9 @@ def test_apply_experiment_reconciles_only_experiment_scope(
     assert "acmm" not in docker.disabled_toolsets
 
     deployed = manager.data_root / "plugins" / "acmm-tools"
-    source = (
-        ROOT
-        / "infrastructure"
-        / "hermes"
-        / "experiments"
-        / EXPERIMENT_ID
-        / "plugins"
-        / "acmm-tools"
-    )
+    plugin = manager.profile.plugins[0]
+    assert plugin.source_root is not None
+    source = plugin.source_root / plugin.source
     assert (deployed / "plugin.yaml").read_bytes() == (
         source / "plugin.yaml"
     ).read_bytes()
@@ -817,7 +828,7 @@ def test_experiment_doctor_rejects_wrong_apparatus_identity(
     manager.apply_experiment(EXPERIMENT_ID)
     marker_path = manager.deployment_root / ".acmm-experiment-apparatus.json"
     marker = json.loads(marker_path.read_text(encoding="utf-8"))
-    marker["experiment_id"] = "magic_number_tool_use_v1"
+    marker["experiment_id"] = "other_apparatus_v1"
     marker_path.write_text(json.dumps(marker), encoding="utf-8")
     docker.running = True
 
@@ -910,27 +921,6 @@ def test_baseline_doctor_is_ready_after_removing_experiment_apparatus(
         if item.name == "blank_slate_disabled_toolsets"
     )
     assert disabled_check.ok
-    assert "acmm" not in docker.disabled_toolsets
-
-
-def test_baseline_apply_removes_unmarked_legacy_experiment_apparatus(
-    tmp_path: Path,
-) -> None:
-    baseline, docker = _manager(tmp_path)
-    baseline.apply()
-    experiment = _experiment_manager(tmp_path, docker)
-    experiment.apply_experiment(EXPERIMENT_ID)
-    marker = baseline.deployment_root / ".acmm-experiment-apparatus.json"
-    marker.unlink()
-
-    plugin_root = experiment.data_root / "plugins" / "acmm-tools"
-    assert plugin_root.is_dir()
-    assert "acmm-tools" in docker.plugins_enabled
-
-    baseline.apply()
-
-    assert not plugin_root.exists()
-    assert "acmm-tools" not in docker.plugins_enabled
     assert "acmm" not in docker.disabled_toolsets
 
 
@@ -1350,16 +1340,8 @@ def test_blank_slate_python_runs_directly_in_already_unprivileged_shell(
 def test_package_backed_doctor_uses_package_apparatus_identity(
     tmp_path: Path,
 ) -> None:
-    profile = with_hermes_experiment(
-        ROOT,
-        load_hermes_profile(ROOT),
-        EXPERIMENT_ID,
-    )
-    apparatus_sha256 = experiment_apparatus_sha256(
-        ROOT,
-        "hermes",
-        EXPERIMENT_ID,
-    )
+    profile = with_hermes_apparatus(_apparatus_root(tmp_path), load_hermes_profile(ROOT), EXPERIMENT_ID)
+    apparatus_sha256 = apparatus_tree_sha256(_apparatus_root(tmp_path))
     docker = fake_docker()
     manager = hermes_manager(
         ROOT,

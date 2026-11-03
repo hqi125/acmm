@@ -4,13 +4,7 @@ from acmm.cli import _build_parser
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CONTRACT_PATH = (
-    ROOT
-    / "experiments"
-    / "examples"
-    / "magic_number"
-    / "experiment.yaml"
-)
+CONTRACT_PATH = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "runtime_execution.yaml"
 VALID_DIR = ROOT / "tests" / "fixtures" / "records" / "valid"
 INVALID_DIR = ROOT / "tests" / "fixtures" / "records" / "invalid"
 
@@ -20,7 +14,7 @@ def test_validate_record_command_accepts_valid_record(capsys) -> None:
     args = parser.parse_args(
         [
             "validate-record",
-            str(VALID_DIR / "magic_number.yaml"),
+            str(VALID_DIR / "successful_execution.yaml"),
             "--contract",
             str(CONTRACT_PATH),
         ]
@@ -92,7 +86,7 @@ def test_validate_record_command_rejects_invalid_contract(
     args = parser.parse_args(
         [
             "validate-record",
-            str(VALID_DIR / "magic_number.yaml"),
+            str(VALID_DIR / "successful_execution.yaml"),
             "--contract",
             str(invalid_contract),
         ]

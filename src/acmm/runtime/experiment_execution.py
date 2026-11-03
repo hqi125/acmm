@@ -143,7 +143,7 @@ def execute_experiment(
     the planned slot. Valid agent outcomes such as timeout are not retried.
 
     By default the complete Contract plan is executed. ``run_indices`` may
-    select a deterministic subset for an explicit engineering/pilot execution;
+    select a deterministic subset for an explicit engineering/scoped execution;
     the completion manifest records both the full Contract run count and the
     selected run indices so a subset cannot be mistaken for a complete Contract
     execution.

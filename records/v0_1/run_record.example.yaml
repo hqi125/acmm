@@ -2,10 +2,10 @@ schema_version: "0.1"
 
 run:
   id: 2b93f7d0-8f9a-4f3f-b5ae-4d63a45051f2
-  experiment_id: magic_number_tool_use_v1
+  experiment_id: runtime_execution_fixture_v1
   run_index: 0
-  subject_id: hermes_nemotron30b
-  scenario_id: magic_plus_13
+  subject_id: hermes_gpt_oss120b
+  scenario_id: fixture_plus_13
   repetition: 1
   contract_sha256: 08eda73cd38bf22aee869208681739afd8b16477be173d3fb9e8319637a0d66e
 
@@ -23,7 +23,7 @@ provenance:
       name: Hermes Agent
       version: "0.21.3"
     model:
-      name: nemotron-3-nano:30b-cloud
+      name: gpt-oss:120b-cloud
       provider: ollama_cloud
     configuration:
       context_window: 64000
@@ -34,7 +34,7 @@ provenance:
         background_review_enabled: false
         tool_search_enabled: "off"
   environment:
-    fixture: magic_number_environment_v1
+    fixture: package_fixture_environment_v1
     configuration: {}
 
 evidence:

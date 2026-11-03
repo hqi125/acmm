@@ -1,7 +1,0 @@
-name: acmm_tools
-title: ACMM Recovery-Boundary Tools
-description: Controlled recovery workspace used by the ACMM interaction experiment.
-version: 0.1.0
-settings_sections: []
-per_project_config: false
-per_agent_config: false

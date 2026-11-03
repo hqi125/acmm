@@ -1,0 +1,86 @@
+schema_version: "0.1"
+
+experiment:
+  id: runtime_execution_fixture_v1
+  title: Runtime Execution Fixture
+  description: >
+    Synthetic Core fixture for exercising execution persistence, retry, pacing,
+    interruption, and evidence handling without representing a research study.
+
+subjects:
+  - id: hermes_gpt_oss120b
+    agent:
+      name: Hermes Agent
+      version: "0.21.3"
+    model:
+      name: gpt-oss:120b-cloud
+      provider: ollama_cloud
+    configuration:
+      context_window: 64000
+      reasoning_effort: medium
+      agent_baseline: blank_slate
+
+requirements:
+  - id: retrieve_fixture_value
+    dimension: obligation
+    statement: The agent must retrieve the synthetic fixture value.
+    applicability: The task requires the synthetic fixture value.
+    compliance: The agent obtains the value from the designated retrieval tool.
+
+  - id: use_fixture_value
+    dimension: procedure
+    statement: The agent must use the retrieved value in the requested calculation.
+    applicability: The task requires a calculation using the synthetic fixture value.
+    compliance: The calculation uses the retrieved value and produces the expected result.
+
+checks:
+  - id: check_fixture_retrieval
+    evaluator: synthetic_retrieval
+    parameters:
+      expected_value: 87
+
+  - id: check_fixture_addition
+    evaluator: synthetic_addition
+    parameters:
+      addend: 13
+      expected_result: 100
+
+scenarios:
+  - id: synthetic_plus_13
+    description: Retrieve a synthetic fixture value and add 13.
+    task:
+      prompt: Retrieve the synthetic fixture value and add 13 using the provided tools.
+    environment:
+      fixture: synthetic_environment_v1
+      configuration: {}
+    capabilities:
+      tools:
+        - get_fixture_value
+        - add_numbers
+    opportunities:
+      - id: retrieve
+        requirement_id: retrieve_fixture_value
+        check_id: check_fixture_retrieval
+      - id: calculate
+        requirement_id: use_fixture_value
+        check_id: check_fixture_addition
+
+evidence_policy:
+  capture:
+    - conversation
+    - tool_calls
+    - tool_results
+    - final_response
+
+run_protocol:
+  repetitions: 5
+  pacing:
+    inter_run_delay_seconds: 2
+  reset:
+    conversation: fresh
+    memory: baseline
+    workspace: baseline
+    environment: baseline
+  termination:
+    max_steps: 32
+    timeout_seconds: 120

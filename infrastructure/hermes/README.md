@@ -10,8 +10,8 @@ Docker image:    nousresearch/hermes-agent:v2026.9.14
 Provider:        custom
 Base URL:        http://host.docker.internal:11434/v1
 API mode:        chat_completions
-Model:           nemotron-3-nano:30b-cloud
-Context:         64000
+Model:           composed from registered LLM
+Context:         composed from registered LLM
 Reasoning:       medium
 Terminal:        local
 Experiment apparatus: none in baseline
@@ -28,39 +28,15 @@ hermes/
 ├── defaults/
 │   ├── compose.yaml
 │   └── env.defaults
-├── experiments/
-│   └── <experiment-id>/
-│       ├── apparatus.yaml
-│       └── plugins/
 └── README.md
 ```
 
-`profile.yaml` is the authoritative non-secret summary of ACMM-relevant desired state.
-It is used by `apply`, `status`, and `doctor`.
+`profile.yaml` defines the experiment-independent Hermes baseline. Research plugins are supplied by
+installed Experiment Packages and resolved from their staged apparatus roots; Core no longer stores
+per-experiment plugin trees below `infrastructure/hermes/`.
 
-`defaults/compose.yaml` and `defaults/env.defaults` are ready-to-use installation files.
-They are copied into the mutable deployment by:
-
-```text
-acmm-infra hermes init
-```
-
-Initialization creates:
-
-```text
-~/acmm_runtime/hermes/
-├── compose.yaml
-├── .env
-└── data/
-    ├── .env
-    └── plugins/
-```
-
-The deployment `.env` controls Docker Compose. `data/.env` is the Hermes-side environment
-file. v0.1 initializes the Hermes file empty with private permissions; this qualified
-Windows-Ollama route needs no Hermes-side provider secret.
-
-Existing deployed `compose.yaml` and `.env` files are preserved rather than overwritten.
+Initialization creates the mutable WSL-native deployment under `~/acmm_runtime/hermes/`. Existing
+deployed `compose.yaml` and `.env` files are preserved rather than overwritten.
 
 ## Lifecycle
 
@@ -74,75 +50,24 @@ acmm-infra hermes status
 acmm-infra hermes doctor
 ```
 
-Before running a specific experiment, reconcile its apparatus while Hermes is stopped:
+`apply` requires the persistent gateway to be stopped. It reconciles the qualified subject baseline
+in one bounded one-off Compose container and leaves Hermes free of research apparatus. The LLM fields
+are supplied by the registered LLM definition selected through Core rather than by an experiment
+lookup in this directory.
+
+For research execution, install/apply the Experiment Package through the top-level CLI:
 
 ```text
-acmm-infra hermes down
-acmm-infra hermes apply --experiment controlled_tool_use_multiscenario_v1
-acmm-infra hermes up
-acmm-infra hermes doctor
+acmm package apply <experiment-selector>
+acmm run <experiment-selector>
 ```
 
-`apply` requires the persistent gateway to be stopped. It runs one named one-off Compose
-container sharing the same `data/` volume and executes the complete Hermes reconciliation
-as a single shell batch. The official image routes an executable command such as `sh`
-through its normal entrypoint/privilege-drop path, so ACMM does not bypass Hermes's Docker
-bootstrap.
+or allow a selected run to reconcile the required subject with `--apply-if-needed`. Package
+apparatus is synchronized from the immutable staged package snapshot and its digest is recorded in
+deployment provenance.
 
-The batch has a default 120-second timeout, configurable with:
-
-```text
-acmm-infra hermes apply --timeout-seconds 180
-```
-
-Every Hermes sub-operation prints a numbered progress line. A failed sub-command aborts the
-batch immediately. Timeout, failure, and Ctrl+C trigger cleanup of the named provisioning
-container.
-
-`apply` currently reconciles:
-
-```text
-model.provider         = custom
-model.base_url         = http://host.docker.internal:11434/v1
-model.api_mode         = chat_completions
-model.context_length   = 64000
-model.default          = nemotron-3-nano:30b-cloud
-agent.reasoning_effort = medium
-terminal.backend         = local
-auxiliary.title_generation.enabled  = false
-auxiliary.background_review.enabled = false
-tools.tool_search.enabled            = off
-```
-
-`apply` does not install experiment plugins. It also removes any active repository-managed
-experiment apparatus so the resulting state is an experiment-independent subject baseline.
-
-Experiment plugin bytes and plugin policy are owned by
-`experiments/<experiment-id>/apparatus.yaml` and are installed by an experiment-aware apply.
-The runtime adapter still chooses the experiment toolset for each run.
-
-Reset remains scoped and explicit:
-
-```text
-acmm-infra hermes reset sessions --yes
-acmm-infra hermes reset memory --yes
-acmm-infra hermes reset experiment --yes
-```
-
-Adoption of an older Hermes data directory remains available, but it is a migration path
-rather than the preferred fresh-install workflow.
-
-If an earlier failed provisioning attempt left an unversioned or pre-v12 `config.yaml`,
-reset only that generated configuration before retrying:
-
-```text
-acmm-infra hermes reset configuration --yes
-```
-
-The manager uses `/opt/hermes/bin/hermes` inside Docker batches instead of relying on the
-container shell's `PATH`.
-
-
+Reset remains scoped and explicit. `acmm-infra hermes reset configuration --yes` is available for
+recovery from an interrupted fresh provisioning attempt; ordinary `down` is non-destructive.
 
 ## Blank Slate baseline
 
@@ -173,12 +98,10 @@ bundled skills                      essential_only
 ```
 
 Hermes applies tool restrictions at two levels. `platform_toolsets.cli` contains only the
-four minimal toolsets, while `agent.disabled_toolsets` hard-suppresses the remaining
-toolsets. `apply --experiment <experiment-id>` makes the selected experiment's managed
-toolsets visible after first reconciling the baseline. `apply-tools --experiment
-<experiment-id>` performs only the Tool/plugin reconciliation. The runtime adapter must still
-request the experiment toolset explicitly for a run. A later baseline `apply` disables/removes
-that apparatus again.
+four minimal toolsets, while `agent.disabled_toolsets` hard-suppresses the remaining toolsets.
+Package-aware orchestration may add explicitly declared apparatus toolsets after the baseline is
+reconciled. The runtime adapter must still request the package-declared toolset for a run. A later
+baseline `apply` removes that apparatus again.
 
 Docker seeds bundled skills during container initialization before the ACMM provisioning
 script begins. `apply` therefore adapts Hermes's Blank Slate flow by running:
@@ -219,31 +142,18 @@ READY.
 
 ## Experiment apparatus reconciliation
 
-Repository-owned experiment tools are versioned under the experiment that uses them. Apply
-the selected apparatus explicitly:
+Hermes research apparatus is owned by an installed Experiment Package, not by this directory.
+`acmm package apply <selector>` performs full-package preparation, while
+`acmm run <selector> --apply-if-needed` may reconcile only Hermes when selected runs require it.
 
-```text
-acmm-infra hermes down
-acmm-infra hermes apply --experiment controlled_tool_use_multiscenario_v1
-acmm-infra hermes up
-acmm-infra hermes doctor
-```
+The package-aware manager receives an already verified staged apparatus root, synchronizes its
+managed plugin content, composes the package tool policy over the qualified baseline, and records
+exact package/apparatus provenance. `doctor` reconstructs that same package-aware manager from the
+deployment marker and verifies staged identity; it never falls back to a main-repository experiment
+path.
 
-The preferred `apply --experiment <experiment-id>` composes the stable baseline with the
-selected experiment apparatus, atomically synchronizes its plugin directory, and reconciles
-the resulting settings/plugin/tool-routing state in one bounded provisioning batch.
-`apply-tools --experiment <experiment-id>` performs only the narrower Tool-facing
-reconciliation.
-
-The command records the selected experiment, apparatus SHA-256, and application scope in the
-deployment marker. Running baseline `apply` returns Hermes to the experiment-independent
-state and removes the active apparatus. `apply-experiment <experiment-id>` remains a
-compatibility alias for the full `apply --experiment <experiment-id>` workflow.
-
-`doctor` is the conservative pre-run gate: it discovers the active experiment from the
-deployment marker and checks the
-qualified baseline and the exact selected apparatus together.
-
+Running baseline `acmm-infra hermes apply` or `acmm env set-llm <llm-id>` returns Hermes to the
+experiment-independent baseline.
 
 ## Plugin consent policy
 
@@ -253,7 +163,7 @@ qualified baseline and the exact selected apparatus together.
 plugins.entries.acmm-tools.allow_tool_override = false
 ```
 
-Experiment-aware apply passes Hermes's explicit negative CLI flag, so apparatus provisioning
+Package-aware apparatus application passes Hermes's explicit negative CLI flag, so apparatus provisioning
 never waits for the interactive built-in-tool-override consent prompt.
 
 ## Apply output modes

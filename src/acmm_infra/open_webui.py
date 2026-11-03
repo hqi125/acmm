@@ -21,11 +21,6 @@ from acmm_infra.deployment import (
 )
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.open_webui_api import open_webui_api_client, open_webui_api_error
-from acmm_infra.profiles.experiments import (
-    experiment_apparatus_sha256,
-    registered_experiment_apparatus_ids,
-    with_open_webui_experiment,
-)
 from acmm_infra.profiles.open_webui import managed_open_webui_tool, open_webui_profile
 
 
@@ -39,6 +34,7 @@ class open_webui_manager:
         api: open_webui_api_client | None = None,
         experiment_id: str | None = None,
         deployment_provenance: experiment_deployment_provenance | None = None,
+        apparatus_source_sha256: str | None = None,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.runtime_root = Path(runtime_root).expanduser().resolve()
@@ -46,6 +42,7 @@ class open_webui_manager:
         self.docker = docker
         self.experiment_id = experiment_id
         self.deployment_provenance = deployment_provenance
+        self.apparatus_source_sha256 = apparatus_source_sha256
         self._validate_deployment_provenance("open-webui")
         self.deployment_root = (
             self.runtime_root / profile.deployment_directory
@@ -88,13 +85,15 @@ class open_webui_manager:
         infrastructure_subject: str,
         experiment_id: str,
     ) -> str | None:
+        del infrastructure_subject
         provenance = self.deployment_provenance
         if provenance is not None:
             return provenance.apparatus_sha256
-        return experiment_apparatus_sha256(
-            self.repo_root,
-            infrastructure_subject,
-            experiment_id,
+        if self.apparatus_source_sha256 is not None:
+            return self.apparatus_source_sha256
+        raise infrastructure_error(
+            f"Experiment apparatus '{experiment_id}' has no package provenance or "
+            "explicit apparatus source identity."
         )
 
     def initialize_deployment(self) -> dict[str, str]:
@@ -248,12 +247,12 @@ class open_webui_manager:
             )
         if timeout_seconds <= 0:
             raise infrastructure_error(
-                "Open WebUI apply-experiment timeout must be greater than zero seconds."
+                "Open WebUI apparatus-apply timeout must be greater than zero seconds."
             )
         if not self.docker.container_running():
             raise infrastructure_error(
                 "Open WebUI is stopped. Run 'acmm-infra open-webui up' before "
-                "apply-experiment."
+                "apparatus application."
             )
 
         self._wait_until_ready(timeout_seconds)
@@ -734,17 +733,6 @@ class open_webui_manager:
                         and isinstance(resource.get("id"), str)
                     ):
                         candidates.add(resource["id"])
-
-        for experiment_id in registered_experiment_apparatus_ids(
-            self.repo_root,
-            "open-webui",
-        ):
-            profile = with_open_webui_experiment(
-                self.repo_root,
-                self.profile,
-                experiment_id,
-            )
-            candidates.update(tool.id for tool in profile.tools)
 
         for tool_id in sorted(candidates - desired_ids):
             if self.api.get_tool(token, tool_id) is not None:

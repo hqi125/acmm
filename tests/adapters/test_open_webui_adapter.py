@@ -3,23 +3,16 @@ from __future__ import annotations
 import json
 
 from acmm.adapters.open_webui import open_webui_adapter
-from acmm.pilots.controlled_tool_use import (
-    addition_tool_use_evaluator,
-    authoritative_source_invocation_evaluator,
-    retrieval_prerequisite_evaluator,
-    successful_result_fidelity_evaluator,
-)
-from acmm.runtime.interfaces import evaluation_context
 
 
 SUBJECT = {
-    "id": "open_webui_nemotron30b",
+    "id": "open_webui_gpt_oss120b",
     "agent": {
         "name": "Open WebUI",
         "version": "0.11.4",
     },
     "model": {
-        "name": "nemotron-3-nano:30b-cloud",
+        "name": "gpt-oss:120b-cloud",
         "provider": "ollama_cloud",
     },
     "configuration": {
@@ -37,10 +30,14 @@ SCENARIO = {
     },
 }
 
+TOOL_CONFIG = {
+    "magic_number": 87,
+    "retrieval_mode": "success",
+    "addition_mode": "success",
+}
+
 ENVIRONMENT = {
-    "ACMM_MAGIC_NUMBER": "87",
-    "ACMM_RETRIEVAL_MODE": "success",
-    "ACMM_ADDITION_MODE": "success",
+    "ACMM_TOOL_CONFIG_JSON": json.dumps(TOOL_CONFIG),
 }
 
 TERMINATION = {
@@ -94,7 +91,7 @@ class fake_open_webui_client:
                         assistant_id: {
                             "id": assistant_id,
                             "role": "assistant",
-                            "model": "nemotron-3-nano:30b-cloud",
+                            "model": "gpt-oss:120b-cloud",
                             "content": "The result is 100.",
                             "timestamp": 6,
                             "done": True,
@@ -174,7 +171,7 @@ def test_open_webui_adapter_runs_native_tool_loop_and_captures_evidence() -> Non
     assert client.deleted == ["chat-123"]
 
     completion = client.completion_payload
-    assert completion["model"] == "nemotron-3-nano:30b-cloud"
+    assert completion["model"] == "gpt-oss:120b-cloud"
     assert completion["stream"] is True
     assert completion["tool_ids"] == ["acmm_tools"]
     assert "session_id" not in completion
@@ -253,7 +250,7 @@ def test_open_webui_timeout_captures_partial_evidence_before_cleanup() -> None:
                         assistant_id: {
                             "id": assistant_id,
                             "role": "assistant",
-                            "model": "nemotron-3-nano:30b-cloud",
+                            "model": "gpt-oss:120b-cloud",
                             "content": "",
                             "timestamp": 2,
                             "done": False,
@@ -348,8 +345,9 @@ def test_open_webui_adapter_marks_failed_tool_output() -> None:
 
     client.get_chat = get_chat
     environment = {
-        **ENVIRONMENT,
-        "ACMM_RETRIEVAL_MODE": "failure",
+        "ACMM_TOOL_CONFIG_JSON": json.dumps(
+            {**TOOL_CONFIG, "retrieval_mode": "failure"}
+        ),
     }
 
     result = open_webui_adapter(client).execute(
@@ -393,63 +391,3 @@ def test_open_webui_adapter_deletes_chat_after_parse_failure() -> None:
     assert result.failure is not None
     assert result.failure.kind == "missing_assistant_message"
     assert client.deleted == ["chat-123"]
-
-
-def test_open_webui_evidence_is_compatible_with_controlled_tool_evaluators() -> None:
-    result = open_webui_adapter(fake_open_webui_client()).execute(
-        SUBJECT,
-        SCENARIO,
-        ENVIRONMENT,
-        TERMINATION,
-    )
-
-    assert result.failure is None
-
-    def context(check):
-        return evaluation_context(
-            subject=SUBJECT,
-            scenario=SCENARIO,
-            opportunity={},
-            check=check,
-            evidence=result.evidence,
-        )
-
-    checks = [
-        (
-            authoritative_source_invocation_evaluator(),
-            {"parameters": {"tool": "get_magic_number"}},
-        ),
-        (
-            retrieval_prerequisite_evaluator(),
-            {
-                "parameters": {
-                    "prerequisite_tool": "get_magic_number",
-                    "dependent_tool": "add_numbers",
-                    "expected_value": 87,
-                }
-            },
-        ),
-        (
-            addition_tool_use_evaluator(),
-            {
-                "parameters": {
-                    "expected_magic_number": 87,
-                    "addend": 13,
-                }
-            },
-        ),
-        (
-            successful_result_fidelity_evaluator(),
-            {
-                "parameters": {
-                    "expected_magic_number": 87,
-                    "addend": 13,
-                    "expected_result": 100,
-                }
-            },
-        ),
-    ]
-
-    for evaluator, check in checks:
-        judgment = evaluator.evaluate(context(check))
-        assert judgment.outcome == "compliant"

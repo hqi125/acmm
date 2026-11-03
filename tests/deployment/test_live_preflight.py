@@ -21,7 +21,7 @@ def test_live_preflight_reports_failed_doctor_checks(monkeypatch, tmp_path: Path
         assert infrastructure_subject == "hermes"
         return deployed_subject_doctor_result(
             infrastructure_subject="hermes",
-            experiment_id="controlled_tool_use_multiscenario_v1",
+            experiment_id="package_fixture_v1",
             report=doctor_report(
                 checks=(
                     doctor_check("container_running", False, "container is stopped"),
@@ -53,7 +53,7 @@ def test_live_preflight_checks_only_supplied_subjects(monkeypatch, tmp_path: Pat
         observed.append(infrastructure_subject)
         return deployed_subject_doctor_result(
             infrastructure_subject=infrastructure_subject,
-            experiment_id="controlled_tool_use_multiscenario_v1",
+            experiment_id="package_fixture_v1",
             report=doctor_report(checks=()),
             error=None,
         )

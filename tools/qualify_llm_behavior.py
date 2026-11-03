@@ -17,9 +17,22 @@ from acmm.adapters.open_webui import open_webui_adapter
 from acmm.adapters.open_webui_api import open_webui_runtime_api_client
 from acmm.runtime.interfaces import adapter_execution_result, subject_adapter
 from acmm_infra.cohort import inspect_cohort, resolve_deployed_cohort
+from acmm_infra.agent_zero import agent_zero_manager
 from acmm_infra.common import infrastructure_error
+from acmm_infra.docker import docker_client
+from acmm_infra.hermes import hermes_manager
+from acmm_infra.open_webui import open_webui_manager
 from acmm_infra.profiles.common import default_repo_root, default_runtime_root
+from acmm_infra.profiles.agent_zero import load_agent_zero_profile
+from acmm_infra.profiles.experiments import (
+    apparatus_tree_sha256,
+    with_agent_zero_apparatus,
+    with_hermes_apparatus,
+    with_open_webui_apparatus,
+)
+from acmm_infra.profiles.hermes import load_hermes_profile
 from acmm_infra.profiles.llm import load_llm_baseline
+from acmm_infra.profiles.open_webui import load_open_webui_profile
 from acmm_infra.subject_managers import build_subject_manager
 
 
@@ -35,7 +48,8 @@ from controlled_tool_smoke import (
 )
 
 
-_SMOKE_APPARATUS_EXPERIMENT = "magic_number_tool_use_v1"
+_SMOKE_APPARATUS_ID = "llm_behavioral_tool_smoke_v1"
+_SMOKE_APPARATUS_ROOT = _TOOLS_ROOT / "fixtures" / "llm_behavioral_tool_smoke"
 _INFRASTRUCTURE_ORDER = ("hermes", "open-webui", "agent-zero")
 _AGENT_NAMES = {
     "hermes": "Hermes Agent",
@@ -203,6 +217,62 @@ def _require_clean_deployed_baseline(repo_root: Path, runtime_root: Path):
     return baseline_id, by_infrastructure
 
 
+def _build_smoke_manager(
+    repo_root: Path,
+    runtime_root: Path,
+    infrastructure_subject: str,
+    baseline_id: str,
+):
+    apparatus_root = _SMOKE_APPARATUS_ROOT / infrastructure_subject
+    source_sha256 = apparatus_tree_sha256(apparatus_root)
+
+    if infrastructure_subject == "hermes":
+        profile = with_hermes_apparatus(
+            apparatus_root,
+            load_hermes_profile(repo_root, baseline_id),
+            _SMOKE_APPARATUS_ID,
+        )
+        return hermes_manager(
+            repo_root,
+            runtime_root,
+            profile,
+            docker_client(repo_root, runtime_root, profile),
+            experiment_id=_SMOKE_APPARATUS_ID,
+            apparatus_source_sha256=source_sha256,
+        )
+    if infrastructure_subject == "open-webui":
+        profile = with_open_webui_apparatus(
+            apparatus_root,
+            load_open_webui_profile(repo_root, baseline_id),
+            _SMOKE_APPARATUS_ID,
+        )
+        return open_webui_manager(
+            repo_root,
+            runtime_root,
+            profile,
+            docker_client(repo_root, runtime_root, profile),
+            experiment_id=_SMOKE_APPARATUS_ID,
+            apparatus_source_sha256=source_sha256,
+        )
+    if infrastructure_subject == "agent-zero":
+        profile = with_agent_zero_apparatus(
+            apparatus_root,
+            load_agent_zero_profile(repo_root, baseline_id),
+            _SMOKE_APPARATUS_ID,
+        )
+        return agent_zero_manager(
+            repo_root,
+            runtime_root,
+            profile,
+            docker_client(repo_root, runtime_root, profile),
+            experiment_id=_SMOKE_APPARATUS_ID,
+            apparatus_source_sha256=source_sha256,
+        )
+    raise llm_behavioral_qualification_error(
+        f"Unsupported infrastructure subject '{infrastructure_subject}'."
+    )
+
+
 def _apply_smoke_tools(
     repo_root: Path,
     runtime_root: Path,
@@ -211,26 +281,24 @@ def _apply_smoke_tools(
     *,
     timeout_seconds: float,
 ):
-    context = build_subject_manager(
+    manager = _build_smoke_manager(
         repo_root,
         runtime_root,
         infrastructure_subject,
-        _SMOKE_APPARATUS_EXPERIMENT,
         baseline_id,
     )
-    manager = context.manager
 
     try:
         if infrastructure_subject == "open-webui":
             manager.up(timeout_seconds=timeout_seconds)
             manager.apply_tools(
-                _SMOKE_APPARATUS_EXPERIMENT,
+                _SMOKE_APPARATUS_ID,
                 timeout_seconds=timeout_seconds,
             )
             return manager, True
 
         manager.apply_tools(
-            _SMOKE_APPARATUS_EXPERIMENT,
+            _SMOKE_APPARATUS_ID,
             timeout_seconds=timeout_seconds,
         )
         manager.up(timeout_seconds=timeout_seconds)
@@ -265,7 +333,6 @@ def _restore_baseline_tools(
                 repo_root,
                 runtime_root,
                 infrastructure_subject,
-                None,
                 baseline_id,
             )
             baseline_context.manager.apply_tools(
@@ -280,7 +347,6 @@ def _restore_baseline_tools(
         repo_root,
         runtime_root,
         infrastructure_subject,
-        None,
         baseline_id,
     )
     baseline_manager = baseline_context.manager
@@ -358,7 +424,7 @@ def run_qualification(args: argparse.Namespace) -> int:
             "provider": baseline.logical_provider,
             "iterations_per_subject": args.iterations,
             "cold_start_per_iteration": args.cold_start,
-            "smoke_apparatus_source": _SMOKE_APPARATUS_EXPERIMENT,
+            "smoke_apparatus_source": str(_SMOKE_APPARATUS_ROOT.relative_to(repo_root)),
             "repo_root": str(repo_root),
             "runtime_root": str(runtime_root),
         },

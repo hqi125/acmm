@@ -24,6 +24,7 @@ from acmm_infra.profiles.open_webui import (
     managed_open_webui_tool,
     open_webui_profile,
 )
+
 from acmm_infra.source_tree import iter_managed_source_files
 
 
@@ -44,24 +45,6 @@ def with_hermes_apparatus(
         experiment_id,
         source_base=root,
         managed_source_root=root,
-    )
-
-
-def with_hermes_experiment(
-    repo_root: str | Path,
-    profile: hermes_profile,
-    experiment_id: str,
-) -> hermes_profile:
-    repo = Path(repo_root).resolve()
-    experiment_id = _validate_experiment_id(experiment_id)
-    root = _legacy_apparatus_root(repo, "hermes", experiment_id)
-    data = _load_apparatus_root(root, "Hermes", experiment_id)
-    return _compose_hermes_apparatus(
-        profile,
-        data,
-        experiment_id,
-        source_base=repo,
-        managed_source_root=None,
     )
 
 
@@ -171,23 +154,6 @@ def with_open_webui_apparatus(
     )
 
 
-def with_open_webui_experiment(
-    repo_root: str | Path,
-    profile: open_webui_profile,
-    experiment_id: str,
-) -> open_webui_profile:
-    repo = Path(repo_root).resolve()
-    experiment_id = _validate_experiment_id(experiment_id)
-    root = _legacy_apparatus_root(repo, "open-webui", experiment_id)
-    data = _load_apparatus_root(root, "Open WebUI", experiment_id)
-    return _compose_open_webui_apparatus(
-        profile,
-        data,
-        experiment_id,
-        managed_source_root=None,
-    )
-
-
 def _compose_open_webui_apparatus(
     profile: open_webui_profile,
     data: dict[str, Any],
@@ -246,23 +212,6 @@ def with_agent_zero_apparatus(
     )
 
 
-def with_agent_zero_experiment(
-    repo_root: str | Path,
-    profile: agent_zero_profile,
-    experiment_id: str,
-) -> agent_zero_profile:
-    repo = Path(repo_root).resolve()
-    experiment_id = _validate_experiment_id(experiment_id)
-    root = _legacy_apparatus_root(repo, "agent-zero", experiment_id)
-    data = _load_apparatus_root(root, "Agent Zero", experiment_id)
-    return _compose_agent_zero_apparatus(
-        profile,
-        data,
-        experiment_id,
-        managed_source_root=None,
-    )
-
-
 def _compose_agent_zero_apparatus(
     profile: agent_zero_profile,
     data: dict[str, Any],
@@ -306,31 +255,8 @@ def _compose_agent_zero_apparatus(
     return replace(profile, experiment_isolation=isolation, plugins=tuple(plugins))
 
 
-def registered_experiment_apparatus_ids(
-    repo_root: str | Path,
-    subject: str,
-) -> tuple[str, ...]:
-    root = Path(repo_root).resolve() / "infrastructure" / subject / "experiments"
-    if not root.is_dir():
-        return ()
-
-    experiment_ids: list[str] = []
-    for path in sorted(item for item in root.iterdir() if item.is_dir()):
-        experiment_id = _validate_experiment_id(path.name)
-        if (path / "apparatus.yaml").is_file():
-            experiment_ids.append(experiment_id)
-    return tuple(experiment_ids)
-
-
-def experiment_apparatus_sha256(
-    repo_root: str | Path,
-    subject: str,
-    experiment_id: str,
-) -> str:
-    repo = Path(repo_root).resolve()
-    experiment_id = _validate_experiment_id(experiment_id)
-    root = _legacy_apparatus_root(repo, subject, experiment_id)
-
+def apparatus_tree_sha256(apparatus_root: str | Path) -> str:
+    root = _resolve_apparatus_root(apparatus_root)
     digest = hashlib.sha256()
     for path in iter_managed_source_files(root):
         relative = path.relative_to(root).as_posix().encode("utf-8")
@@ -340,17 +266,6 @@ def experiment_apparatus_sha256(
         digest.update(len(payload).to_bytes(8, "big"))
         digest.update(payload)
     return digest.hexdigest()
-
-
-def _legacy_apparatus_root(
-    repo_root: Path,
-    subject: str,
-    experiment_id: str,
-) -> Path:
-    root = repo_root / "infrastructure" / subject / "experiments" / experiment_id
-    if not root.is_dir():
-        raise profile_error(f"Experiment apparatus directory does not exist: '{root}'.")
-    return root
 
 
 def _resolve_apparatus_root(apparatus_root: str | Path) -> Path:

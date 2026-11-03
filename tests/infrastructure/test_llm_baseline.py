@@ -184,7 +184,7 @@ def test_agent_profile_yaml_no_longer_owns_model_identity() -> None:
         assert forbidden.isdisjoint(baseline)
 
 
-def test_experiment_manager_resolution_uses_historical_subject_baseline(
+def test_baseline_manager_resolution_honors_explicit_llm_selection(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -200,9 +200,8 @@ def test_experiment_manager_resolution_uses_historical_subject_baseline(
                 {"llm_baseline_id": baseline_id},
             )()
 
-    def fake_builder(repo, runtime, experiment_id, llm_baseline_id):
+    def fake_builder(repo, runtime, llm_baseline_id):
         del repo, runtime
-        captured["experiment_id"] = experiment_id
         captured["llm_baseline_id"] = llm_baseline_id
         assert llm_baseline_id is not None
         return fake_manager(llm_baseline_id)
@@ -212,11 +211,9 @@ def test_experiment_manager_resolution_uses_historical_subject_baseline(
         ROOT,
         tmp_path / "runtime",
         "hermes",
-        "controlled_recovery_boundary_interaction_v1",
+        HISTORICAL_ID,
     )
 
-    assert captured == {
-        "experiment_id": "controlled_recovery_boundary_interaction_v1",
-        "llm_baseline_id": HISTORICAL_ID,
-    }
+    assert captured == {"llm_baseline_id": HISTORICAL_ID}
+    assert context.experiment_id is None
     assert context.llm_baseline_id == HISTORICAL_ID

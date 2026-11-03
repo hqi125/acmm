@@ -39,7 +39,7 @@ For example:
 
 ```text
 results/
-└── magic_number_tool_use_v1/
+└── runtime_execution_fixture_v1/
     └── run_000000_e3f07c5d-44bc-40c8-bf8a-3c8957489fb2/
         ├── run_record.yaml
         └── evidence/

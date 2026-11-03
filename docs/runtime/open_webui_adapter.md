@@ -53,26 +53,23 @@ startup through `CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS`, rather than through th
 chat request. Consequently, the Contract's per-run `max_steps` budget has no exact supported
 mapping in this adapter. The qualified subject binding therefore advertises timeout-only
 termination support, and `acmm run` rejects an Open WebUI Contract containing `max_steps` before
-acquisition. The frozen Experiment 1 Contract remains ineligible for this binding until its
+acquisition. A Contract requesting exact `max_steps` remains ineligible for this binding until its
 termination policy is deliberately revised or an exact upstream-supported mapping becomes
 available.
 ## Live smoke qualification
 
-The repository provides `tools/smoke_open_webui.py` for a live end-to-end qualification run
-against an already-running Open WebUI service. The smoke uses the same controlled success path
-as the Agent Zero smoke: `get_magic_number` must return 87, `add_numbers` must add 13, and the
-agent must report the resulting value.
+`tools/smoke_open_webui.py` provides a live engineering qualification against an already-running
+Open WebUI service. It uses the shared controlled-Tool smoke fixture also used for Agent Zero.
 
-Prepare the qualified service with `acmm-infra open-webui up` and
-`acmm-infra open-webui doctor`, then run `python tools/smoke_open_webui.py`. The program is
-intentionally outside `pytest` because it invokes the live cloud-backed model.
+Prepare the service with:
 
-The first live qualification run passed end to end: Open WebUI executed exactly the required
-`get_magic_number` and `add_numbers` calls, reported 100, and produced three upstream Ollama
-model requests with no redundant controlled Tool calls.
+```text
+acmm-infra open-webui up
+acmm-infra open-webui doctor
+python tools/smoke_open_webui.py
+```
 
-The smoke now shares its controlled success fixture and checker with Agent Zero. End-to-end
-correctness is the pass criterion; redundant controlled Tool calls and upstream request count are
-reported as operational observations rather than silently tuned away or treated as experiment
-judgments.
-
+The smoke is intentionally outside `pytest` because it invokes the live cloud-backed model. The
+pass criterion is end-to-end controlled Tool correctness with normalized evidence; redundant Tool
+calls and provider request counts are reported as operational observations rather than scientific
+experiment outcomes.

@@ -115,7 +115,7 @@ python tools/qualify_llm_behavior.py --iterations 5
 ```
 
 The runner is model-selection passive. It discovers the deployed baseline, requires a clean
-experiment-independent stopped cohort, temporarily installs the frozen magic-number Tool fixture,
+experiment-independent stopped cohort, temporarily installs the dedicated engineering controlled-Tool fixture,
 and tests:
 
 ```text
@@ -174,7 +174,7 @@ qualification deployment identity with permanent production subject/baseline ide
 
 ## 8. Verify historical reproduction remains intact
 
-Before freezing Rebasing, verify that frozen experiments still resolve to their historical subjects
+Before freezing Rebasing, verify that historical package Contracts still resolve to their declared subjects
 and LLM baseline. Promotion must never make an old Experiment Contract silently follow the new
 catalog `current` pointer.
 

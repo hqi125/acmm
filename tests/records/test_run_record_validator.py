@@ -14,11 +14,7 @@ from acmm.record.validator import (
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = ROOT / "records" / "v0_1" / "run_record.schema.json"
 CONTRACT_PATH = (
-    ROOT
-    / "experiments"
-    / "examples"
-    / "magic_number"
-    / "experiment.yaml"
+    ROOT / "tests" / "fixtures" / "contracts" / "valid" / "runtime_execution.yaml"
 )
 VALID_DIR = ROOT / "tests" / "fixtures" / "records" / "valid"
 INVALID_DIR = ROOT / "tests" / "fixtures" / "records" / "invalid"
@@ -42,7 +38,7 @@ def contract_sha256() -> str:
 @pytest.mark.parametrize(
     "filename",
     [
-        "magic_number.yaml",
+        "successful_execution.yaml",
         "invalid_execution.yaml",
     ],
 )

@@ -20,12 +20,9 @@ profiles, chats, plugins, and other Agent Zero user state persist across ordinar
 
 ## Lifecycle
 
-Agent Zero implements the common ACMM infrastructure vocabulary:
-
 ```text
 acmm-infra agent-zero init
 acmm-infra agent-zero apply
-acmm-infra agent-zero apply --experiment controlled_tool_use_multiscenario_v1
 acmm-infra agent-zero up
 acmm-infra agent-zero status
 acmm-infra agent-zero doctor
@@ -33,25 +30,18 @@ acmm-infra agent-zero down
 acmm-infra agent-zero reset configuration --yes
 ```
 
-`apply` is the full baseline reconciler. It requires the ordinary Agent Zero service to
-be stopped. It first reconciles the ACMM-owned Compose/environment files, then starts one
-temporary Agent Zero service and keeps it up for the entire application-provisioning
-phase. Baseline profile files are written through that running container so host UID/GID
-differences cannot block writes under `/a0/usr`. The model preset is reconciled through
-Agent Zero's own Model Configuration API, application settings through the settings API,
-and the effective model/profile state is verified before the same provisioning service is
-stopped. The baseline blocks all experiment Tools and removes active repository-managed
-experiment plugins.
+`apply` reconciles the experiment-independent Agent Zero baseline while the ordinary service is
+stopped. It uses one temporary provisioning service to repair ACMM-owned deployment files, profile
+state, model preset, settings, and empty baseline Tool/plugin policy, then stops that service.
 
-`apply --experiment <experiment-id>` is the preferred full experiment path: it composes the
-baseline with the selected apparatus, then uses one temporary provisioning-service lifetime
-to reconcile the resulting profile, experiment-owned plugin bytes, Tool allow-list, model,
-and persistent settings before recording the apparatus SHA-256. `apply-tools --experiment <experiment-id>`
-performs only the Tool/plugin phase. `apply-experiment <experiment-id>` remains a compatibility
-alias for the full experiment-aware apply.
+Research plugins and Tool allow-lists are supplied only through package-aware Core orchestration:
 
-`up` starts the persistent service and waits until the HTTP backend responds before
-returning. `down` stops/removes the Compose service while preserving `usr/`.
+```text
+acmm package apply <experiment-selector>
+acmm run <experiment-selector> --apply-if-needed
+```
+
+`up` starts the persistent service and waits for the HTTP backend. `down` preserves `/a0/usr`.
 
 ## Agent Zero API session and CSRF
 
@@ -98,25 +88,13 @@ and pins the `acmm` Agent Profile to that preset at:
 /a0/usr/agents/acmm/plugins/_model_config/config.json
 ```
 
-The qualified model baseline is:
+The qualified main and utility model identities, Ollama route, and requested context are composed
+from the registered ACMM LLM definition. The Agent Zero profile itself owns only the model-preset
+wiring and experiment-independent embedding configuration. This keeps LLM Rebasing separate from
+agent-profile identity.
 
-```text
-Main provider:       ollama
-Main base URL:       http://host.docker.internal:11434
-Main model:          nemotron-3-nano:30b-cloud
-Main context:        64000
-
-Utility provider:    ollama
-Utility base URL:    http://host.docker.internal:11434
-Utility model:       nemotron-3-nano:30b-cloud
-Utility context:     64000
-
-Embedding provider:  huggingface
-Embedding model:     sentence-transformers/all-MiniLM-L6-v2
-```
-
-Memory is disabled by the ACMM profile, so the embedding model remains part of a valid
-Agent Zero model configuration but should not participate in Experiment 1 execution.
+Memory is disabled by the ACMM profile, so the configured embedding model remains valid background
+configuration but is not an intended experimental channel.
 
 `doctor` queries Agent Zero's model-configuration API and model-search endpoint. This
 separates configuration drift from external Ollama/model availability in the same way
@@ -144,11 +122,7 @@ upstream value `Hello!`. `fw.initial_message.md` keeps the paired synthetic init
 message on the same two-field Tool-call schema. Together these overrides reproduce the relevant
 local-model safeguards from Agent Zero v2.14's Tiny Local prompt discipline while retaining ACMM's
 experiment-specific profile and Tool policy. The prompt set is treated as one versioned compatibility
-bundle rather than a collection of independently swappable snippets. A 60-run Agent Zero-only
-qualification across all Experiment 3 conditions completed with 0 timeouts, 60/60 intended Tool
-sequences, 0 malformed integer arguments, 0 restarted completed cycles, and no late-run bootstrap
-task loss. See `docs/integration/agent_zero_qualification.md` for the qualification record and
-version-upgrade policy.
+bundle rather than a collection of independently swappable snippets.
 
 In particular:
 
@@ -167,26 +141,15 @@ capabilities that would add uncontrolled experiment channels or background model
 
 ## Experiment apparatus
 
-Agent-facing custom plugins are owned per experiment, for example:
+Agent Zero research plugins are owned by Experiment Packages. A package apparatus component may
+declare managed plugin source, destination under `/a0/usr`, and Tool policy. The package-aware
+manager resolves those bytes from the verified staged snapshot, applies them through the supported
+Agent Zero interfaces/container-owned paths, and records exact package/apparatus provenance.
 
-```text
-infrastructure/agent-zero/experiments/controlled_tool_use_multiscenario_v1/
-|-- apparatus.yaml
-`-- plugins/acmm_tools/
-```
-
-The selected plugin is deployed to its apparatus-defined destination under `/a0/usr` (for
-Experiment 1, `/a0/usr/plugins/acmm_tools/`). Experiment 1's plugin contains the controlled
-`get_magic_number` and `add_numbers` Tools plus agent-facing prompt fragments. Its
-`default_config.yaml` defines controlled baseline state. The runtime adapter writes per-run
-values through Agent Zero's supported plugin API and restores the experiment baseline
-afterward. Agent Zero may persist runtime-owned plugin state such as `config.json`, activation
-markers, or plugin-local `data/`; readiness compares repository-owned plugin source exactly
-while excluding those runtime-owned files from source-drift checks.
-
-A later experiment may duplicate and change this plugin without mutating Experiment 1's
-frozen apparatus. Full baseline `apply` removes the active experiment plugin and restores an
-empty Tool allow-list.
+The runtime adapter may update package-owned plugin state through Agent Zero's supported plugin API
+for a run and then restore the package baseline. Runtime-owned files such as activation markers or
+plugin-local data are excluded from source-drift comparison where explicitly declared. Baseline
+`apply` removes active research plugins and restores an empty Tool allow-list.
 
 ## Readiness boundary
 
@@ -196,15 +159,14 @@ At this stage, `doctor` qualifies both deployment and application baseline state
 - repository Compose identity;
 - managed environment values;
 - exact Agent Profile/local-model prompt/model/isolation files;
-- when an experiment marker is active, exact plugin files and Tool allow-list for the
-  discovered experiment;
+- when package provenance is active, exact staged plugin files and Tool allow-list;
 - running container and exact pinned image;
 - observed Agent Zero release tag;
 - HTTP backend responsiveness;
 - persisted managed Agent Zero settings;
 - effective `acmm` profile model configuration;
-- availability of `nemotron-3-nano:30b-cloud` through the configured Ollama route.
+- availability of the configured registered LLM through the declared provider route.
 
 A `READY` result therefore means the Agent Zero infrastructure/application state matches its
-declared baseline or active experiment context. The experiment-facing runtime adapter is documented in
+declared baseline or active package context. The experiment-facing runtime adapter is documented in
 `docs/runtime/agent_zero_adapter.md`.

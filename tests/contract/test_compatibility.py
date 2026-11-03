@@ -6,27 +6,21 @@ from acmm.harness.capabilities import harness_capabilities
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXAMPLE_PATH = (
-    ROOT
-    / "experiments"
-    / "examples"
-    / "magic_number"
-    / "experiment.yaml"
-)
+EXAMPLE_PATH = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "runtime_execution.yaml"
 
 
 def _full_capabilities() -> harness_capabilities:
     return harness_capabilities(
         evaluators=frozenset(
             {
-                "magic_number_retrieval",
-                "magic_number_addition",
+                "synthetic_retrieval",
+                "synthetic_addition",
             }
         ),
-        fixtures=frozenset({"magic_number_environment_v1"}),
+        fixtures=frozenset({"synthetic_environment_v1"}),
         tools=frozenset(
             {
-                "get_magic_number",
+                "get_fixture_value",
                 "add_numbers",
             }
         ),
@@ -41,7 +35,7 @@ def _full_capabilities() -> harness_capabilities:
     )
 
 
-def test_magic_number_example_is_harness_compatible() -> None:
+def test_runtime_fixture_is_harness_compatible() -> None:
     contract = load_contract(EXAMPLE_PATH)
 
     result = validate_harness_compatibility(

@@ -9,7 +9,7 @@ from acmm.adapters.open_webui import open_webui_adapter
 SUBJECT = {
     "id": "test_subject",
     "agent": {"name": "Test", "version": "1"},
-    "model": {"name": "nemotron-3-nano:30b-cloud", "provider": "ollama_cloud"},
+    "model": {"name": "gpt-oss:120b-cloud", "provider": "ollama_cloud"},
     "configuration": {},
 }
 SCENARIO = {"id": "test", "task": {"prompt": "test"}}
@@ -71,7 +71,7 @@ class _open_webui_client:
                         assistant_id: {
                             "id": assistant_id,
                             "role": "assistant",
-                            "model": "nemotron-3-nano:30b-cloud",
+                            "model": "gpt-oss:120b-cloud",
                             "content": "done",
                             "done": True,
                             "output": [],
@@ -98,11 +98,11 @@ class _agent_zero_client:
         return {
             "config": {
                 "chat_model": {
-                    "name": "nemotron-3-nano:30b-cloud",
+                    "name": "gpt-oss:120b-cloud",
                     "ctx_length": 64000,
                 },
                 "utility_model": {
-                    "name": "nemotron-3-nano:30b-cloud",
+                    "name": "gpt-oss:120b-cloud",
                     "ctx_length": 64000,
                 },
             }

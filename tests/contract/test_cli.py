@@ -30,7 +30,7 @@ def test_run_command_accepts_repeated_run_indices() -> None:
     args = parser.parse_args(
         [
             "run",
-            "controlled_tool_use_multiscenario_v1",
+            "package_smoke_v1",
             "--run-index",
             "0",
             "--run-index",
@@ -51,7 +51,7 @@ def test_run_command_parses_ranges_subjects_and_preview() -> None:
     args = parser.parse_args(
         [
             "run",
-            "controlled_tool_use_multiscenario_v1",
+            "package_smoke_v1",
             "--run-index",
             "20-39",
             "--subject",

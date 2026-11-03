@@ -28,10 +28,11 @@ from acmm.runtime.result_store import result_write_error
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = (
     ROOT
-    / "experiments"
-    / "examples"
-    / "magic_number"
-    / "experiment.yaml"
+    / "tests"
+    / "fixtures"
+    / "contracts"
+    / "valid"
+    / "runtime_execution.yaml"
 )
 
 EXECUTION_ID = "10000000-0000-4000-8000-000000000001"
@@ -44,9 +45,9 @@ class fake_fixture:
         reset: dict,
     ) -> prepared_environment:
         return prepared_environment(
-            handle={"magic_number": 87},
+            handle={"fixture_value": 87},
             provenance={
-                "fixture": "magic_number_environment_v1",
+                "fixture": "synthetic_environment_v1",
                 "configuration": {},
             },
         )
@@ -115,7 +116,7 @@ class sequence_adapter:
                     id="tool_calls",
                     channel="tool_calls",
                     artifact="evidence/tool_calls.json",
-                    content=b'[{"name":"get_magic_number"}]',
+                    content=b'[{"name":"get_fixture_value"}]',
                 ),
                 captured_evidence(
                     id="tool_results",
@@ -136,7 +137,7 @@ class sequence_adapter:
                     "version": "0.21.3",
                 },
                 "model": {
-                    "name": "nemotron-3-nano:30b-cloud",
+                    "name": "gpt-oss:120b-cloud",
                     "provider": "ollama_cloud",
                 },
                 "configuration": dict(subject.get("configuration", {})),
@@ -149,18 +150,18 @@ def _registry(adapter: sequence_adapter) -> execution_registry:
 
     return execution_registry(
         subject_adapters={
-            "hermes_nemotron30b": adapter,
+            "hermes_gpt_oss120b": adapter,
         },
         fixtures={
-            "magic_number_environment_v1": fake_fixture(),
+            "synthetic_environment_v1": fake_fixture(),
         },
         evaluators={
-            "magic_number_retrieval": evaluator,
-            "magic_number_addition": evaluator,
+            "synthetic_retrieval": evaluator,
+            "synthetic_addition": evaluator,
         },
         subject_configuration_overlays={
-            "hermes_nemotron30b": {
-                "llm_baseline_id": "nemotron_3_nano_30b_cloud_v1",
+            "hermes_gpt_oss120b": {
+                "llm_baseline_id": "gpt_oss_120b_cloud_v1",
                 "llm_minimum_context_window": 64000,
                 "llm_requested_context_window": 64000,
             }
@@ -264,7 +265,7 @@ def test_execute_experiment_snapshots_contract_and_completes_plan(
     assert manifest["execution"]["resolved_run_count"] == 5
     assert manifest["execution"]["unresolved_run_indices"] == []
     assert manifest["execution"]["subject_llm_baselines"] == {
-        "hermes_nemotron30b": "nemotron_3_nano_30b_cloud_v1"
+        "hermes_gpt_oss120b": "gpt_oss_120b_cloud_v1"
     }
     assert len(manifest["slots"]) == 5
 
@@ -563,7 +564,7 @@ def test_persistence_failure_leaves_session_without_completion_manifest(
 
     session_dir = (
         tmp_path
-        / "magic_number_tool_use_v1"
+        / "runtime_execution_fixture_v1"
         / f"execution_{EXECUTION_ID}"
     )
 
@@ -757,7 +758,7 @@ def test_execution_manifest_records_deployment_reconciliation(
             "permitted": True,
             "initial_state": "divergent",
             "performed": True,
-            "subjects": ["hermes_nemotron30b"],
+            "subjects": ["hermes_gpt_oss120b"],
             "final_state": "ready",
         },
     )
@@ -767,7 +768,7 @@ def test_execution_manifest_records_deployment_reconciliation(
         "permitted": True,
         "initial_state": "divergent",
         "performed": True,
-        "subjects": ["hermes_nemotron30b"],
+        "subjects": ["hermes_gpt_oss120b"],
         "final_state": "ready",
     }
 

@@ -8,7 +8,7 @@ from acmm.cli import _build_parser as build_acmm_parser
 from acmm_infra.cli import _build_parser as build_infra_parser
 
 
-EXPERIMENT = "controlled_tool_use_multiscenario_v1"
+EXPERIMENT = "retired_experiment_v1"
 
 
 def test_acmm_exposes_environment_command_family() -> None:

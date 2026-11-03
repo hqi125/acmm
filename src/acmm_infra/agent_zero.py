@@ -27,11 +27,6 @@ from acmm_infra.deployment import (
 )
 from acmm_infra.docker import docker_client, require_success
 from acmm_infra.profiles.agent_zero import agent_zero_profile, managed_agent_zero_plugin
-from acmm_infra.profiles.experiments import (
-    experiment_apparatus_sha256,
-    registered_experiment_apparatus_ids,
-    with_agent_zero_experiment,
-)
 from acmm_infra.source_tree import (
     copytree_ignore_generated,
     iter_managed_source_files,
@@ -60,6 +55,7 @@ class agent_zero_manager:
         api: agent_zero_api_client | None = None,
         experiment_id: str | None = None,
         deployment_provenance: experiment_deployment_provenance | None = None,
+        apparatus_source_sha256: str | None = None,
     ) -> None:
         self.repo_root = Path(repo_root).resolve()
         self.runtime_root = Path(runtime_root).expanduser().resolve()
@@ -67,6 +63,7 @@ class agent_zero_manager:
         self.docker = docker
         self.experiment_id = experiment_id
         self.deployment_provenance = deployment_provenance
+        self.apparatus_source_sha256 = apparatus_source_sha256
         self._validate_deployment_provenance("agent-zero")
         self.deployment_root = (
             self.runtime_root / profile.deployment_directory
@@ -108,13 +105,15 @@ class agent_zero_manager:
         infrastructure_subject: str,
         experiment_id: str,
     ) -> str | None:
+        del infrastructure_subject
         provenance = self.deployment_provenance
         if provenance is not None:
             return provenance.apparatus_sha256
-        return experiment_apparatus_sha256(
-            self.repo_root,
-            infrastructure_subject,
-            experiment_id,
+        if self.apparatus_source_sha256 is not None:
+            return self.apparatus_source_sha256
+        raise infrastructure_error(
+            f"Experiment apparatus '{experiment_id}' has no package provenance or "
+            "explicit apparatus source identity."
         )
 
     def initialize_deployment(self) -> dict[str, str]:
@@ -299,7 +298,7 @@ class agent_zero_manager:
             )
         if timeout_seconds <= 0:
             raise infrastructure_error(
-                "Agent Zero apply-experiment timeout must be greater than zero seconds."
+                "Agent Zero apparatus-apply timeout must be greater than zero seconds."
             )
 
         self.initialize_deployment()
@@ -1003,19 +1002,6 @@ class agent_zero_manager:
                         and isinstance(resource.get("destination"), str)
                     ):
                         candidates.add(resource["destination"])
-
-        for experiment_id in registered_experiment_apparatus_ids(
-            self.repo_root,
-            "agent-zero",
-        ):
-            profile = with_agent_zero_experiment(
-                self.repo_root,
-                self.profile,
-                experiment_id,
-            )
-            candidates.update(
-                plugin.destination.as_posix() for plugin in profile.plugins
-            )
 
         for destination in sorted(candidates - desired_destinations):
             require_success(

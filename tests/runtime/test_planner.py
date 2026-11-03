@@ -6,13 +6,7 @@ from acmm.runtime.planner import build_experiment_plan, select_planned_runs
 
 ROOT = Path(__file__).resolve().parents[2]
 VALID_DIR = ROOT / "tests" / "fixtures" / "contracts" / "valid"
-EXAMPLE_PATH = (
-    ROOT
-    / "experiments"
-    / "examples"
-    / "magic_number"
-    / "experiment.yaml"
-)
+EXAMPLE_PATH = VALID_DIR / "runtime_execution.yaml"
 
 
 def test_minimal_contract_builds_one_run() -> None:
@@ -28,7 +22,7 @@ def test_minimal_contract_builds_one_run() -> None:
     assert plan.runs[0].repetition == 1
 
 
-def test_magic_number_example_expands_repetitions() -> None:
+def test_runtime_fixture_expands_repetitions() -> None:
     contract = load_contract(EXAMPLE_PATH)
 
     plan = build_experiment_plan(contract)
@@ -36,8 +30,8 @@ def test_magic_number_example_expands_repetitions() -> None:
     assert plan.run_count == 5
     assert [run.run_index for run in plan.runs] == [0, 1, 2, 3, 4]
     assert [run.repetition for run in plan.runs] == [1, 2, 3, 4, 5]
-    assert {run.subject_id for run in plan.runs} == {"hermes_nemotron30b"}
-    assert {run.scenario_id for run in plan.runs} == {"magic_plus_13"}
+    assert {run.subject_id for run in plan.runs} == {"hermes_gpt_oss120b"}
+    assert {run.scenario_id for run in plan.runs} == {"synthetic_plus_13"}
 
 
 def test_plan_order_is_subject_then_scenario_then_repetition() -> None:
@@ -224,22 +218,15 @@ def test_cyclic_scenario_ordering_resets_as_a_deterministic_subject_phase() -> N
 
 
 def test_run_selection_intersects_ranges_and_subjects() -> None:
-    contract_path = (
-        ROOT
-        / "experiments"
-        / "examples"
-        / "controlled_tool_use_multiscenario"
-        / "experiment.yaml"
-    )
-    contract = load_contract(contract_path)
+    contract = load_contract(VALID_DIR / "package_smoke.yaml")
     plan = build_experiment_plan(contract)
 
     selected = select_planned_runs(
         plan,
         contract,
-        ["15-25", "20-30"],
-        ["open_webui_nemotron30b"],
+        ["1-4", "2-5"],
+        ["open_webui_gpt_oss120b"],
     )
 
-    assert [run.run_index for run in selected] == list(range(20, 31))
-    assert {run.subject_id for run in selected} == {"open_webui_nemotron30b"}
+    assert [run.run_index for run in selected] == [2, 3]
+    assert {run.subject_id for run in selected} == {"open_webui_gpt_oss120b"}

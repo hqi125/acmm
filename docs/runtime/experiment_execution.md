@@ -4,7 +4,7 @@
 
 Experiment-level execution turns selected slots from the deterministic Contract plan into one
 or more persisted realized attempts. The default selection is the complete plan; explicit
-run-index/range and subject selection is available for engineering/pilot executions.
+run-index/range and subject selection is available for engineering/scoped executions.
 
 This layer performs data acquisition only. It does not compute ACMM compliance proportions,
 dimension scores, confidence intervals, statistical models, or plots.
@@ -259,7 +259,7 @@ For a single-slot Hermes smoke test, with the managed deployment already `READY`
 deterministic slot with:
 
 ```text
-acmm run magic_number_tool_use_v1 --run-index 0
+acmm run <experiment-selector> --run-index 0
 ```
 
 The command performs Contract validation, harness-compatibility validation, execution,
@@ -277,8 +277,8 @@ record paths, and final responses are written to `execution_summary.txt`.
 Run selection supports single indices, inclusive ranges, and Contract subject IDs:
 
 ```text
-acmm run controlled_tool_use_multiscenario_v1 \
-    --run-index 20-39 --subject open_webui_nemotron30b
+acmm run <experiment-selector> \
+    --run-index 20-39 --subject <subject-id>
 ```
 
 Each `--run-index` occurrence accepts `INDEX` or `START-END`; repeated selectors are unioned and

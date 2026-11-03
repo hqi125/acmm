@@ -208,7 +208,7 @@ From the repository root:
 Rscript analysis/r/tests/run_tests.R
 ```
 
-The test runner creates its own temporary exports. It does not depend on the magic-number result tree.
+The test runner creates its own temporary exports and does not depend on any research experiment result tree.
 It also checks Wilson reference values, single-scenario bootstrap refusal, deterministic seeded
 hierarchical resampling, and preservation of the caller's R random-number state.
 
@@ -323,67 +323,18 @@ The current analysis protocol is intentionally fixed in this research tool at 2,
 bootstrap replicates, seed 12,345, and confidence level 0.95. Statistical calculations remain entirely
 inside the R analysis subsystem.
 
-## Registered supplementary analysis
+## Optional interaction analysis
 
-The core analysis workflow remains intentionally stable and writes
-`analysis_output/analysis_report.xlsx`. Availability is a general companion layer and writes
-`analysis_output/availability_analysis.xlsx` for every experiment. Experiments may additionally
-register a separate supplementary analysis
-when their scientific design requires estimands that do not belong in the general ACMM workbook.
-Supplementary outputs must not silently change the core requirement/dimension estimators.
+Core retains reusable interaction-analysis routines, but no historical experiment is registered by
+ID. Interaction analysis is opt-in and must be driven by an explicit experiment/package design that
+maps planned runs to factor cells and defines the estimands that are scientifically meaningful.
 
-Interaction analysis is implemented as a generic, experiment-registered supplementary capability.
-The experiment supplies a small `interaction_analysis.yaml` design specification that defines the two
-factors, their environment-configuration bindings, the primary contrast text, and any figures worth
-generating. The R interaction engine and workbook consume that specification instead of hard-coding
-a particular experiment.
+A complete two-factor design can report cell compliance, simple effects, and a risk-difference
+difference-in-differences. Incomplete factorial coverage is reported as not estimable rather than
+filled with invented outcomes. When repetitions form natural blocks, bootstrap resampling should
+sample those blocks so correlated/interleaved conditions stay together.
 
-`controlled_recovery_boundary_interaction_v1` registers the first interaction design. Its R stage
-writes derived tables under `analysis_output/data/interaction/` and figures under
-`analysis_output/figures/interaction/`:
-
-```text
-interaction_population_summary.csv
-interaction_population_cell_coverage.csv
-interaction_population_missing_runs.csv
-interaction_cell_estimates.csv
-interaction_simple_effects.csv
-interaction_contrasts.csv
-interaction_figures.csv
-figures/interaction/*.png
-```
-
-The repository wrapper then builds a separate `interaction_analysis.xlsx` workbook and embeds the
-R-generated figures while retaining the standalone PNG files for reuse in reports.
-
-For Experiment 3, factor A is ordinary-write outcome (`success -> failure`) and factor B is
-authorized-recovery availability (`unavailable -> available`). Cell compliance is estimated at the
-run level. The primary interaction estimand is the risk-difference difference-in-differences:
-
-```text
-interaction =
-    [p(failure, available) - p(failure, unavailable)]
-  - [p(success, available) - p(success, unavailable)]
-```
-
-This directly asks whether recovery availability changes compliance differently after ordinary-write
-failure than after ordinary-write success. Goal is intentionally not factorial-estimable because the
-failure/no-recovery condition has no Goal opportunity by design; the three applicable Goal cells are
-still reported descriptively and any estimable pairwise simple effects remain available.
-
-Interaction uncertainty uses a percentile bootstrap over Experiment 3 repetition blocks. Each sampled
-repetition carries its observed factorial cells together so short-timescale/common-order variation is
-not discarded. When all observed run-level outcomes for a requirement are identical, the point
-interaction remains reportable but the nonparametric bootstrap interval is marked
-`degenerate_observed_outcome` rather than presenting a zero-width interval as strong uncertainty
-evidence.
-
-Figures are optional and are generated only when the registered interaction design requests them.
-When figures are useful, they are generated in R with base graphics so the statistical population and
-visualization path share the same filtering and factor construction. Excel-native charts remain an
-acceptable fallback for future analyses, but statistical figures should prefer the R path when
-practical.
-
-An experiment does not receive interaction analysis merely because it has multiple scenarios or
-dimensions. It must register a scientifically justified interaction design. This is why Experiment 4
-receives the general compliance and availability layers but no interaction workbook.
+Interaction outputs are deliberately separate from the general `analysis_report.xlsx`. Derived
+tables belong under `analysis_output/data/`, figures under `analysis_output/figures/interaction/`,
+and an optional presentation workbook may be written as `analysis_output/interaction_analysis.xlsx`.
+See `docs/analysis/interaction.md`.

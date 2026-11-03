@@ -77,7 +77,7 @@ def test_behavioral_qualification_translates_inconsistent_deployment_state(
 ) -> None:
     def fail_resolution(*_args, **_kwargs):
         raise qualification.infrastructure_error(
-            "Deployed experiment 'magic_number_tool_use_v1' does not resolve exactly "
+            "Deployed experiment 'legacy_context_v1' does not resolve exactly "
             "one subject for infrastructure 'open-webui'."
         )
 
@@ -122,7 +122,7 @@ def test_behavioral_qualification_rejects_active_apparatus(
         subject_id=cohort.subjects[0].subject_id,
         infrastructure_subject="hermes",
         running=False,
-        experiment_id="magic_number_tool_use_v1",
+        experiment_id="legacy_context_v1",
         application_scope="tools",
         apparatus_state="match",
         source_sha256="abc",
@@ -221,11 +221,16 @@ def test_hermes_smoke_tools_install_before_start_and_restore_after_stop(
     experiment_manager = _fake_manager("experiment", events)
     baseline_manager = _fake_manager("baseline", events)
 
-    def build_manager(_repo, _runtime, _subject, experiment_id, _baseline):
-        manager = experiment_manager if experiment_id is not None else baseline_manager
-        return SimpleNamespace(manager=manager)
-
-    monkeypatch.setattr(qualification, "build_subject_manager", build_manager)
+    monkeypatch.setattr(
+        qualification,
+        "_build_smoke_manager",
+        lambda *_args, **_kwargs: experiment_manager,
+    )
+    monkeypatch.setattr(
+        qualification,
+        "build_subject_manager",
+        lambda *_args, **_kwargs: SimpleNamespace(manager=baseline_manager),
+    )
 
     manager, _ = qualification._apply_smoke_tools(
         tmp_path,
@@ -244,7 +249,7 @@ def test_hermes_smoke_tools_install_before_start_and_restore_after_stop(
     )
 
     assert events == [
-        "experiment:tools:magic_number_tool_use_v1:90.0",
+        "experiment:tools:llm_behavioral_tool_smoke_v1:90.0",
         "experiment:up:90.0",
         "experiment:down",
         "baseline:tools:baseline:90.0",
@@ -260,11 +265,16 @@ def test_open_webui_smoke_tools_install_and_restore_while_running(
     baseline_manager = _fake_manager("baseline", events)
     baseline_manager.docker = experiment_manager.docker
 
-    def build_manager(_repo, _runtime, _subject, experiment_id, _baseline):
-        manager = experiment_manager if experiment_id is not None else baseline_manager
-        return SimpleNamespace(manager=manager)
-
-    monkeypatch.setattr(qualification, "build_subject_manager", build_manager)
+    monkeypatch.setattr(
+        qualification,
+        "_build_smoke_manager",
+        lambda *_args, **_kwargs: experiment_manager,
+    )
+    monkeypatch.setattr(
+        qualification,
+        "build_subject_manager",
+        lambda *_args, **_kwargs: SimpleNamespace(manager=baseline_manager),
+    )
 
     manager, _ = qualification._apply_smoke_tools(
         tmp_path,
@@ -284,7 +294,7 @@ def test_open_webui_smoke_tools_install_and_restore_while_running(
 
     assert events == [
         "experiment:up:90.0",
-        "experiment:tools:magic_number_tool_use_v1:90.0",
+        "experiment:tools:llm_behavioral_tool_smoke_v1:90.0",
         "baseline:tools:baseline:90.0",
         "experiment:down",
     ]
@@ -298,11 +308,11 @@ def test_open_webui_restore_starts_temporarily_when_runtime_is_stopped(
     active_manager = _fake_manager("experiment", events)
     baseline_manager = _fake_manager("baseline", events)
 
-    def build_manager(_repo, _runtime, _subject, experiment_id, _baseline):
-        assert experiment_id is None
-        return SimpleNamespace(manager=baseline_manager)
-
-    monkeypatch.setattr(qualification, "build_subject_manager", build_manager)
+    monkeypatch.setattr(
+        qualification,
+        "build_subject_manager",
+        lambda *_args, **_kwargs: SimpleNamespace(manager=baseline_manager),
+    )
 
     qualification._restore_baseline_tools(
         tmp_path,
@@ -326,19 +336,17 @@ def test_smoke_apparatus_composes_with_candidate_model_without_rebinding_history
 ) -> None:
     baseline = "gpt_oss_120b_cloud_candidate_v1"
     for infrastructure_subject in ("hermes", "open-webui", "agent-zero"):
-        context = qualification.build_subject_manager(
+        manager = qualification._build_smoke_manager(
             _REPO_ROOT,
             tmp_path / "runtime",
             infrastructure_subject,
-            "magic_number_tool_use_v1",
             baseline,
         )
 
-        assert context.llm_baseline_id == baseline
-        assert context.manager.profile.model_default == "gpt-oss:120b-cloud"
+        assert manager.profile.model_default == "gpt-oss:120b-cloud"
         if infrastructure_subject == "hermes":
-            assert context.manager.profile.plugins
+            assert manager.profile.plugins
         elif infrastructure_subject == "open-webui":
-            assert context.manager.profile.tools
+            assert manager.profile.tools
         else:
-            assert context.manager.profile.plugins
+            assert manager.profile.plugins

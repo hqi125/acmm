@@ -8,8 +8,6 @@ from acmm.experiment_package import deployment_provenance, experiment_package
 from acmm.subjects.catalog import subject_execution_binding
 from acmm_infra.common import infrastructure_error
 from acmm_infra.deployment import read_experiment_apparatus_state
-from acmm_infra.profiles.common import profile_error
-from acmm_infra.profiles.experiments import experiment_apparatus_sha256
 
 
 @dataclass(frozen=True)
@@ -178,29 +176,6 @@ def _observe_subject_deployment_context(
     )
 
 
-def inspect_deployment_contexts(
-    *,
-    repo_root: Path,
-    runtime_root: Path,
-    experiment_id: str,
-    subject_bindings: Mapping[str, subject_execution_binding],
-) -> deployment_preflight_result:
-    subjects = tuple(
-        _inspect_subject_deployment_context(
-            repo_root=repo_root,
-            runtime_root=runtime_root,
-            experiment_id=experiment_id,
-            subject_id=subject_id,
-            binding=binding,
-        )
-        for subject_id, binding in subject_bindings.items()
-    )
-    return deployment_preflight_result(
-        experiment_id=experiment_id,
-        subjects=subjects,
-    )
-
-
 def inspect_package_deployment_contexts(
     *,
     runtime_root: Path,
@@ -330,99 +305,3 @@ def _inspect_package_subject_deployment_context(
     )
 
 
-def _inspect_subject_deployment_context(
-    *,
-    repo_root: Path,
-    runtime_root: Path,
-    experiment_id: str,
-    subject_id: str,
-    binding: subject_execution_binding,
-) -> subject_deployment_context:
-    deployment_root = runtime_root / binding.infrastructure_subject
-    issues: list[str] = []
-
-    try:
-        state = read_experiment_apparatus_state(deployment_root)
-    except infrastructure_error as exc:
-        return subject_deployment_context(
-            subject_id=subject_id,
-            infrastructure_subject=binding.infrastructure_subject,
-            deployment_root=deployment_root,
-            experiment_id=None,
-            application_scope=None,
-            observed_apparatus_sha256=None,
-            expected_apparatus_sha256=None,
-            issues=(str(exc),),
-        )
-
-    try:
-        expected_sha256 = experiment_apparatus_sha256(
-            repo_root,
-            binding.infrastructure_subject,
-            experiment_id,
-        )
-    except profile_error as exc:
-        expected_sha256 = None
-        issues.append(str(exc))
-
-    if state is None:
-        issues.append(
-            "no active experiment deployment context is recorded"
-        )
-        return subject_deployment_context(
-            subject_id=subject_id,
-            infrastructure_subject=binding.infrastructure_subject,
-            deployment_root=deployment_root,
-            experiment_id=None,
-            application_scope=None,
-            observed_apparatus_sha256=None,
-            expected_apparatus_sha256=expected_sha256,
-            issues=tuple(issues),
-        )
-
-    observed_experiment_id = state.get("experiment_id")
-    if not isinstance(observed_experiment_id, str) or not observed_experiment_id:
-        observed_experiment_id = None
-        issues.append("deployment context has an invalid experiment ID")
-    elif observed_experiment_id != experiment_id:
-        issues.append(
-            f"active experiment is '{observed_experiment_id}', expected "
-            f"'{experiment_id}'"
-        )
-
-    application_scope = state.get("application_scope")
-    if not isinstance(application_scope, str):
-        application_scope = None
-        issues.append("deployment context has an invalid application scope")
-    elif application_scope != "experiment":
-        issues.append(
-            f"application scope is '{application_scope}', expected 'experiment'"
-        )
-
-    observed_sha256 = state.get("source_sha256")
-    if not isinstance(observed_sha256, str) or not observed_sha256:
-        observed_sha256 = None
-        issues.append("deployment context has an invalid apparatus SHA-256")
-    elif expected_sha256 is not None and observed_sha256 != expected_sha256:
-        issues.append(
-            f"apparatus SHA-256 is {observed_sha256}, expected {expected_sha256}"
-        )
-
-    package_sha256 = None
-    package = state.get("package")
-    if isinstance(package, dict):
-        value = package.get("sha256")
-        if isinstance(value, str) and value:
-            package_sha256 = value
-
-    return subject_deployment_context(
-        subject_id=subject_id,
-        infrastructure_subject=binding.infrastructure_subject,
-        deployment_root=deployment_root,
-        experiment_id=observed_experiment_id,
-        application_scope=application_scope,
-        observed_apparatus_sha256=observed_sha256,
-        expected_apparatus_sha256=expected_sha256,
-        issues=tuple(issues),
-        package_sha256=package_sha256,
-    )

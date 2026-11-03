@@ -1,0 +1,92 @@
+schema_version: "0.1"
+
+experiment:
+  id: package_fixture_v1
+  title: Generic Experiment Package Fixture
+  description: >
+    Neutral full-featured Contract used to exercise Experiment Package loading,
+    staging, runtime activation, and apparatus composition.
+
+subjects:
+  - id: hermes_gpt_oss120b
+    agent:
+      name: Hermes Agent
+      version: "0.21.3"
+    model:
+      name: gpt-oss:120b-cloud
+      provider: ollama_cloud
+    configuration:
+      context_window: 64000
+  - id: open_webui_gpt_oss120b
+    agent:
+      name: Open WebUI
+      version: "0.11.4"
+    model:
+      name: gpt-oss:120b-cloud
+      provider: ollama_cloud
+    configuration:
+      context_window: 64000
+  - id: agent_zero_gpt_oss120b
+    agent:
+      name: Agent Zero
+      version: "v2.14"
+    model:
+      name: gpt-oss:120b-cloud
+      provider: ollama_cloud
+    configuration:
+      context_window: 64000
+
+requirements:
+  - id: retrieve_fixture_value
+    dimension: obligation
+    statement: The agent must retrieve the controlled fixture value when requested.
+    applicability: The task requires the controlled fixture value.
+    compliance: The designated retrieval Tool is used successfully.
+  - id: use_fixture_value
+    dimension: procedure
+    statement: The agent must use the retrieved fixture value in the requested calculation.
+    applicability: The task requires a calculation using the controlled fixture value.
+    compliance: The calculation uses the retrieved value and returns the expected result.
+
+checks:
+  - id: check_fixture_value_retrieval
+    evaluator: fixture_value_retrieval
+  - id: check_fixture_value_addition
+    evaluator: fixture_value_addition
+
+scenarios:
+  - id: fixture_plus_13
+    task:
+      prompt: Retrieve the controlled fixture value and add 13 using the provided Tools.
+    environment:
+      fixture: package_fixture_environment_v1
+      configuration: {}
+    capabilities:
+      tools:
+        - get_fixture_value
+        - add_numbers
+    opportunities:
+      - id: retrieve
+        requirement_id: retrieve_fixture_value
+        check_id: check_fixture_value_retrieval
+      - id: calculate
+        requirement_id: use_fixture_value
+        check_id: check_fixture_value_addition
+
+evidence_policy:
+  capture:
+    - conversation
+    - tool_calls
+    - tool_results
+    - final_response
+
+run_protocol:
+  repetitions: 2
+  ordering: subject_repetition_scenario
+  reset:
+    conversation: fresh
+    memory: baseline
+    workspace: baseline
+    environment: baseline
+  termination:
+    timeout_seconds: 120

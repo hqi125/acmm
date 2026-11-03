@@ -22,13 +22,7 @@ from acmm.runtime.registry import execution_registry
 
 
 ROOT = Path(__file__).resolve().parents[2]
-CONTRACT_PATH = (
-    ROOT
-    / "experiments"
-    / "examples"
-    / "magic_number"
-    / "experiment.yaml"
-)
+CONTRACT_PATH = ROOT / "tests" / "fixtures" / "contracts" / "valid" / "runtime_execution.yaml"
 
 
 class fake_fixture:
@@ -38,10 +32,10 @@ class fake_fixture:
         reset: dict,
     ) -> prepared_environment:
         return prepared_environment(
-            handle={"ACMM_MAGIC_NUMBER": "87"},
+            handle={"ACMM_FIXTURE_VALUE": "87"},
             provenance={
-                "fixture": "magic_number_environment_v1",
-                "configuration": {"magic_number": 87},
+                "fixture": "synthetic_environment_v1",
+                "configuration": {"fixture_value": 87},
             },
         )
 
@@ -108,13 +102,13 @@ class sequence_adapter:
                     id="tool_calls",
                     channel="tool_calls",
                     artifact="evidence/tool_calls.json",
-                    content=b'[{"name":"get_magic_number"}]',
+                    content=b'[{"name":"get_fixture_value"}]',
                 ),
                 captured_evidence(
                     id="tool_results",
                     channel="tool_results",
                     artifact="evidence/tool_results.json",
-                    content=b'[{"magic_number":87}]',
+                    content=b'[{"fixture_value":87}]',
                 ),
                 captured_evidence(
                     id="final_response",
@@ -129,7 +123,7 @@ class sequence_adapter:
                     "version": "0.21.3",
                 },
                 "model": {
-                    "name": "nemotron-3-nano:30b-cloud",
+                    "name": "gpt-oss:120b-cloud",
                     "provider": "ollama_cloud",
                 },
                 "configuration": subject.get("configuration", {}),
@@ -142,14 +136,14 @@ def _registry(adapter: sequence_adapter) -> execution_registry:
 
     return execution_registry(
         subject_adapters={
-            "hermes_nemotron30b": adapter,
+            "hermes_gpt_oss120b": adapter,
         },
         fixtures={
-            "magic_number_environment_v1": fake_fixture(),
+            "synthetic_environment_v1": fake_fixture(),
         },
         evaluators={
-            "magic_number_retrieval": evaluator,
-            "magic_number_addition": evaluator,
+            "synthetic_retrieval": evaluator,
+            "synthetic_addition": evaluator,
         },
     )
 
@@ -227,7 +221,7 @@ def test_export_complete_execution_produces_runs_and_judgments(
     assert all(row["inter_run_delay_seconds"] == "2.0" for row in runs)
     assert all(row["judgment_count"] == "2" for row in runs)
     assert all(row["agent_name"] == "Hermes Agent" for row in runs)
-    assert all(row["environment_fixture"] == "magic_number_environment_v1" for row in runs)
+    assert all(row["environment_fixture"] == "synthetic_environment_v1" for row in runs)
 
     assert {row["opportunity_id"] for row in judgments} == {
         "retrieve",

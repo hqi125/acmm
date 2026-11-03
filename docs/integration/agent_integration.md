@@ -130,77 +130,46 @@ infrastructure reconciler before the runtime adapter is trustworthy.
 
 ## Phase 3: build repository-managed desired state
 
-A comparative subject should not depend on undocumented manual setup. ACMM should be able to
-reconstruct and inspect the qualified baseline from version-controlled desired state.
-
-A typical source layout is conceptually:
+A comparative subject should not depend on undocumented manual setup. ACMM should reconstruct and
+inspect its qualified experiment-independent baseline from version-controlled desired state:
 
 ```text
 infrastructure/<agent>/
 |-- profile.yaml
 |-- defaults/
-|-- README.md
-`-- experiments/
-    `-- <experiment-id>/
-        |-- apparatus.yaml
-        `-- tools/ or plugins/
+`-- README.md
 ```
 
-The exact files vary by agent, but the managed baseline generally needs to cover:
+The exact files vary by agent, but the baseline generally covers deployment identity, ports/volumes,
+provider wiring, agent/profile settings, experiment-isolation controls, mutable application settings,
+and runtime ownership boundaries. Research-facing tools, plugins, permissions, and other apparatus do
+not belong here; they belong to Experiment Packages and are supplied to the subject manager from a
+verified staged package snapshot.
 
-- deployment image/package and version;
-- ports, volumes, environment variables, and provider endpoints;
-- model configuration;
-- profile or prompt overrides that belong to the qualified subject baseline;
-- experiment-isolation settings that remain invariant across experiments;
-- mutable application settings that must be reconciled through supported APIs;
-- expected runtime paths and ownership boundaries.
-
-Experiment-facing tools, plugins, permissions, and other laboratory apparatus should begin
-under `experiments/<experiment-id>/` even when that duplicates small amounts of code. Promote
-a component into the subject baseline only after it is genuinely experiment-independent.
-
-Secrets should not be committed as desired-state content. The repository may describe where a
-credential comes from, but credentials should stay in the appropriate local/runtime mechanism.
+Secrets should never be committed as desired-state content. Document their source/contract while
+keeping actual credentials in the appropriate local/runtime secret mechanism.
 
 ### Infrastructure lifecycle
 
-Where practical, a new managed subject should fit the common lifecycle:
+Where practical, a managed subject fits the baseline lifecycle:
 
 ```text
 acmm-infra <agent> init
 acmm-infra <agent> apply
-acmm-infra <agent> apply --experiment <experiment-id>
 acmm-infra <agent> up
 acmm-infra <agent> status
 acmm-infra <agent> doctor
 acmm-infra <agent> down
 ```
 
-This is a command vocabulary, not a universal ordering constraint. The preferred full
-experiment-aware `apply` may use different subject-specific provisioning mechanics. The
-narrower `apply-tools --experiment <experiment-id>` path may additionally require a running
-service, as Open WebUI does. The subject-specific README owns the exact sequence.
+These commands do not select research experiments. `apply` reconciles the qualified baseline and
+removes active package apparatus; `apply-tools` is an engineering/baseline tool-policy operation where
+supported. Package deployment is orchestrated by `acmm package apply` or permissioned
+`acmm run --apply-if-needed` through package-aware subject managers.
 
-The commands do not need identical internal implementations. Their semantics should be consistent:
-
-- `init` creates the mutable runtime/deployment skeleton without silently qualifying it;
-- `apply` without `--experiment` reconciles the experiment-independent qualified baseline and
-  removes active experiment apparatus;
-- `apply --experiment <experiment-id>` composes the baseline and selected experiment
-  apparatus as one requested target state;
-- `apply-tools --experiment <experiment-id>` reconciles only the selected experiment-facing
-  Tool/plugin/policy layer;
-- `apply-experiment <experiment-id>` remains a compatibility alias for the full
-  experiment-aware `apply`;
-- `up` starts the qualified service and waits for meaningful readiness;
-- `status` reports observed state without claiming qualification;
-- `doctor` discovers the deployment context from the apparatus marker and verifies either the
-  baseline alone or the composed baseline plus active experiment apparatus;
-- `down` stops the service without destroying the version-controlled definition.
-
-For a new product, this usually requires agent-specific code under `src/acmm_infra/`: a manager,
-API/process/Docker client as appropriate, root-CLI wiring, profile parsing, and tests.
+`status` reports observed state; `doctor` passively reconstructs package context from deployment
+provenance when present and verifies either the baseline or composed package state. Product-specific
+mechanics remain in `src/acmm_infra/`.
 
 ### Doctor is a qualification gate, not a ping test
 
@@ -331,7 +300,7 @@ scenario fixture
 not:
 
 ```text
-adapter hard-codes Experiment 1 values
+adapter hard-codes one study's fixture values
 ```
 
 This keeps the same adapter reusable across future experiments.
@@ -582,8 +551,8 @@ comparative dataset if their baseline differs from the frozen configuration.
 For an agent that requires a model-specific compatibility profile, freeze the whole coupled prompt
 surface that was actually qualified rather than documenting only the most visible override. A
 partially overridden native protocol can create contradictory instructions that look like agent
-instability. The Agent Zero v2.14 case study is recorded in
-`docs/integration/agent_zero_qualification.md`.
+instability. Preserve qualification evidence with the relevant engineering artifacts rather than
+turning one historical experiment into a permanent Core dependency.
 
 ## Phase 14: preserve interruption and failure integrity
 

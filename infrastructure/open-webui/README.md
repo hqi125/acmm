@@ -10,7 +10,7 @@ Open WebUI:       0.11.4
 Docker image:     ghcr.io/open-webui/open-webui:v0.11.4
 Image digest:     sha256:9591b13f13843c7721c2b8eaf7382846c81b3ffe126526d1888d1fed50c6a33f
 Ollama route:     http://host.docker.internal:11434
-Experiment model: nemotron-3-nano:30b-cloud
+LLM:              composed from registered ACMM definition
 Web UI auth:      disabled for the isolated ACMM instance
 OpenAI API:       disabled
 Plugins:          enabled for ACMM-managed workspace Tools
@@ -35,33 +35,19 @@ open-webui/
 |-- defaults/
 |   |-- compose.yaml
 |   `-- env.defaults
-|-- experiments/
-|   `-- <experiment-id>/
-|       |-- apparatus.yaml
-|       `-- tools/
 `-- README.md
 ```
 
-Initialization creates a mutable WSL-native deployment under:
+The subject directory contains only experiment-independent baseline state. Research Tools are owned
+by Experiment Packages and are consumed from their immutable staged apparatus roots.
 
-```text
-~/acmm_runtime/open-webui/
-|-- compose.yaml
-|-- .env
-`-- data/
-```
-
-`compose.yaml` is ACMM-owned deployed state. `apply` replaces it with the current repository
-baseline while the service is stopped. `.env` is partially managed: ACMM-owned keys are
-reconciled while unrelated local keys are preserved.
+Initialization creates mutable deployment state under `~/acmm_runtime/open-webui/`.
 
 ## Lifecycle
 
-Open WebUI implements the common ACMM infrastructure lifecycle:
-
 ```text
 acmm-infra open-webui init
-acmm-infra open-webui apply --experiment controlled_tool_use_multiscenario_v1
+acmm-infra open-webui apply
 acmm-infra open-webui up
 acmm-infra open-webui status
 acmm-infra open-webui doctor
@@ -69,76 +55,33 @@ acmm-infra open-webui down
 acmm-infra open-webui reset configuration --yes
 ```
 
-`apply` is the full stopped-service baseline reconciler, matching the semantics used for
-Hermes. It reconciles deployment files/environment first, starts Open WebUI temporarily,
-waits for the backend `/ready` endpoint, reconciles persistent provider configuration through
-Open WebUI's supported admin APIs, removes active repository-managed experiment Tools, and
-then stops the provisioning service again. The command therefore leaves the ordinary agent
-service stopped and experiment-independent.
+`apply` is the stopped-service baseline reconciler. It updates deployment state, temporarily starts
+the backend, waits for `/ready`, reconciles provider and isolation settings through supported admin
+APIs, removes active research Tools, and returns the ordinary service to stopped baseline state.
+ACMM never edits `webui.db` directly.
 
-Open WebUI stores provider and feature settings persistently in its application database, so
-environment variables alone are not sufficient after those keys have been initialized. `apply`
-explicitly reconciles the persistent Ollama provider to the ACMM Windows-Ollama route, forces
-the OpenAI provider disabled while preserving inactive OpenAI connection details, and imports
-the experiment-isolation settings through Open WebUI's supported admin configuration API.
+Research Tool state enters through package orchestration:
 
-The isolation baseline disables direct connections/integrations, external Tool and terminal
-servers, web search, code execution/interpreter, memories and memory background review, image
-generation/prompt generation, title generation, tag generation, follow-up generation,
-autocomplete, search-query generation, and retrieval-query generation. These values are also
-seeded through the container environment so the temporary provisioning startup begins in the
-restricted state before the persistent database values are repaired.
+```text
+acmm package apply <experiment-selector>
+acmm run <experiment-selector> --apply-if-needed
+```
 
-`apply --experiment <experiment-id>` is the preferred full experiment reconciler. It
-composes the baseline with the selected apparatus and reconciles that effective state during
-one temporary provisioning-service lifetime. The narrower `apply-tools
---experiment <experiment-id>` path assumes the ordinary service is already running; with
-`WEBUI_AUTH=false`, it obtains the local system-admin session and reconciles only the Tools
-owned by the selected `experiments/<experiment-id>/apparatus.yaml` through Open WebUI's
-supported Tool API. ACMM does not edit the Open WebUI SQLite database directly.
-
-Because the Tool-only path works through the live Tool API, the ordinary Open WebUI service
-must already be running. The command creates missing selected Tools, preserves exact Tools,
-repairs source/name/description drift, removes stale apparatus from a previously selected
-experiment, and records the selected apparatus SHA-256 with application scope `tools`.
-`apply-experiment <experiment-id>` remains a compatibility alias for the full
-`apply --experiment <experiment-id>` workflow.
-
-The Experiment 1 `acmm_tools.py` source now lives under its own experiment directory. Its
-Valves still provide controlled magic-number/retrieval/addition state for that experiment;
-those per-run values remain runtime fixture state rather than static infrastructure state.
-
-Runtime installation of packages declared through tool/function frontmatter is explicitly
-disabled. The ACMM Tool therefore depends only on packages already present in the pinned
-Open WebUI image. This keeps application provisioning deterministic and avoids modifying the
-container Python environment during experiments.
+The package-aware manager imports, repairs, and removes only the Tools declared by the staged
+apparatus component. Per-run Valve/configuration values remain runtime fixture state rather than
+static infrastructure state. Runtime installation of package requirements from Tool frontmatter is
+disabled so provisioning remains deterministic.
 
 ## Readiness
 
-`up` waits for Open WebUI's `/ready` endpoint before reporting success, so a subsequent
-`status`, `doctor`, or execution-adapter request does not race backend startup.
+`up` waits for Open WebUI's `/ready` endpoint before reporting success. `status` reports deployment
+and live application observations; `doctor` verifies the pinned image/version, provider and isolation
+settings, model availability, and—when package provenance is active—the exact staged Tool apparatus
+identity.
 
-`status` reports both deployment and live application observations when the service is
-running, including persisted provider configuration and the model IDs returned by Open WebUI.
-`doctor` verifies:
-
-- Docker and Compose availability;
-- exact deployed Compose baseline and ACMM-managed environment values;
-- running container and exact pinned image identity;
-- live Open WebUI version;
-- successful backend authentication;
-- persisted Ollama/OpenAI provider configuration;
-- exact persistent experiment-isolation settings;
-- availability of the configured experiment model; and
-- when an experiment marker is active, presence and exact repository match of every Tool in
-  the discovered experiment apparatus.
-
-A baseline workflow is `init` -> `apply` -> `up` -> `doctor`. Before an experiment run, the
-preferred full path is `apply --experiment <experiment-id>` while the service is stopped,
-followed by `up` and `doctor`, which discovers that experiment from the deployment marker. During Tool-only development,
-`apply-tools --experiment <experiment-id>` may be used while the service is running. A later
-baseline `apply` removes active experiment Tools and returns Open WebUI to the
-experiment-independent baseline.
+A baseline workflow is `init -> apply -> up -> doctor`. Package-aware application is performed by
+Core before execution, and `doctor` passively reconstructs the active package context from deployment
+provenance rather than accepting an experiment selector.
 
 ## Persistent state and reset
 

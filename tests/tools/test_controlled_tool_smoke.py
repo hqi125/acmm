@@ -93,10 +93,20 @@ def test_shared_fixture_matches_controlled_success_case() -> None:
     termination = controlled_tool_smoke.build_termination()
     scenario = controlled_tool_smoke.build_scenario(scenario_id="smoke")
 
+    generic = json.dumps(
+        {
+            "magic_number": 87,
+            "retrieval_mode": "success",
+            "addition_mode": "success",
+        },
+        separators=(",", ":"),
+    )
     assert environment == {
         "ACMM_MAGIC_NUMBER": "87",
         "ACMM_RETRIEVAL_MODE": "success",
         "ACMM_ADDITION_MODE": "success",
+        "ACMM_TOOL_CONFIG_JSON": generic,
+        "ACMM_TOOL_BASELINE_JSON": generic,
     }
     assert termination == {"timeout_seconds": 120}
     assert "get_magic_number" in scenario["task"]["prompt"]
