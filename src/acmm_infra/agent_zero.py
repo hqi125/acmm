@@ -556,8 +556,7 @@ class agent_zero_manager:
                 else f"active={marker.get('experiment_id')!r}"
             )
         else:
-            expected_apparatus_hash = experiment_apparatus_sha256(
-                self.repo_root,
+            expected_apparatus_hash = self._apparatus_source_sha256(
                 "agent-zero",
                 self.experiment_id,
             )

@@ -170,9 +170,18 @@ class ollama_cloud_usage_monitor:
 
         model_reports: dict[str, object] = {}
         for model_name in self._model_names:
-            before_metrics = before.models.get(model_name)
-            after_metrics = after.models.get(model_name)
+            aliases = _ollama_usage_model_aliases(model_name)
+            before_provider_model, before_metrics = _first_model_metrics(
+                before.models,
+                aliases,
+            )
+            after_provider_model, after_metrics = _first_model_metrics(
+                after.models,
+                aliases,
+            )
+            provider_model = after_provider_model or before_provider_model
             model_reports[model_name] = {
+                "provider_model": provider_model,
                 "before": before_metrics,
                 "after": after_metrics,
                 "delta": _metric_delta(before_metrics, after_metrics),
@@ -197,6 +206,92 @@ class ollama_cloud_usage_monitor:
             ),
         }
 
+
+
+def summarize_ollama_cloud_request_count(
+    provider_usage: Mapping[str, object] | None,
+) -> tuple[int | None, str]:
+    """Return a human-readable request-count result for execution summaries."""
+
+    if not isinstance(provider_usage, Mapping):
+        return None, "telemetry was not recorded"
+    report = provider_usage.get("ollama_cloud")
+    if not isinstance(report, Mapping):
+        return None, "Ollama Cloud telemetry was not recorded"
+
+    status = report.get("status")
+    if status == "unavailable":
+        error = _usage_report_error(report)
+        return None, error or "Ollama Cloud telemetry is unavailable"
+
+    observed = report.get("models_observed")
+    models = report.get("models")
+    if isinstance(observed, list) and isinstance(models, Mapping):
+        total = 0
+        complete = True
+        for model_name in observed:
+            if not isinstance(model_name, str):
+                complete = False
+                break
+            model_report = models.get(model_name)
+            if not isinstance(model_report, Mapping) or not model_report.get("complete"):
+                complete = False
+                break
+            delta = model_report.get("delta")
+            if not isinstance(delta, Mapping):
+                complete = False
+                break
+            request_count = delta.get("request_count")
+            if not isinstance(request_count, int) or isinstance(request_count, bool):
+                complete = False
+                break
+            total += request_count
+        if complete and observed:
+            detail = "model-scoped delta"
+            if total == 0:
+                detail += "; provider snapshots did not advance"
+            return total, detail
+
+    account_delta = report.get("account_delta")
+    if isinstance(account_delta, Mapping):
+        request_count = account_delta.get("request_count")
+        if isinstance(request_count, int) and not isinstance(request_count, bool):
+            detail = "account-scope fallback; model groups incomplete"
+            if request_count == 0:
+                detail += "; provider snapshots did not advance"
+            return request_count, detail
+
+    error = _usage_report_error(report)
+    return None, error or "request-count delta is unavailable"
+
+
+def _usage_report_error(report: Mapping[str, object]) -> str | None:
+    for key in ("after", "before"):
+        snapshot = report.get(key)
+        if not isinstance(snapshot, Mapping):
+            continue
+        error = snapshot.get("error")
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+    return None
+
+
+def _ollama_usage_model_aliases(model_name: str) -> tuple[str, ...]:
+    aliases = [model_name]
+    if model_name.endswith("-cloud"):
+        aliases.append(model_name[: -len("-cloud")])
+    return tuple(dict.fromkeys(aliases))
+
+
+def _first_model_metrics(
+    models: Mapping[str, Mapping[str, int | float | None]],
+    aliases: tuple[str, ...],
+) -> tuple[str | None, Mapping[str, int | float | None] | None]:
+    for alias in aliases:
+        metrics = models.get(alias)
+        if metrics is not None:
+            return alias, metrics
+    return None, None
 
 def _normalize_usage_payload(
     payload: object,

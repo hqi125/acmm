@@ -212,11 +212,11 @@ def test_experiment_manager_resolution_uses_historical_subject_baseline(
         ROOT,
         tmp_path / "runtime",
         "hermes",
-        "controlled_authoritative_state_interference_v1",
+        "controlled_recovery_boundary_interaction_v1",
     )
 
     assert captured == {
-        "experiment_id": "controlled_authoritative_state_interference_v1",
+        "experiment_id": "controlled_recovery_boundary_interaction_v1",
         "llm_baseline_id": HISTORICAL_ID,
     }
     assert context.llm_baseline_id == HISTORICAL_ID

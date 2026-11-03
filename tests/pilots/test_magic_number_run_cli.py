@@ -263,6 +263,11 @@ def test_run_command_executes_one_magic_number_slot(
     assert "judgment calculate: compliant" in summary
     assert "tool calls: get_magic_number, add_numbers" in summary
     assert "final response:" in summary
+    assert "provider usage:" in summary
+    assert (
+        "Ollama Cloud requests: N/A (OLLAMA_API_KEY is not set)"
+        in summary
+    )
 
     output = capsys.readouterr().out
     assert "Experiment execution:" in output
@@ -274,6 +279,11 @@ def test_run_command_executes_one_magic_number_slot(
     assert "resolved:     1 of 1 selected" in output
     assert "terminations: agent_completed=1" in output
     assert "duration:" in output
+    assert "provider usage:" in output
+    assert (
+        "Ollama Cloud requests: N/A (OLLAMA_API_KEY is not set)"
+        in output
+    )
     assert "judgment retrieve: compliant" not in output
     assert "tool calls: get_magic_number, add_numbers" not in output
 

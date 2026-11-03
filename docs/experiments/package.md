@@ -659,11 +659,15 @@ new experiment
 New research studies should use packages once the package path is operational. Existing historical
 experiments should not be rewritten merely to prove the abstraction.
 
-One legacy experiment may be copied into package form later as an integration fixture, but that
-migration is a framework test rather than a change to its historical scientific record.
+EP-6 externalizes `controlled_authoritative_state_interference_v1` completely as the first
+integration proof. Its Contract, package runtime, three agent apparatus implementations, README, and
+experiment-specific tests live in the external experiments workspace rather than the main repo. The
+scientific record is unchanged; only code/artifact ownership moved.
 
-When the package mechanism is mature, old research experiments can be archived outside the main
-repo while the core repository retains only small fixtures needed for regression tests.
+The main repo deliberately retains no built-in catalog binding, pilot runtime module, Contract copy,
+or authoritative-state apparatus directory for that experiment. It keeps only generic package
+machinery and a regression assertion that the externalized experiment does not re-enter Core.
+Remaining historical experiments may coexist with packages until the later legacy-archive cleanup.
 
 ## EP-0 decisions
 
@@ -1074,9 +1078,12 @@ env set-llm/status/doctor/stop   -> qualified subject environment lifecycle
 run <selector>                   -> experiment execution
 ```
 
-Installed package removal is now deployment-aware at the CLI boundary. `package uninstall` refuses
-to delete a staged revision while any subject deployment marker still references its package digest;
-the operator must first reconcile those subjects with `acmm env set-llm <llm-id>`.
+Installed package removal is deployment-aware at the CLI boundary. `acmm package detach <selector>`
+restores only subjects carrying that exact package revision to the LLM bindings declared by the
+package, removing experiment apparatus and package provenance without changing unrelated subjects.
+The command reports every subject it detached. `package uninstall` refuses to delete an attached
+staged revision by default; `--detach-if-applied` explicitly grants permission to run the same detach
+workflow before removal.
 
 
 ## CLI surface cleanup checkpoint
@@ -1162,4 +1169,88 @@ Before externalization, ACMM completed a deliberately bounded hardening pass:
 This checkpoint is intentionally not a new architecture stage. It is the final core cleanup before
 EP-6 externalization, and further framework polishing should be justified by problems found during
 externalization or substantive experiments rather than by code tidiness alone.
+
+
+
+## EP-6 implementation checkpoint: first complete externalization
+
+EP-6 uses `controlled_authoritative_state_interference_v1` as the first experiment whose ownership
+crosses the repository boundary. The package is maintained in the sibling `acmm-experiments`
+workspace and contains:
+
+```text
+controlled_authoritative_state_interference_v1/
+    experiment-package.yaml
+    experiment.yaml
+    README.md
+    runtime/
+    apparatus/
+        hermes/
+        open-webui/
+        agent-zero/
+    tests/
+```
+
+The package runtime imports only the public `acmm.experiment_api`; the old
+`src/acmm/pilots/authoritative_state.py` implementation is no longer present in Core. Managed tool
+and plugin source paths are component-relative, so the staged package is independent of the source
+workspace and main-repo filesystem layout.
+
+Core no longer registers the experiment in `acmm.experiments.catalog`, stores its Contract under
+`experiments/examples`, or carries its three infrastructure apparatus trees. The experiment-specific
+fixture/evaluator/tool tests moved with the package. Core retains a small boundary regression test
+asserting that those experiment-owned resources remain absent.
+
+The external package has been exercised through the normal package path against a fresh managed
+store:
+
+```text
+acmm package validate <external-package>
+acmm package install <external-package>
+acmm package list
+acmm package show controlled_authoritative_state_interference_v1
+acmm run controlled_authoritative_state_interference_v1 --preview
+acmm run controlled_authoritative_state_interference_v1 --preview --apply-if-needed --subject hermes_nemotron30b
+```
+
+The preview resolves the installed package, activates its staged runtime, reconstructs the full
+48-run plan, and observes deployment divergence without consulting the built-in catalog. Package
+owned tests also construct package-aware managers for Hermes, Open WebUI, and Agent Zero from the
+staged snapshot, proving that the explicit apply path can be built from external package state
+without repository-local apparatus.
+
+Live Docker application and a real agent execution are deliberately not required for this
+externalization proof. The frozen package preserves its historical Nemotron subject bindings, and
+changing them merely to obtain a live rerun would alter the historical study; the original provider
+model may also no longer be available. EP-6 therefore proves source ownership, staging, runtime
+activation, apparatus composition, subject-manager construction, and execution planning without
+claiming a new operational qualification or changing the experiment's scientific conclusions.
+
+## EP-6 live field-validation checkpoint
+
+EP-6 was followed by a live WSL field pass using the external package repository and a disposable
+GPT-OSS rebinding of the frozen authoritative-state package. The disposable package was used only
+for infrastructure validation and is not a new research result.
+
+The field pass confirmed:
+
+- package source validation, installation, listing, and exact digest-based resolution from the
+  external repository;
+- non-mutating `run --preview` behavior in both strict and `--apply-if-needed` modes;
+- selected-subject reconciliation followed by the required second strict deployment preflight;
+- live package-backed execution through Hermes, Open WebUI, and Agent Zero;
+- runtime startup/restoration and diagnostic log capture;
+- execution package provenance in persisted manifests; and
+- optional Ollama Cloud provider-usage capture without affecting scientific validity.
+
+The first live Hermes startup exposed one remaining legacy path lookup: each subject manager's
+`doctor()` method still computed apparatus identity from the historical main-repo experiment tree.
+That path was corrected for Hermes, Open WebUI, and Agent Zero so live readiness uses the same
+package-aware apparatus identity helper as package deployment. Regression tests now cover all three
+external-package doctor paths.
+
+Package removal is also more explicit after the field pass. `acmm package detach <selector>`
+restores only subjects carrying that exact installed package revision to their package-declared LLM
+bindings, and `acmm package uninstall <selector> --detach-if-applied` grants the uninstall command
+permission to perform the same detachment before removing the staged revision.
 

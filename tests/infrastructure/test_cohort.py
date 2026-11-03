@@ -10,6 +10,7 @@ from acmm_infra.cohort import (
     cohort_subject_status,
     experiment_cohort,
     package_deployment_references,
+    resolve_attached_package_cohort,
     resolve_experiment_cohort,
     summarize_context,
 )
@@ -63,6 +64,57 @@ def test_package_deployment_references_matches_package_digest(monkeypatch) -> No
         "a" * 64,
     ) == ("hermes",)
 
+
+
+
+def test_resolve_attached_package_cohort_filters_exact_package_revision(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    subjects = (
+        cohort_subject("subject_a", "hermes", "llm_a"),
+        cohort_subject("subject_b", "open-webui", "llm_b"),
+    )
+    package = SimpleNamespace(
+        experiment_id="external_v1",
+        package_sha256="a" * 64,
+    )
+    monkeypatch.setattr(
+        cohort_module,
+        "resolve_package_cohort",
+        lambda *args, **kwargs: experiment_cohort(
+            experiment_id="external_v1",
+            canonical_contract=tmp_path / "experiment.yaml",
+            subjects=subjects,
+            package=package,
+        ),
+    )
+
+    def fake_inspect(repo_root, runtime_root, subject, include_running=True):
+        del repo_root, runtime_root, include_running
+        package_sha = "a" * 64 if subject.subject_id == "subject_a" else "b" * 64
+        return cohort_subject_status(
+            subject_id=subject.subject_id,
+            infrastructure_subject=subject.infrastructure_subject,
+            running=None,
+            experiment_id="external_v1",
+            application_scope="experiment",
+            apparatus_state="match",
+            source_sha256=None,
+            package_sha256=package_sha,
+        )
+
+    monkeypatch.setattr(cohort_module, "inspect_subject_context", fake_inspect)
+
+    observed = resolve_attached_package_cohort(
+        tmp_path,
+        tmp_path / "runtime",
+        package,
+    )
+
+    assert observed.experiment_id is None
+    assert observed.package is None
+    assert observed.subjects == (subjects[0],)
 
 def test_resolve_experiment_cohort_uses_canonical_contract_subjects() -> None:
     cohort = resolve_experiment_cohort(

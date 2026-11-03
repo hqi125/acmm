@@ -185,7 +185,15 @@ duration.
 If the API key is absent, the API is unreachable, authentication fails, or the response cannot be
 interpreted, experiment acquisition continues normally. Telemetry is diagnostic provenance only; it
 never affects Run Record validity, ACMM judgments, dimension scores, availability analysis, or retry
-policy.
+policy. The final console report and `execution_summary.txt` include an Ollama Cloud request-count
+line. ACMM prefers complete selected-model deltas, falls back to the account delta when model groups
+are incomplete, and prints `N/A` with the reason when telemetry is unavailable.
+
+Local Ollama cloud aliases such as `gpt-oss:120b-cloud` may be reported by the direct cloud usage API
+as `gpt-oss:120b`; ACMM accepts the canonical non-`-cloud` provider name for telemetry matching while
+preserving the configured model identity elsewhere. A zero delta means the sampled provider counters
+did not advance; it is not proof that the agent made no inference request. See
+`docs/runtime/provider_usage.md` for operational setup and interpretation guidance.
 
 The usage endpoint is account-scoped rather than execution-scoped. Concurrent Ollama activity may
 therefore contaminate the before/after delta. Per-model groups may also be absent when the provider

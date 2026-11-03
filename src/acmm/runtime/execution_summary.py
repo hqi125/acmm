@@ -5,11 +5,14 @@ import json
 from pathlib import Path
 from typing import Any, TextIO
 
+import yaml
+
 from acmm.record.loader import load_run_record
 from acmm.runtime.experiment_execution import (
     experiment_execution_result,
     experiment_interruption_result,
 )
+from acmm.runtime.provider_usage import summarize_ollama_cloud_request_count
 
 
 def write_interruption_summary(
@@ -69,6 +72,7 @@ def write_interruption_summary(
             file=output,
         )
         _write_slot_summaries(result.slots, output)
+        _write_provider_usage_summary(result.interruption_path, output)
 
     return summary_path
 
@@ -141,6 +145,37 @@ def _write_execution_summary_content(
     )
 
     _write_slot_summaries(result.slots, output)
+    _write_provider_usage_summary(result.manifest_path, output)
+
+
+def execution_provider_usage_summary(
+    manifest_path: Path,
+) -> tuple[int | None, str]:
+    """Return the Ollama Cloud request-count summary for one execution manifest."""
+
+    try:
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        return None, f"could not read execution telemetry: {exc}"
+    if not isinstance(manifest, dict):
+        return None, "execution manifest is not a mapping"
+    execution = manifest.get("execution")
+    if not isinstance(execution, dict):
+        return None, "execution manifest has no execution mapping"
+    provider_usage = execution.get("provider_usage")
+    return summarize_ollama_cloud_request_count(provider_usage)
+
+
+def _write_provider_usage_summary(
+    manifest_path: Path,
+    output: TextIO,
+) -> None:
+    request_count, detail = execution_provider_usage_summary(manifest_path)
+    print("  provider usage:", file=output)
+    if request_count is None:
+        print(f"    Ollama Cloud requests: N/A ({detail})", file=output)
+    else:
+        print(f"    Ollama Cloud requests: {request_count} ({detail})", file=output)
 
 
 def _write_slot_summaries(

@@ -1,14 +1,40 @@
 import json
 from pathlib import Path
 
+from acmm.experiment_package.provenance import (
+    experiment_deployment_provenance,
+    experiment_package_provenance,
+)
 from acmm_infra.agent_zero import agent_zero_manager
 from acmm_infra.process import command_result
 from acmm_infra.profiles.agent_zero import load_agent_zero_profile
-from acmm_infra.profiles.experiments import with_agent_zero_experiment
+from acmm_infra.profiles.experiments import (
+    experiment_apparatus_sha256,
+    with_agent_zero_experiment,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENT_ID = "controlled_tool_use_multiscenario_v1"
+
+EXTERNAL_PACKAGE_EXPERIMENT_ID = "external_package_doctor_v1"
+
+
+def _package_provenance(
+    infrastructure_subject: str,
+    apparatus_sha256: str,
+) -> experiment_deployment_provenance:
+    return experiment_deployment_provenance(
+        package=experiment_package_provenance(
+            experiment_id=EXTERNAL_PACKAGE_EXPERIMENT_ID,
+            package_schema_version="0.1",
+            package_sha256="1" * 64,
+            contract_sha256="2" * 64,
+            runtime_sha256="3" * 64,
+        ),
+        infrastructure_subject=infrastructure_subject,
+        apparatus_sha256=apparatus_sha256,
+    )
 
 
 class fake_docker:
@@ -682,3 +708,40 @@ def test_doctor_detects_agent_zero_image_drift(tmp_path: Path) -> None:
     assert not report.is_ready
     check = next(item for item in report.checks if item.name == "container_image")
     assert not check.ok
+
+
+def test_package_backed_doctor_uses_package_apparatus_identity(
+    tmp_path: Path,
+) -> None:
+    profile = with_agent_zero_experiment(
+        ROOT,
+        load_agent_zero_profile(ROOT),
+        EXPERIMENT_ID,
+    )
+    apparatus_sha256 = experiment_apparatus_sha256(
+        ROOT,
+        "agent-zero",
+        EXPERIMENT_ID,
+    )
+    docker = fake_docker()
+    api = fake_api(profile)
+    manager = agent_zero_manager(
+        ROOT,
+        tmp_path,
+        profile,
+        docker,
+        api=api,
+        experiment_id=EXTERNAL_PACKAGE_EXPERIMENT_ID,
+        deployment_provenance=_package_provenance(
+            "agent-zero",
+            apparatus_sha256,
+        ),
+    )
+    docker.host_data_root = manager.data_root
+    manager._probe_ready = lambda: (True, "HTTP 200")
+    manager.apply(timeout_seconds=1.0)
+    docker.running = True
+
+    report = manager.doctor()
+
+    assert report.is_ready

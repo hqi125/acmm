@@ -318,3 +318,81 @@ def test_package_parser_rejects_retired_configuration_overrides(
     with pytest.raises(SystemExit) as exc_info:
         parser.parse_args(list(argv))
     assert exc_info.value.code == 2
+
+
+def test_package_detach_reports_detached_subjects(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from acmm.experiment_package import cli as package_cli
+
+    source = tmp_path / "source"
+    runtime_root = tmp_path / "runtime-root"
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(runtime_root))
+    _write_package(source)
+    package = acquire_experiment_package(
+        source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+    monkeypatch.setattr(
+        package_cli,
+        "_detach_installed_package",
+        lambda *args, **kwargs: ("hermes_nemotron30b",),
+    )
+
+    parser = _build_parser()
+    args = parser.parse_args(["package", "detach", package.experiment_id])
+
+    assert args.handler(args) == 0
+    output = capsys.readouterr().out
+    assert "Experiment Package detach complete:" in output
+    assert "subjects detached: 1" in output
+    assert "hermes_nemotron30b" in output
+
+
+def test_package_uninstall_can_detach_applied_revision(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from acmm.experiment_package import cli as package_cli
+
+    source = tmp_path / "source"
+    runtime_root = tmp_path / "runtime-root"
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(runtime_root))
+    _write_package(source)
+    package = acquire_experiment_package(
+        source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+    references = iter((("hermes",), ()))
+    monkeypatch.setattr(
+        package_cli,
+        "package_deployment_references",
+        lambda *args, **kwargs: next(references),
+    )
+    monkeypatch.setattr(
+        package_cli,
+        "_detach_installed_package",
+        lambda *args, **kwargs: ("hermes_nemotron30b",),
+    )
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "package",
+            "uninstall",
+            package.experiment_id,
+            "--detach-if-applied",
+        ]
+    )
+
+    assert args.handler(args) == 0
+    assert not package.root.exists()
+    output = capsys.readouterr().out
+    assert "Experiment Package detached before uninstall:" in output
+    assert "hermes_nemotron30b" in output
+    assert "Experiment Package uninstalled:" in output

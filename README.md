@@ -184,6 +184,13 @@ For example:
 ln -s /mnt/c/path/to/acmm ~/acmm_repo
 ```
 
+When the separate Experiment Package repository is also checked out on Windows, give it a stable
+WSL-side name as well:
+
+```text
+ln -s /mnt/c/path/to/acmm-experiments ~/acmm-experiments
+```
+
 Then:
 
 ```text
@@ -283,8 +290,11 @@ The current baseline test suite should pass completely.
 
 ### 9. Validate, install, and preview an experiment
 
-Experiment Packages are the researcher-facing experiment unit. Validate package source without
-installing or executing runtime code:
+Experiment Packages are the researcher-facing experiment unit. EP-6 has now externalized the
+historical `controlled_authoritative_state_interference_v1` study into a sibling experiments
+workspace as the first proof that an experiment no longer needs a Contract, runtime module, or
+apparatus tree inside this repository. Validate package source without installing or executing
+runtime code:
 
 ```text
 acmm package validate <package-directory>
@@ -837,11 +847,15 @@ Package management also provides:
 ```text
 acmm package list
 acmm package show minimal_agent_baseline_v1
+acmm package detach minimal_agent_baseline_v1
 acmm package uninstall minimal_agent_baseline_v1
 ```
 
-`package uninstall` refuses to remove a revision that is still referenced by deployed subject
-state. Reconcile those subjects to the intended LLM environment first.
+`package detach` removes the selected package revision from subjects that currently carry that exact
+package provenance while preserving each subject's LLM binding declared by the package. It prints the
+subjects it actually detached. `package uninstall` still refuses to remove an attached revision by
+default; `--detach-if-applied` explicitly grants permission to detach the revision first and then
+uninstall it.
 
 `acmm run` consumes only already-installed Experiment Packages. It does not accept a raw Contract
 path, acquire a package source implicitly, or infer an experiment from deployment state. The

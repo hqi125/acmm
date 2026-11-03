@@ -277,6 +277,40 @@ def resolve_deployed_cohort(
     )
 
 
+def resolve_attached_package_cohort(
+    repo_root: str | Path,
+    runtime_root: str | Path,
+    package: experiment_package,
+    selected_subject_ids: Iterable[str] = (),
+) -> experiment_cohort:
+    """Return package subjects currently attached to this exact installed revision."""
+
+    package_cohort = resolve_package_cohort(
+        repo_root,
+        package,
+        selected_subject_ids,
+    )
+    attached: list[cohort_subject] = []
+    for subject in package_cohort.subjects:
+        observed = inspect_subject_context(
+            repo_root,
+            runtime_root,
+            subject,
+            include_running=False,
+        )
+        if (
+            observed.experiment_id == package.experiment_id
+            and observed.package_sha256 == package.package_sha256
+        ):
+            attached.append(subject)
+
+    return experiment_cohort(
+        experiment_id=None,
+        canonical_contract=None,
+        subjects=tuple(attached),
+    )
+
+
 def apply_cohort(
     repo_root: str | Path,
     runtime_root: str | Path,

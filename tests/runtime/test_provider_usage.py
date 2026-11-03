@@ -4,7 +4,10 @@ from datetime import datetime, timedelta, timezone
 import io
 import json
 
-from acmm.runtime.provider_usage import ollama_cloud_usage_monitor
+from acmm.runtime.provider_usage import (
+    ollama_cloud_usage_monitor,
+    summarize_ollama_cloud_request_count,
+)
 
 
 class _response(io.BytesIO):
@@ -39,7 +42,7 @@ def test_ollama_usage_monitor_computes_account_and_model_deltas() -> None:
                 "output_tokens": 300,
                 "groups": [
                     {
-                        "model": "gpt-oss:120b-cloud",
+                        "model": "gpt-oss:120b",
                         "request_count": 80,
                         "usage_usd": 0.8,
                         "input_tokens": 800,
@@ -58,7 +61,7 @@ def test_ollama_usage_monitor_computes_account_and_model_deltas() -> None:
                 "output_tokens": 410,
                 "groups": [
                     {
-                        "model": "gpt-oss:120b-cloud",
+                        "model": "gpt-oss:120b",
                         "request_count": 87,
                         "usage_usd": 0.88,
                         "input_tokens": 1400,
@@ -89,6 +92,7 @@ def test_ollama_usage_monitor_computes_account_and_model_deltas() -> None:
     assert report["account_delta"]["input_tokens"] == 600
     model = report["models"]["gpt-oss:120b-cloud"]
     assert model["complete"] is True
+    assert model["provider_model"] == "gpt-oss:120b"
     assert model["delta"]["request_count"] == 7
     assert len(requests) == 2
     assert requests[0][0].get_header("Authorization") == "Bearer test-key"
@@ -134,3 +138,39 @@ def test_ollama_usage_monitor_marks_missing_model_group_incomplete() -> None:
     model = report["models"]["gpt-oss:120b-cloud"]
     assert model["complete"] is False
     assert model["delta"] is None
+
+
+def test_ollama_request_count_summary_prefers_model_scoped_delta() -> None:
+    provider_usage = {
+        "ollama_cloud": {
+            "status": "available",
+            "models_observed": ["gpt-oss:120b-cloud"],
+            "models": {
+                "gpt-oss:120b-cloud": {
+                    "complete": True,
+                    "delta": {"request_count": 4},
+                }
+            },
+            "account_delta": {"request_count": 9},
+        }
+    }
+
+    value, detail = summarize_ollama_cloud_request_count(provider_usage)
+
+    assert value == 4
+    assert detail == "model-scoped delta"
+
+
+def test_ollama_request_count_summary_reports_missing_key() -> None:
+    provider_usage = {
+        "ollama_cloud": {
+            "status": "unavailable",
+            "before": {"error": "OLLAMA_API_KEY is not set"},
+            "after": {"error": "OLLAMA_API_KEY is not set"},
+        }
+    }
+
+    value, detail = summarize_ollama_cloud_request_count(provider_usage)
+
+    assert value is None
+    assert detail == "OLLAMA_API_KEY is not set"

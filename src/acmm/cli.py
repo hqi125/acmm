@@ -59,6 +59,7 @@ from acmm.runtime.experiment_execution import (
     experiment_interruption_result,
 )
 from acmm.runtime.execution_summary import (
+    execution_provider_usage_summary,
     format_execution_duration,
     format_execution_timestamp,
     write_execution_summary,
@@ -1133,6 +1134,13 @@ def _print_execution_interruption(
     print("  completion manifest: not written")
     print("  continuation: unsupported; start a new execution instead")
 
+    request_count, detail = execution_provider_usage_summary(result.interruption_path)
+    print("  provider usage:")
+    if request_count is None:
+        print(f"    Ollama Cloud requests: N/A ({detail})")
+    else:
+        print(f"    Ollama Cloud requests: {request_count} ({detail})")
+
 
 def _print_execution_completion(
     result: experiment_execution_result,
@@ -1179,6 +1187,13 @@ def _print_execution_completion(
     print(f"  started:      {format_execution_timestamp(result.started_at)}")
     print(f"  ended:        {format_execution_timestamp(result.ended_at)}")
     print(f"  duration:     {format_execution_duration(result)}")
+
+    request_count, detail = execution_provider_usage_summary(result.manifest_path)
+    print("  provider usage:")
+    if request_count is None:
+        print(f"    Ollama Cloud requests: N/A ({detail})")
+    else:
+        print(f"    Ollama Cloud requests: {request_count} ({detail})")
 
 
 def _run_export(args: argparse.Namespace) -> int:

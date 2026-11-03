@@ -18,6 +18,7 @@ from acmm.experiment_package.store import (
 from acmm_infra.cohort import (
     apply_cohort,
     package_deployment_references,
+    resolve_attached_package_cohort,
     resolve_package_cohort,
 )
 from acmm_infra.common import infrastructure_error
@@ -75,6 +76,26 @@ def register_experiment_package_commands(
     )
     apply_parser.set_defaults(handler=run_package_apply)
 
+    detach_parser = package_subparsers.add_parser(
+        "detach",
+        help="Detach one installed Experiment Package from subjects using it.",
+    )
+    detach_parser.add_argument(
+        "selector",
+        help=(
+            "Installed package selector: EXPERIMENT_ID when unique, or "
+            "EXPERIMENT_ID@SHA_PREFIX when multiple revisions are installed."
+        ),
+    )
+    _add_subject_arguments(detach_parser)
+    detach_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=120.0,
+        help="Maximum provisioning timeout passed to each subject manager.",
+    )
+    detach_parser.set_defaults(handler=run_package_detach)
+
     uninstall_parser = package_subparsers.add_parser(
         "uninstall",
         help="Remove one installed Experiment Package revision.",
@@ -84,6 +105,14 @@ def register_experiment_package_commands(
         help=(
             "Installed package selector: EXPERIMENT_ID when unique, or "
             "EXPERIMENT_ID@SHA_PREFIX when multiple revisions are installed."
+        ),
+    )
+    uninstall_parser.add_argument(
+        "--detach-if-applied",
+        action="store_true",
+        help=(
+            "Detach this exact package revision from subjects that use it before "
+            "removing the installed snapshot."
         ),
     )
     uninstall_parser.set_defaults(handler=run_package_uninstall)
@@ -215,6 +244,80 @@ def run_package_apply(args: argparse.Namespace) -> int:
     return 0
 
 
+def _package_detach_progress(index, total, subject, payload) -> None:
+    if index is not None:
+        print()
+        print(f"[detach {index}/{total}] {subject.subject_id}")
+        print(f"  infrastructure: {subject.infrastructure_subject}")
+        print("  provisioning:")
+        return
+    print(f"    {payload}", flush=True)
+
+
+def _detach_installed_package(
+    package: experiment_package,
+    *,
+    selected_subject_ids: tuple[str, ...] = (),
+    timeout_seconds: float = 120.0,
+) -> tuple[str, ...]:
+    repo_root = default_repo_root().expanduser().resolve()
+    runtime_root = default_runtime_root().expanduser().resolve()
+    cohort = resolve_attached_package_cohort(
+        repo_root,
+        runtime_root,
+        package,
+        selected_subject_ids,
+    )
+    if not cohort.subjects:
+        return ()
+
+    results = apply_cohort(
+        repo_root,
+        runtime_root,
+        cohort,
+        timeout_seconds=timeout_seconds,
+        progress=_package_detach_progress,
+    )
+    return tuple(item.subject_id for item in results)
+
+
+def run_package_detach(args: argparse.Namespace) -> int:
+    runtime_root = default_runtime_root().expanduser().resolve()
+    try:
+        package = resolve_installed_experiment_package(
+            runtime_root,
+            args.selector,
+            contract_schema_path=default_contract_schema_path(),
+        )
+        detached = _detach_installed_package(
+            package,
+            selected_subject_ids=tuple(args.subjects or ()),
+            timeout_seconds=args.timeout_seconds,
+        )
+    except (
+        experiment_package_store_error,
+        experiment_package_error,
+        profile_error,
+        infrastructure_error,
+        docker_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    print()
+    print("Experiment Package detach complete:")
+    print(f"  experiment:       {package.experiment_id}")
+    print(f"  package SHA-256:  {package.package_sha256}")
+    print(f"  subjects detached: {len(detached)}")
+    for subject_id in detached:
+        print(f"    {subject_id}")
+    if not detached:
+        print("  no selected subjects were attached to this package revision")
+    return 0
+
+
 def run_package_uninstall(args: argparse.Namespace) -> int:
     runtime_root = default_runtime_root().expanduser().resolve()
     try:
@@ -228,12 +331,23 @@ def run_package_uninstall(args: argparse.Namespace) -> int:
             runtime_root,
             package.package_sha256,
         )
+        if references and args.detach_if_applied:
+            detached = _detach_installed_package(package)
+            if detached:
+                print("Experiment Package detached before uninstall:")
+                for subject_id in detached:
+                    print(f"  {subject_id}")
+            references = package_deployment_references(
+                default_repo_root(),
+                runtime_root,
+                package.package_sha256,
+            )
         if references:
             joined = ", ".join(references)
             raise experiment_package_store_error(
                 "Cannot uninstall an Experiment Package while it is deployed to "
-                f"subject infrastructure: {joined}. Reconcile those subjects to "
-                "a clean LLM environment with 'acmm env set-llm <llm-id>' first."
+                f"subject infrastructure: {joined}. Run 'acmm package detach "
+                f"{args.selector}' first, or grant '--detach-if-applied'."
             )
         installed = uninstall_experiment_package(
             runtime_root,
@@ -299,7 +413,7 @@ def _add_subject_arguments(parser: argparse.ArgumentParser) -> None:
         dest="subjects",
         action="append",
         help=(
-            "Restrict package application to a qualified Contract subject ID. "
+            "Restrict the package operation to a qualified Contract subject ID. "
             "Repeat to select multiple subjects."
         ),
     )

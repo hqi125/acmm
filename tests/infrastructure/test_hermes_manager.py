@@ -5,15 +5,41 @@ from pathlib import Path
 
 import pytest
 
+from acmm.experiment_package.provenance import (
+    experiment_deployment_provenance,
+    experiment_package_provenance,
+)
 from acmm_infra.docker import docker_error
 from acmm_infra.hermes import hermes_manager, infrastructure_error
 from acmm_infra.process import command_result
-from acmm_infra.profiles.experiments import with_hermes_experiment
+from acmm_infra.profiles.experiments import (
+    experiment_apparatus_sha256,
+    with_hermes_experiment,
+)
 from acmm_infra.profiles.hermes import load_hermes_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPERIMENT_ID = "controlled_tool_use_multiscenario_v1"
+
+EXTERNAL_PACKAGE_EXPERIMENT_ID = "external_package_doctor_v1"
+
+
+def _package_provenance(
+    infrastructure_subject: str,
+    apparatus_sha256: str,
+) -> experiment_deployment_provenance:
+    return experiment_deployment_provenance(
+        package=experiment_package_provenance(
+            experiment_id=EXTERNAL_PACKAGE_EXPERIMENT_ID,
+            package_schema_version="0.1",
+            package_sha256="1" * 64,
+            contract_sha256="2" * 64,
+            runtime_sha256="3" * 64,
+        ),
+        infrastructure_subject=infrastructure_subject,
+        apparatus_sha256=apparatus_sha256,
+    )
 
 
 class fake_docker:
@@ -1319,3 +1345,36 @@ def test_blank_slate_python_runs_directly_in_already_unprivileged_shell(
     assert "/command/s6-setuidgid" not in script
     assert script.count("/opt/hermes/.venv/bin/python") >= 2
 
+
+
+def test_package_backed_doctor_uses_package_apparatus_identity(
+    tmp_path: Path,
+) -> None:
+    profile = with_hermes_experiment(
+        ROOT,
+        load_hermes_profile(ROOT),
+        EXPERIMENT_ID,
+    )
+    apparatus_sha256 = experiment_apparatus_sha256(
+        ROOT,
+        "hermes",
+        EXPERIMENT_ID,
+    )
+    docker = fake_docker()
+    manager = hermes_manager(
+        ROOT,
+        tmp_path,
+        profile,
+        docker,
+        experiment_id=EXTERNAL_PACKAGE_EXPERIMENT_ID,
+        deployment_provenance=_package_provenance(
+            "hermes",
+            apparatus_sha256,
+        ),
+    )
+    manager.apply()
+    docker.running = True
+
+    report = manager.doctor()
+
+    assert report.is_ready

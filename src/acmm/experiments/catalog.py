@@ -6,10 +6,6 @@ from types import MappingProxyType
 from typing import Callable, Mapping, TypeAlias
 
 from acmm.harness.capabilities import harness_capabilities
-from acmm.pilots.authoritative_state import (
-    authoritative_state_harness_capabilities,
-    build_authoritative_state_registry,
-)
 from acmm.pilots.controlled_tool_use import (
     build_controlled_tool_use_registry,
     controlled_tool_use_harness_capabilities,
@@ -77,14 +73,6 @@ def _build_catalog() -> Mapping[str, experiment_execution_binding]:
             ),
             capabilities=controlled_recovery_boundary_harness_capabilities(),
             registry_builder=build_controlled_recovery_boundary_registry,
-        ),
-        "controlled_authoritative_state_interference_v1": experiment_execution_binding(
-            canonical_contract=Path(
-                "experiments/examples/controlled_authoritative_state_interference/"
-                "experiment.yaml"
-            ),
-            capabilities=authoritative_state_harness_capabilities(),
-            registry_builder=build_authoritative_state_registry,
         ),
     }
 

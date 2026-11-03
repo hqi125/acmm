@@ -26,3 +26,12 @@ infrastructure/.env
 
 # Generated analysis exports
 exports/
+
+# Local secrets / credentials
+.env
+.env.*
+!.env.example
+secrets/
+ollama_api_key
+ollama_api_key.*
+.ollama_api_key
