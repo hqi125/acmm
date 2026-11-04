@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import sys
+import time
 from typing import Any
 
 from acmm.analysis.export import analysis_export_error, export_execution
@@ -386,6 +387,17 @@ def _print_start_if_needed_preflight(
             )
 
 
+_STARTUP_RETRY_DELAYS_SECONDS = (1.0, 5.0, 15.0, 30.0, 60.0)
+
+
+def _startup_retry_delay_seconds(failed_attempt: int) -> float:
+    index = min(
+        max(failed_attempt - 1, 0),
+        len(_STARTUP_RETRY_DELAYS_SECONDS) - 1,
+    )
+    return _STARTUP_RETRY_DELAYS_SECONDS[index]
+
+
 def _ensure_runtime_ready(
     *,
     subject_id: str,
@@ -394,42 +406,108 @@ def _ensure_runtime_ready(
     repo_root: Path,
     runtime_root: Path,
     startup_timeout_seconds: float,
+    startup_max_attempts: int,
+    heading: str | None = "Runtime acquisition",
 ) -> None:
-    print("Runtime acquisition:")
+    if heading is not None:
+        print(f"{heading}:")
     print(f"  {subject_id}:")
-    if lease.is_running:
-        _print_labeled_fields([("action", "verifying running runtime")], indent=4)
-    else:
-        _print_labeled_fields([("action", "starting")], indent=4)
-        lease.ensure_started(timeout_seconds=startup_timeout_seconds)
 
-    readiness = inspect_live_readiness(
-        repo_root=repo_root,
-        runtime_root=runtime_root,
-        subject_bindings={subject_id: binding},
-    )
-    subject = readiness.subjects[0]
-    action = "started by ACMM" if lease.started_by_acmm else "already running"
-    _print_labeled_fields(
-        [
-            ("action", action),
-            ("readiness", "ready" if subject.is_ready else "not-ready"),
-        ],
-        indent=4,
-    )
-    if subject.is_ready:
-        return
-
-    if subject.error is not None:
-        print(f"ERROR: {subject_id}: {subject.error}", file=sys.stderr)
-    for check in subject.failed_checks:
-        print(
-            f"ERROR: {subject_id}: [{check.name}] {check.detail}",
-            file=sys.stderr,
+    for attempt in range(1, startup_max_attempts + 1):
+        _print_labeled_fields(
+            [("startup attempt", f"{attempt}/{startup_max_attempts}")],
+            indent=4,
         )
-    raise infrastructure_error(
-        f"Subject '{subject_id}' did not become live-ready after startup."
-    )
+
+        try:
+            if lease.is_running:
+                _print_labeled_fields(
+                    [("action", "verifying running runtime")],
+                    indent=4,
+                )
+            else:
+                _print_labeled_fields([("action", "starting")], indent=4)
+                lease.ensure_started(timeout_seconds=startup_timeout_seconds)
+
+            readiness = inspect_live_readiness(
+                repo_root=repo_root,
+                runtime_root=runtime_root,
+                subject_bindings={subject_id: binding},
+            )
+            subject = readiness.subjects[0]
+            action = (
+                "started by ACMM"
+                if lease.started_by_acmm
+                else "already running"
+            )
+            _print_labeled_fields(
+                [
+                    ("action", action),
+                    (
+                        "readiness",
+                        "ready" if subject.is_ready else "not-ready",
+                    ),
+                ],
+                indent=4,
+            )
+            if subject.is_ready:
+                return
+
+            if subject.error is not None:
+                print(
+                    f"ERROR: {subject_id}: {subject.error}",
+                    file=sys.stderr,
+                )
+            for check in subject.failed_checks:
+                print(
+                    f"ERROR: {subject_id}: [{check.name}] {check.detail}",
+                    file=sys.stderr,
+                )
+            raise infrastructure_error(
+                f"Subject '{subject_id}' did not become live-ready after startup."
+            )
+        except (
+            infrastructure_error,
+            profile_error,
+            docker_error,
+            OSError,
+            ValueError,
+        ) as exc:
+            if attempt >= startup_max_attempts:
+                raise
+
+            if lease.started_by_acmm:
+                try:
+                    lease.release()
+                except (
+                    infrastructure_error,
+                    profile_error,
+                    docker_error,
+                    OSError,
+                    ValueError,
+                ) as cleanup_exc:
+                    raise infrastructure_error(
+                        f"Could not reset failed runtime startup for "
+                        f"'{subject_id}': {cleanup_exc}"
+                    ) from cleanup_exc
+
+            delay = _startup_retry_delay_seconds(attempt)
+            print(
+                f"WARNING: {subject_id}: startup attempt "
+                f"{attempt}/{startup_max_attempts} failed: {exc}",
+                file=sys.stderr,
+            )
+            _print_labeled_fields(
+                [
+                    (
+                        "retry",
+                        f"waiting {delay:g}s before startup attempt "
+                        f"{attempt + 1}/{startup_max_attempts}",
+                    )
+                ],
+                indent=4,
+            )
+            time.sleep(delay)
 
 
 def _release_runtime_leases(
@@ -549,6 +627,19 @@ def _run_experiment(args: argparse.Namespace) -> int:
     schema_path = default_contract_schema_path()
     repo_root = default_repo_root().expanduser().resolve()
     runtime_root = default_runtime_root().expanduser().resolve()
+
+    if args.prestart_selected_subjects and not args.start_if_needed:
+        print(
+            "ERROR: --prestart-selected-subjects requires --start-if-needed.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.startup_max_attempts < 1:
+        print(
+            "ERROR: --startup-max-attempts must be an integer >= 1.",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         package = _resolve_run_package(
@@ -810,7 +901,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
     def begin_runtime_log_window(subject_id: str) -> None:
         if not args.capture_runtime_logs or subject_id not in runtime_leases:
             return
-        runtime_log_since[subject_id] = datetime.now(timezone.utc)
+        runtime_log_since.setdefault(subject_id, datetime.now(timezone.utc))
 
     def capture_runtime_log(subject_id: str | None) -> None:
         if subject_id is None or not args.capture_runtime_logs:
@@ -857,6 +948,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
             repo_root=repo_root,
             runtime_root=runtime_root,
             startup_timeout_seconds=args.startup_timeout_seconds,
+            startup_max_attempts=args.startup_max_attempts,
         )
         ready_subject_ids.add(subject_id)
         active_subject_id[0] = subject_id
@@ -886,6 +978,42 @@ def _run_experiment(args: argparse.Namespace) -> int:
 
         begin_runtime_log_window(planned.subject_id)
         active_subject_id[0] = planned.subject_id
+
+    if args.prestart_selected_subjects:
+        print("Runtime pre-start:")
+        try:
+            for subject_id in selected_subject_ids:
+                begin_runtime_log_window(subject_id)
+                _ensure_runtime_ready(
+                    subject_id=subject_id,
+                    lease=runtime_leases[subject_id],
+                    binding=subject_bindings[subject_id],
+                    repo_root=repo_root,
+                    runtime_root=runtime_root,
+                    startup_timeout_seconds=args.startup_timeout_seconds,
+                    startup_max_attempts=args.startup_max_attempts,
+                    heading=None,
+                )
+                ready_subject_ids.add(subject_id)
+        except (
+            infrastructure_error,
+            profile_error,
+            docker_error,
+            OSError,
+            ValueError,
+        ) as exc:
+            cleanup_errors = _release_runtime_leases(runtime_leases)
+            for error in cleanup_errors:
+                print(
+                    f"WARNING: Runtime cleanup failed: {error}",
+                    file=sys.stderr,
+                )
+            print(
+                f"ERROR: Could not pre-start selected subject runtimes: {exc}",
+                file=sys.stderr,
+            )
+            print("ERROR: No execution session was created.", file=sys.stderr)
+            return 2
 
     _print_experiment_execution_selection(
         plan=plan,
@@ -1445,6 +1573,15 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_parser.add_argument(
+        "--prestart-selected-subjects",
+        action="store_true",
+        help=(
+            "With --start-if-needed, acquire and live-readiness-check every "
+            "selected subject before the execution session is created. ACMM "
+            "still releases owned runtimes as subject blocks complete."
+        ),
+    )
+    run_parser.add_argument(
         "--capture-runtime-logs",
         action="store_true",
         help=(
@@ -1461,6 +1598,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "Read the Ollama Cloud API key from a host-side file for provider "
             "usage telemetry. The file value overrides OLLAMA_API_KEY; neither "
             "the key nor its path is persisted or mounted into subject runtimes."
+        ),
+    )
+    run_parser.add_argument(
+        "--startup-max-attempts",
+        type=int,
+        default=3,
+        help=(
+            "Maximum runtime acquisition attempts for each selected subject "
+            "(default: 3). Failed attempts use progressive cooldowns of 1s, "
+            "5s, 15s, 30s, then 60s for later retries."
         ),
     )
     run_parser.add_argument(

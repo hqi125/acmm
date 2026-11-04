@@ -328,12 +328,22 @@ adapter construction or execution session creation.
 
 `--start-if-needed` changes only the stopped-runtime case. After provenance succeeds, already
 running subjects are still doctor-checked immediately; a running-but-unhealthy subject remains a
-hard preflight failure. Stopped subjects are deferred and acquired lazily in selected run order.
-ACMM starts the subject, doctor-checks it before use, and records lifecycle ownership in a runtime
-lease. When execution moves to another subject, an ACMM-started runtime may be stopped before the
-next one is acquired. Runtimes that were already running before the command are never stopped by
-this policy. Any ACMM-owned runtime is released on normal completion, interruption, or handled
-execution failure. `--startup-timeout-seconds` controls the startup allowance.
+hard preflight failure. Stopped subjects are deferred and acquired lazily in selected run order by
+default. ACMM starts the subject, doctor-checks it before use, and records lifecycle ownership in a
+runtime lease. Runtime acquisition is attempted up to `--startup-max-attempts` times (default 3).
+After failed attempts ACMM uses progressive cooldowns of 1s, 5s, 15s, 30s, then 60s for later
+retries; the 60s delay is the cap. `--startup-timeout-seconds` remains the per-attempt startup
+allowance. A failed ACMM-owned startup is reset before the next attempt, while a runtime manually
+started during a cooldown can be discovered and readiness-checked on the next attempt.
+
+`--prestart-selected-subjects` requires `--start-if-needed` and changes acquisition timing rather
+than ownership. ACMM acquires and readiness-checks every selected subject before creating the
+experiment execution session. If any selected runtime exhausts startup retries, ACMM releases
+runtimes it already started and aborts without a scientific session. After successful pre-start,
+normal subject-block release behavior is preserved: when execution moves to another subject, an
+ACMM-started runtime may be stopped even though later subjects were already pre-started. Runtimes
+that were already running before the command are never stopped by this policy. Any remaining
+ACMM-owned runtime is released on normal completion, interruption, or handled execution failure.
 
 Repository/runtime roots are not `acmm run` options. Repository location is infrastructure-owned,
 and `ACMM_RUNTIME_ROOT` selects a non-default runtime/package store when needed. `--preview` stops

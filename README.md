@@ -702,8 +702,11 @@ acmm run <experiment-id> --subject <subject-id> --run-index 0-9 --apply-if-neede
 
 `--preview` is non-mutating. When package context diverges it reports whether strict execution would
 fail or whether `--apply-if-needed` would permit reconciliation. `--start-if-needed` independently
-grants permission to start a correctly deployed but stopped subject runtime. Neither option weakens
-the final readiness checks.
+grants permission to start a correctly deployed but stopped subject runtime. Runtime acquisition is
+retried up to `--startup-max-attempts` with progressive cooldowns after transient startup failures.
+`--prestart-selected-subjects` can be combined with `--start-if-needed` to acquire and readiness-check
+all selected runtimes before the execution session is created. Neither option weakens the final
+readiness checks.
 
 Package detachment and removal are explicit:
 

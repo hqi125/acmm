@@ -68,6 +68,7 @@ installed Experiment Package resolution
     -> subject binding resolution
     -> deployment preflight / optional apply-if-needed
     -> live readiness / optional start-if-needed
+    -> optional startup retry / selected-subject pre-start
     -> runtime log-window orchestration
     -> registry composition
     -> experiment execution

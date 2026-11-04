@@ -389,3 +389,205 @@ def test_preview_start_if_needed_remains_non_contacting(
     )
 
     assert args.handler(args) == 0
+
+
+def test_runtime_acquisition_retries_with_progressive_cooldown(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from acmm.cli import _ensure_runtime_ready
+    from acmm.live_preflight import (
+        live_readiness_preflight_result,
+        subject_live_readiness,
+    )
+    from acmm.subjects.catalog import lookup_subject_execution_binding
+    from acmm_infra.common import doctor_check, infrastructure_error
+
+    binding = lookup_subject_execution_binding("agent_zero_gpt_oss120b")
+    assert binding is not None
+
+    events: list[str] = []
+    delays: list[float] = []
+
+    class fake_lease:
+        initially_running = False
+        started_by_acmm = False
+        running = False
+        attempts = 0
+
+        @property
+        def is_running(self) -> bool:
+            return self.running
+
+        def ensure_started(self, *, timeout_seconds: float = 120.0) -> bool:
+            assert timeout_seconds == 30.0
+            self.attempts += 1
+            events.append(f"start:{self.attempts}")
+            if self.attempts < 3:
+                raise infrastructure_error("synthetic startup failure")
+            self.running = True
+            self.started_by_acmm = True
+            return True
+
+        def release(self) -> bool:
+            events.append("stop")
+            self.running = False
+            self.started_by_acmm = False
+            return True
+
+    lease = fake_lease()
+
+    monkeypatch.setattr(
+        "acmm.cli.inspect_live_readiness",
+        lambda **kwargs: live_readiness_preflight_result(
+            subjects=(
+                subject_live_readiness(
+                    subject_id="agent_zero_gpt_oss120b",
+                    infrastructure_subject="agent-zero",
+                    experiment_id=EXPERIMENT_ID,
+                    checks=(doctor_check("ready", True, "ready"),),
+                    error=None,
+                ),
+            )
+        ),
+    )
+    monkeypatch.setattr("acmm.cli.time.sleep", delays.append)
+
+    _ensure_runtime_ready(
+        subject_id="agent_zero_gpt_oss120b",
+        lease=lease,
+        binding=binding,
+        repo_root=tmp_path,
+        runtime_root=tmp_path,
+        startup_timeout_seconds=30.0,
+        startup_max_attempts=3,
+    )
+
+    assert events == ["start:1", "start:2", "start:3"]
+    assert delays == [1.0, 5.0]
+    assert lease.running is True
+    assert lease.started_by_acmm is True
+
+
+def test_run_can_prestart_all_selected_subjects_before_execution_session(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from acmm.live_preflight import (
+        live_readiness_preflight_result,
+        subject_live_readiness,
+    )
+    from acmm.runtime.planner import planned_run
+    from acmm_infra.common import doctor_check
+
+    package, runtime_root = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
+    )
+    write_package_context(package, runtime_root, "hermes_gpt_oss120b")
+    write_package_context(package, runtime_root, "open_webui_gpt_oss120b")
+
+    events: list[str] = []
+
+    class fake_lease:
+        def __init__(self, subject_id: str) -> None:
+            self.subject_id = subject_id
+            self.initially_running = False
+            self.running = False
+            self.started_by_acmm = False
+
+        @property
+        def is_running(self) -> bool:
+            return self.running
+
+        def ensure_started(self, *, timeout_seconds: float = 120.0) -> bool:
+            events.append(f"start:{self.subject_id}")
+            self.running = True
+            self.started_by_acmm = True
+            return True
+
+        def release(self) -> bool:
+            events.append(f"stop:{self.subject_id}")
+            self.running = False
+            self.started_by_acmm = False
+            return True
+
+    leases = {
+        "hermes_gpt_oss120b": fake_lease("hermes_gpt_oss120b"),
+        "open_webui_gpt_oss120b": fake_lease("open_webui_gpt_oss120b"),
+    }
+    monkeypatch.setattr(
+        "acmm.cli._discover_runtime_leases",
+        lambda **kwargs: leases,
+    )
+
+    def ready_live_preflight(**kwargs):
+        return live_readiness_preflight_result(
+            subjects=tuple(
+                subject_live_readiness(
+                    subject_id=subject_id,
+                    infrastructure_subject=binding.infrastructure_subject,
+                    experiment_id=EXPERIMENT_ID,
+                    checks=(doctor_check("ready", True, "ready"),),
+                    error=None,
+                )
+                for subject_id, binding in kwargs["subject_bindings"].items()
+            )
+        )
+
+    monkeypatch.setattr("acmm.cli.inspect_live_readiness", ready_live_preflight)
+
+    def fake_execute(**kwargs):
+        events.append("execute")
+        assert events[:2] == [
+            "start:hermes_gpt_oss120b",
+            "start:open_webui_gpt_oss120b",
+        ]
+        before_run = kwargs["before_run"]
+        assert before_run is not None
+        before_run(
+            planned_run(
+                run_index=0,
+                subject_id="hermes_gpt_oss120b",
+                scenario_id="single_addition_success",
+                repetition=1,
+            )
+        )
+        before_run(
+            planned_run(
+                run_index=20,
+                subject_id="open_webui_gpt_oss120b",
+                scenario_id="single_addition_success",
+                repetition=1,
+            )
+        )
+        raise ValueError("synthetic stop after lifecycle exercise")
+
+    monkeypatch.setattr("acmm.cli.execute_experiment", fake_execute)
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            EXPERIMENT_ID,
+            "--run-index",
+            "0",
+            "--run-index",
+            "2",
+            "--start-if-needed",
+            "--prestart-selected-subjects",
+            "--results-root",
+            str(tmp_path / "results"),
+        ]
+    )
+
+    assert args.handler(args) == 2
+    assert events == [
+        "start:hermes_gpt_oss120b",
+        "start:open_webui_gpt_oss120b",
+        "execute",
+        "stop:hermes_gpt_oss120b",
+        "stop:open_webui_gpt_oss120b",
+    ]
