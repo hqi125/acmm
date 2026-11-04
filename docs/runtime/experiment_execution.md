@@ -274,17 +274,37 @@ and resolved counts, realized attempt count, selected-run termination counts, UT
 timestamps, and total wall-clock duration. Detailed per-run judgments, tool-call names, failures,
 record paths, and final responses are written to `execution_summary.txt`.
 
-Run selection supports single indices, inclusive ranges, and Contract subject IDs:
+Run selection supports global plan indices, subject-relative indices, Contract subject IDs, scenario
+IDs, and repetition numbers:
 
 ```text
 acmm run <experiment-selector> \
     --run-index 20-39 --subject <subject-id>
+
+acmm run <experiment-selector> \
+    --subject <subject-id> --subject-run-index 0-9
+
+acmm run <experiment-selector> \
+    --subject <subject-id> --scenario <scenario-id> --repetition 1
 ```
 
-Each `--run-index` occurrence accepts `INDEX` or `START-END`; repeated selectors are unioned and
-overlap is deduplicated. Repeated `--subject` selectors are unioned. When both selector types are
-present, their results are intersected. The final execution order always follows deterministic
-Contract plan order, not command-line selector order.
+Each `--run-index` occurrence accepts a global `INDEX` or `START-END`; repeated selectors are unioned
+and overlap is deduplicated. Repeated `--subject` selectors are unioned, and global run-index and
+subject filters are intersected. `--subject-run-index` uses the same zero-based syntax but indexes
+within each selected subject's deterministic run subsequence. It requires at least one `--subject`
+and is mutually exclusive with `--run-index`. With multiple subjects, the same relative selectors
+are applied independently to each selected subject. Relative positions are defined after the
+Contract's deterministic ordering and scenario counterbalancing, so relative index `0` may resolve
+to different scenarios for different subjects.
+
+`--scenario` is a repeatable semantic filter over Contract scenario IDs. `--repetition` accepts a
+1-based repetition number or inclusive range and is also repeatable. They may be combined with
+subject and index filters, and are evaluated against the planned run's semantic coordinates rather
+than its counterbalanced position. Consequently, `--scenario p1_a --repetition 1` names the same
+scenario/repetition category for every subject even when each subject encounters that category at a
+different global or subject-relative index. Selected runs retain their original global `run_index`,
+and final execution order always follows deterministic Contract plan order rather than command-line
+selector order.
 
 `--preview` resolves the same filters and prints a compact subject/scenario/repetition breakdown
 without constructing runtime adapters or creating result artifacts. It also inspects recorded

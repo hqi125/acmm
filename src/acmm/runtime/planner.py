@@ -119,17 +119,17 @@ def _build_interleaved_coordinates(
     raise ValueError(f"Unsupported scenario ordering {scenario_ordering!r}.")
 
 
-def parse_run_index_selectors(
+def _parse_index_selectors(
     selectors: list[str] | None,
-    plan: experiment_plan,
+    *,
+    maximum: int,
+    option_name: str,
+    range_description: str,
 ) -> set[int] | None:
-    """Parse CLI-style run index/range selectors against one experiment plan."""
-
     if selectors is None:
         return None
 
     selected: set[int] = set()
-    maximum = plan.run_count - 1
 
     for selector in selectors:
         if selector.isdecimal():
@@ -144,7 +144,7 @@ def parse_run_index_selectors(
                 or not parts[1].isdecimal()
             ):
                 raise ValueError(
-                    "--run-index must be a non-negative index or inclusive "
+                    f"{option_name} must be a non-negative index or inclusive "
                     f"range START-END; got '{selector}'."
                 )
 
@@ -153,14 +153,110 @@ def parse_run_index_selectors(
 
             if start > end:
                 raise ValueError(
-                    "--run-index range start must not exceed its end; got "
+                    f"{option_name} range start must not exceed its end; got "
                     f"'{selector}'."
                 )
 
         if start > maximum or end > maximum:
             raise ValueError(
-                f"Run selector '{selector}' is outside the Contract plan "
-                f"range 0..{maximum}."
+                f"{option_name} selector '{selector}' is outside {range_description} "
+                f"0..{maximum}."
+            )
+
+        selected.update(range(start, end + 1))
+
+    return selected
+
+
+def parse_run_index_selectors(
+    selectors: list[str] | None,
+    plan: experiment_plan,
+) -> set[int] | None:
+    """Parse global run index/range selectors against one experiment plan."""
+
+    return _parse_index_selectors(
+        selectors,
+        maximum=plan.run_count - 1,
+        option_name="--run-index",
+        range_description="the Contract plan range",
+    )
+
+
+def _subject_relative_global_indices(
+    plan: experiment_plan,
+    selectors: list[str] | None,
+    selected_subjects: set[str] | None,
+) -> set[int] | None:
+    if selectors is None:
+        return None
+
+    if selected_subjects is None:
+        raise ValueError(
+            "--subject-run-index requires at least one --subject selection."
+        )
+
+    selected_global_indices: set[int] = set()
+
+    for subject_id in selected_subjects:
+        subject_runs = tuple(
+            run for run in plan.runs if run.subject_id == subject_id
+        )
+        relative_indices = _parse_index_selectors(
+            selectors,
+            maximum=len(subject_runs) - 1,
+            option_name="--subject-run-index",
+            range_description=f"subject '{subject_id}' run range",
+        )
+
+        assert relative_indices is not None
+        selected_global_indices.update(
+            subject_runs[relative_index].run_index
+            for relative_index in relative_indices
+        )
+
+    return selected_global_indices
+
+
+def _parse_repetition_selectors(
+    selectors: list[str] | None,
+    *,
+    repetitions: int,
+) -> set[int] | None:
+    if selectors is None:
+        return None
+
+    selected: set[int] = set()
+
+    for selector in selectors:
+        if selector.isdecimal():
+            start = int(selector)
+            end = start
+        else:
+            parts = selector.split("-")
+
+            if (
+                len(parts) != 2
+                or not parts[0].isdecimal()
+                or not parts[1].isdecimal()
+            ):
+                raise ValueError(
+                    "--repetition must be a positive repetition number or inclusive "
+                    f"range START-END; got '{selector}'."
+                )
+
+            start = int(parts[0])
+            end = int(parts[1])
+
+            if start > end:
+                raise ValueError(
+                    "--repetition range start must not exceed its end; got "
+                    f"'{selector}'."
+                )
+
+        if start < 1 or end > repetitions:
+            raise ValueError(
+                f"--repetition selector '{selector}' is outside the Contract "
+                f"repetition range 1..{repetitions}."
             )
 
         selected.update(range(start, end + 1))
@@ -173,10 +269,17 @@ def select_planned_runs(
     contract: dict[str, Any],
     run_selectors: list[str] | None = None,
     subject_selectors: list[str] | None = None,
+    subject_run_selectors: list[str] | None = None,
+    scenario_selectors: list[str] | None = None,
+    repetition_selectors: list[str] | None = None,
 ) -> tuple[planned_run, ...]:
-    """Apply deterministic run-index and subject filters to a plan."""
+    """Apply deterministic coordinate and semantic filters to a plan."""
 
-    selected_indices = parse_run_index_selectors(run_selectors, plan)
+    if run_selectors is not None and subject_run_selectors is not None:
+        raise ValueError(
+            "--run-index and --subject-run-index are mutually exclusive."
+        )
+
     selected_subjects = set(subject_selectors) if subject_selectors else None
 
     if selected_subjects is not None:
@@ -192,17 +295,53 @@ def select_planned_runs(
                 + "."
             )
 
+    selected_scenarios = set(scenario_selectors) if scenario_selectors else None
+
+    if selected_scenarios is not None:
+        contract_scenarios = tuple(scenario["id"] for scenario in contract["scenarios"])
+        unknown_scenarios = sorted(selected_scenarios - set(contract_scenarios))
+
+        if unknown_scenarios:
+            raise ValueError(
+                "Unknown --scenario selection(s): "
+                + ", ".join(unknown_scenarios)
+                + ". Contract scenarios: "
+                + ", ".join(contract_scenarios)
+                + "."
+            )
+
+    repetitions = contract["run_protocol"]["repetitions"]
+    selected_repetitions = _parse_repetition_selectors(
+        repetition_selectors,
+        repetitions=repetitions,
+    )
+
+    selected_indices = parse_run_index_selectors(run_selectors, plan)
+    subject_relative_indices = _subject_relative_global_indices(
+        plan,
+        subject_run_selectors,
+        selected_subjects,
+    )
+
+    if subject_relative_indices is not None:
+        selected_indices = subject_relative_indices
+
     selected = tuple(
         run
         for run in plan.runs
         if (selected_indices is None or run.run_index in selected_indices)
         and (selected_subjects is None or run.subject_id in selected_subjects)
+        and (selected_scenarios is None or run.scenario_id in selected_scenarios)
+        and (
+            selected_repetitions is None
+            or run.repetition in selected_repetitions
+        )
     )
 
     if not selected:
         raise ValueError(
-            "Run selection is empty after applying --run-index and --subject "
-            "filters."
+            "Run selection is empty after applying run, subject, scenario, and "
+            "repetition filters."
         )
 
     return selected

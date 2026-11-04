@@ -230,3 +230,131 @@ def test_run_selection_intersects_ranges_and_subjects() -> None:
 
     assert [run.run_index for run in selected] == [2, 3]
     assert {run.subject_id for run in selected} == {"open_webui_gpt_oss120b"}
+
+
+def test_subject_relative_run_selection_uses_each_subject_subsequence() -> None:
+    contract = load_contract(VALID_DIR / "package_smoke.yaml")
+    plan = build_experiment_plan(contract)
+
+    selected = select_planned_runs(
+        plan,
+        contract,
+        subject_selectors=[
+            "open_webui_gpt_oss120b",
+            "agent_zero_gpt_oss120b",
+        ],
+        subject_run_selectors=["0"],
+    )
+
+    assert [run.run_index for run in selected] == [2, 4]
+    assert [run.repetition for run in selected] == [1, 1]
+
+
+def test_subject_relative_run_selection_requires_subject() -> None:
+    contract = load_contract(VALID_DIR / "package_smoke.yaml")
+    plan = build_experiment_plan(contract)
+
+    try:
+        select_planned_runs(
+            plan,
+            contract,
+            subject_run_selectors=["0"],
+        )
+    except ValueError as exc:
+        assert "requires at least one --subject" in str(exc)
+    else:
+        raise AssertionError("subject-relative selection must require --subject")
+
+
+def test_semantic_scenario_and_repetition_selection_ignores_rotation_position() -> None:
+    contract = {
+        "experiment": {
+            "id": "semantic_selection_test",
+        },
+        "subjects": [
+            {"id": "subject_a"},
+            {"id": "subject_b"},
+        ],
+        "scenarios": [
+            {"id": "scenario_a"},
+            {"id": "scenario_b"},
+            {"id": "scenario_c"},
+        ],
+        "run_protocol": {
+            "repetitions": 2,
+            "ordering": "subject_repetition_scenario",
+            "scenario_ordering": "cyclic_rotation",
+        },
+    }
+    plan = build_experiment_plan(contract)
+
+    selected = select_planned_runs(
+        plan,
+        contract,
+        scenario_selectors=["scenario_a"],
+        repetition_selectors=["1"],
+    )
+
+    assert [
+        (run.subject_id, run.scenario_id, run.repetition)
+        for run in selected
+    ] == [
+        ("subject_a", "scenario_a", 1),
+        ("subject_b", "scenario_a", 1),
+    ]
+    assert [run.run_index for run in selected] == [0, 8]
+
+
+def test_semantic_selection_combines_with_subject_filter() -> None:
+    contract = {
+        "experiment": {
+            "id": "semantic_subject_selection_test",
+        },
+        "subjects": [
+            {"id": "subject_a"},
+            {"id": "subject_b"},
+        ],
+        "scenarios": [
+            {"id": "scenario_a"},
+            {"id": "scenario_b"},
+        ],
+        "run_protocol": {
+            "repetitions": 3,
+            "ordering": "subject_repetition_scenario",
+            "scenario_ordering": "cyclic_rotation",
+        },
+    }
+    plan = build_experiment_plan(contract)
+
+    selected = select_planned_runs(
+        plan,
+        contract,
+        subject_selectors=["subject_b"],
+        scenario_selectors=["scenario_a"],
+        repetition_selectors=["2-3"],
+    )
+
+    assert [
+        (run.subject_id, run.scenario_id, run.repetition)
+        for run in selected
+    ] == [
+        ("subject_b", "scenario_a", 2),
+        ("subject_b", "scenario_a", 3),
+    ]
+
+
+def test_repetition_selection_is_one_based_and_bounded() -> None:
+    contract = load_contract(VALID_DIR / "package_smoke.yaml")
+    plan = build_experiment_plan(contract)
+
+    for selector in ("0", "3"):
+        try:
+            select_planned_runs(
+                plan,
+                contract,
+                repetition_selectors=[selector],
+            )
+        except ValueError as exc:
+            assert "repetition range 1..2" in str(exc)
+        else:
+            raise AssertionError("out-of-range repetition must fail")

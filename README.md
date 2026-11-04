@@ -741,12 +741,25 @@ model-independent where possible and are composed with that registered LLM defin
 
 ## Execution selection and persistence
 
-`acmm run` supports deterministic execution selection. Each `--run-index` accepts one index or an
-inclusive range, and repeatable `--subject` filters select Contract subject IDs. Selector types are
-intersected; overlapping run-index selectors are deduplicated.
+`acmm run` supports deterministic coordinate and semantic selection. Each `--run-index` accepts one
+global planned-run index or inclusive range, and repeatable `--subject` filters select Contract
+subject IDs. Those selectors are intersected; overlapping run-index selectors are deduplicated. For
+subject-scoped positional work, `--subject-run-index` selects a zero-based index or range relative
+to each selected subject while preserving the original global run identity. It requires `--subject`
+and is mutually exclusive with `--run-index`. Relative indices follow the Contract's deterministic
+subject subsequence after ordering/counterbalancing, so the same relative index need not name the
+same scenario for different subjects.
+
+When the desired coordinate is semantic rather than positional, repeatable `--scenario` and
+`--repetition` filters select Contract scenario IDs and 1-based repetition numbers directly. These
+filters are independent of counterbalanced position and may be combined with subject or index
+filters. This is the preferred way to select the same execution category across counterbalanced
+subjects.
 
 ```text
 acmm run <experiment-id> --subject <subject-id> --run-index 20-39 --preview
+acmm run <experiment-id> --subject <subject-id> --subject-run-index 0-9 --preview
+acmm run <experiment-id> --scenario <scenario-id> --repetition 1 --preview
 ```
 
 Every real execution verifies exact package, Contract, runtime, and per-subject apparatus provenance

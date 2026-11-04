@@ -65,3 +65,45 @@ def test_run_command_parses_ranges_subjects_and_preview() -> None:
     assert args.subject == ["open_webui_nemotron30b"]
     assert args.preview is True
     assert args.capture_runtime_logs is True
+
+
+def test_run_command_parses_subject_relative_run_index() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "package_smoke_v1",
+            "--subject",
+            "open_webui_gpt_oss120b",
+            "--subject-run-index",
+            "0-1",
+            "--preview",
+        ]
+    )
+
+    assert args.run_index is None
+    assert args.subject_run_index == ["0-1"]
+    assert args.subject == ["open_webui_gpt_oss120b"]
+    assert args.preview is True
+
+
+def test_run_command_parses_semantic_scenario_and_repetition_filters() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "package_smoke_v1",
+            "--subject",
+            "agent_zero_gpt_oss120b",
+            "--scenario",
+            "smoke",
+            "--repetition",
+            "1-2",
+            "--preview",
+        ]
+    )
+
+    assert args.subject == ["agent_zero_gpt_oss120b"]
+    assert args.scenario == ["smoke"]
+    assert args.repetition == ["1-2"]
+    assert args.preview is True

@@ -569,8 +569,11 @@ def _run_experiment(args: argparse.Namespace) -> int:
         selected_runs = select_planned_runs(
             plan,
             contract,
-            args.run_index,
-            args.subject,
+            run_selectors=args.run_index,
+            subject_selectors=args.subject,
+            subject_run_selectors=args.subject_run_index,
+            scenario_selectors=args.scenario,
+            repetition_selectors=args.repetition,
         )
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1330,14 +1333,24 @@ def _build_parser() -> argparse.ArgumentParser:
             "or EXPERIMENT_ID@SHA_PREFIX when multiple revisions are installed."
         ),
     )
-    run_parser.add_argument(
+    run_index_group = run_parser.add_mutually_exclusive_group()
+    run_index_group.add_argument(
         "--run-index",
         action="append",
         metavar="INDEX|START-END",
         help=(
-            "Select a planned-run index or inclusive range (for example 20-39). "
-            "Repeat to combine selectors. Overlaps are deduplicated. Omit to "
-            "select all run indices."
+            "Select a global planned-run index or inclusive range (for example "
+            "20-39). Repeat to combine selectors. Overlaps are deduplicated."
+        ),
+    )
+    run_index_group.add_argument(
+        "--subject-run-index",
+        action="append",
+        metavar="INDEX|START-END",
+        help=(
+            "Select a zero-based run index or inclusive range relative to each "
+            "selected --subject. Requires --subject. Repeat to combine selectors; "
+            "global run identities remain unchanged."
         ),
     )
     run_parser.add_argument(
@@ -1346,7 +1359,29 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="SUBJECT_ID",
         help=(
             "Select a Contract subject (agent) ID. Repeat to select multiple "
-            "subjects. When combined with --run-index, filters are intersected."
+            "subjects. With --run-index, filters are intersected; with "
+            "--subject-run-index, relative indices are applied independently "
+            "within each selected subject."
+        ),
+    )
+    run_parser.add_argument(
+        "--scenario",
+        action="append",
+        metavar="SCENARIO_ID",
+        help=(
+            "Select a Contract scenario ID. Repeat to select multiple scenarios. "
+            "This semantic filter is independent of counterbalanced plan position "
+            "and may be combined with subject and repetition filters."
+        ),
+    )
+    run_parser.add_argument(
+        "--repetition",
+        action="append",
+        metavar="N|START-END",
+        help=(
+            "Select a 1-based Contract repetition number or inclusive range. "
+            "Repeat to combine selectors. This semantic filter is independent of "
+            "counterbalanced plan position."
         ),
     )
     run_parser.add_argument(

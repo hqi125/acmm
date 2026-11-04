@@ -165,6 +165,9 @@ acmm run <experiment-selector> --preview
 ```
 
 Package loading validates the embedded Contract before planning. Errors prevent plan generation;
-warnings are reported but do not block planning. Preview applies any `--subject` and `--run-index`
-filters and reports the resolved deterministic selection without creating an execution session or
-contacting agents.
+warnings are reported but do not block planning. Preview applies the same coordinate and semantic
+filters as real execution: `--subject`, global `--run-index`, subject-relative
+`--subject-run-index`, `--scenario`, and 1-based `--repetition`. Scenario/repetition selection is
+independent of cyclic counterbalancing and is therefore the preferred way to identify the same
+execution category across subjects. Preview reports the resolved deterministic selection without
+creating an execution session or contacting agents.
