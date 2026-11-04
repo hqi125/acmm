@@ -19,7 +19,7 @@ def stage_experiment_package(
     package: experiment_package,
     runtime_root: str | Path,
     *,
-    contract_schema_path: str | Path,
+    contract_schema_path: str | Path | None = None,
 ) -> experiment_package:
     destination = staged_package_root(
         runtime_root,
@@ -73,7 +73,7 @@ def install_experiment_package(
     source_root: str | Path,
     runtime_root: str | Path,
     *,
-    contract_schema_path: str | Path,
+    contract_schema_path: str | Path | None = None,
 ) -> experiment_package:
     package = load_experiment_package(
         source_root,
@@ -90,7 +90,7 @@ def acquire_experiment_package(
     source_root: str | Path,
     runtime_root: str | Path,
     *,
-    contract_schema_path: str | Path,
+    contract_schema_path: str | Path | None = None,
 ) -> experiment_package:
     return install_experiment_package(
         source_root,
@@ -104,7 +104,7 @@ def open_staged_experiment_package(
     experiment_id: str,
     package_sha256: str,
     *,
-    contract_schema_path: str | Path,
+    contract_schema_path: str | Path | None = None,
 ) -> experiment_package:
     root = staged_package_root(runtime_root, experiment_id, package_sha256)
     package = load_experiment_package(

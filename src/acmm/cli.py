@@ -13,8 +13,8 @@ from acmm.analysis.export import analysis_export_error, export_execution
 from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import (
-    default_contract_schema_path,
     load_schema,
+    load_schema_for_contract,
     validate_contract,
 )
 from acmm.deployment_preflight import (
@@ -145,7 +145,7 @@ def _print_validation_result(result: validation_result) -> None:
 
 def _load_and_validate_contract(
     contract_path: Path,
-    schema_path: Path,
+    schema_path: Path | None,
 ) -> tuple[dict[str, Any] | None, validation_result | None, int]:
     try:
         contract = load_contract(contract_path)
@@ -154,10 +154,11 @@ def _load_and_validate_contract(
         return None, None, 2
 
     try:
-        schema = load_schema(schema_path)
+        schema = load_schema_for_contract(contract, schema_path)
     except (OSError, ValueError, result_write_error) as exc:
+        source = str(schema_path) if schema_path is not None else "bundled schema selected by Contract"
         print(
-            f"ERROR: Could not load Contract schema '{schema_path}': {exc}",
+            f"ERROR: Could not load Contract schema ({source}): {exc}",
             file=sys.stderr,
         )
         return None, None, 2
@@ -566,7 +567,7 @@ def _print_run_selection_preview(
 def _resolve_run_package(
     selector: str,
     runtime_root: Path,
-    schema_path: Path,
+    schema_path: Path | None,
 ) -> experiment_package:
     try:
         package = resolve_installed_experiment_package(
@@ -624,7 +625,7 @@ def _apply_selected_package_context(
 
 
 def _run_experiment(args: argparse.Namespace) -> int:
-    schema_path = default_contract_schema_path()
+    schema_path = None
     repo_root = default_repo_root().expanduser().resolve()
     runtime_root = default_runtime_root().expanduser().resolve()
 
@@ -1400,7 +1401,7 @@ def _run_validate_record(args: argparse.Namespace) -> int:
     contract_schema_path = (
         Path(args.contract_schema)
         if args.contract_schema is not None
-        else default_contract_schema_path()
+        else None
     )
     record_schema_path = (
         Path(args.record_schema)
@@ -1662,7 +1663,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--contract-schema",
         help=(
             "Path to a Contract JSON Schema. "
-            "Defaults to contracts/v0_1/contract.schema.json."
+            "Defaults to the bundled schema selected by the Contract schema_version."
         ),
     )
     export_parser.set_defaults(handler=_run_export)
@@ -1691,7 +1692,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--contract-schema",
         help=(
             "Path to a Contract JSON Schema. "
-            "Defaults to contracts/v0_1/contract.schema.json in this repository."
+            "Defaults to the bundled schema selected by the Contract schema_version."
         ),
     )
     record_parser.set_defaults(handler=_run_validate_record)

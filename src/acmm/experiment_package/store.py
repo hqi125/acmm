@@ -90,7 +90,7 @@ def resolve_installed_experiment_package(
     runtime_root: str | Path,
     selector: str,
     *,
-    contract_schema_path: str | Path,
+    contract_schema_path: str | Path | None = None,
 ) -> experiment_package:
     experiment_id, package_prefix = _parse_package_selector(selector)
     candidates = [
@@ -135,7 +135,7 @@ def uninstall_experiment_package(
     runtime_root: str | Path,
     selector: str,
     *,
-    contract_schema_path: str | Path,
+    contract_schema_path: str | Path | None = None,
 ) -> installed_experiment_package:
     package = resolve_installed_experiment_package(
         runtime_root,

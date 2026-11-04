@@ -11,6 +11,17 @@ from acmm.evidence.artifacts import (
     load_json_object_array_evidence,
     load_text_evidence,
 )
+from acmm.evidence.interpretation import (
+    interpreted_structured_output,
+    semantic_scalar_normalization,
+)
+from acmm.evidence.semantic import (
+    interpret_semantic_scalar,
+    interpreted_semantic_scalar,
+    output_scalar_semantics,
+    output_scalar_semantics_for_path,
+    semantic_scalar_equal,
+)
 from acmm.evidence.structured import (
     decode_json_object_text,
     json_object_decode_result,
@@ -112,6 +123,9 @@ __all__ = [
     "experiment_runtime_context",
     "find_evidence",
     "harness_capabilities",
+    "interpret_semantic_scalar",
+    "interpreted_semantic_scalar",
+    "interpreted_structured_output",
     "json_object_decode_result",
     "judgment_result",
     "load_conversation_messages",
@@ -119,6 +133,10 @@ __all__ = [
     "load_text_evidence",
     "normalize_text_for_matching",
     "numeric_values_share_text_unit",
+    "output_scalar_semantics",
+    "output_scalar_semantics_for_path",
+    "semantic_scalar_equal",
+    "semantic_scalar_normalization",
     "opportunity_evaluator",
     "prepared_environment",
 ]

@@ -272,7 +272,7 @@ def _open_deployed_package(
         runtime_root,
         experiment_id,
         package_sha256,
-        contract_schema_path=(repo / "contracts" / "v0_1" / "contract.schema.json"),
+        contract_schema_path=None,
     )
     expected = deployment_provenance(package, infrastructure_subject)
     if package_state.get("schema_version") != expected.package.package_schema_version:

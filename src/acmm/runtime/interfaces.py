@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Protocol
+from dataclasses import dataclass, field
+from typing import Any, Mapping, Protocol
+
+from acmm.evidence.interpretation import interpreted_structured_output
 
 
 @dataclass(frozen=True)
@@ -10,6 +12,8 @@ class captured_evidence:
     channel: str
     artifact: str
     content: bytes
+
+
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,7 @@ class evaluation_context:
     opportunity: dict[str, Any]
     check: dict[str, Any]
     evidence: tuple[captured_evidence, ...]
+    interpreted_evidence: Mapping[str, interpreted_structured_output] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

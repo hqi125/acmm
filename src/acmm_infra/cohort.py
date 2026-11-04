@@ -189,9 +189,7 @@ def resolve_deployed_cohort(
                 runtime,
                 experiment_id,
                 context.package_sha256,
-                contract_schema_path=(
-                    repo / "contracts" / "v0_1" / "contract.schema.json"
-                ),
+                contract_schema_path=None,
             )
             matches = _package_cohort_subjects(
                 package.contract.get("subjects", []),

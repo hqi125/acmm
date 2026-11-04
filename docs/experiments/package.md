@@ -196,38 +196,15 @@ The API exposes experiment-facing runtime/context types, fixtures/evaluators, ha
 and normalized evidence helpers. It intentionally does not expose subject adapters or the internal
 execution registry.
 
-### Structured JSON response recovery
+### Contract-directed interpreted evidence
 
-Experiment evaluators that request JSON should use `decode_json_object_text()` rather than growing
-agent-specific parsing workarounds inside each package. The helper accepts optional `required_keys`
-so a package can identify the intended root/payload object and avoid silently selecting a valid
-nested child object from a malformed outer response.
+For ordinary structured-output studies, packages should declare interpretation under Contract v0.2 `scenario.task.output_semantics` rather than reparsing raw evidence inside evaluators. `structured_object` binds a captured evidence channel such as `final_response` to a payload path and required payload keys. Core performs bounded syntax recovery once and exposes the result through `evaluation_context.interpreted_evidence`.
 
-The decoder keeps persisted evidence immutable and reports any syntax-only normalizations through
-`json_object_decode_result.normalizations`. Its tolerance is deliberately bounded to common
-presentation artifacts: surrounding prose/Markdown, surplus trailing text, one JSON-string wrapper,
-missing trailing delimiters, one layer of escaped structural quotes, trailing commas, and a duplicated
-opening quote on an object property. It does not perform semantic coercion, invent missing values, or
-repair arbitrary malformed JSON. Packages remain responsible for deciding which root fields are
-scientifically required and for any domain-specific semantic equivalence.
+Persisted evidence remains immutable. Core records any syntax or semantic representation normalization in judgment detail when that evidence supports the judgment. Bounded syntax recovery covers common wrapper/presentation artifacts, including surrounding prose/Markdown, surplus trailing material, JSON-string wrapping, missing trailing delimiters, trailing commas, duplicated property-opening quotes, and up to three structural quote-escape layers. Required keys prevent fallback to an unrelated nested object.
 
-The package runtime returns an `experiment_runtime` contribution. Core composes that contribution
-with Core-owned subject adapters and configuration overlays to form the normal execution registry.
-This keeps the execution engine shared while preserving the adapter boundary.
+Contract v0.2 may also declare scalar representation semantics under `scalar_fields`. For example, one integer field may explicitly accept both native JSON integer form and canonical numeric-string form. Core applies only those declared policies to the interpreted view; undeclared fields remain strict. Package evaluators then decide scientific correctness from the interpreted payload without knowing whether syntax repair or representation normalization occurred.
 
-Runtime activation:
-
-1. requires a staged package;
-2. verifies package/runtime digests before import;
-3. imports under a private ACMM namespace with relative imports supported;
-4. prevents `__pycache__` writes into the staged snapshot;
-5. invokes the declared runtime entrypoint with a checked runtime context; and
-6. re-verifies package identity after the entrypoint returns.
-
-Package runtime code may use the Python standard library and the public Experiment API. Silent
-package-specific third-party Python dependencies are not part of v0.1; any future dependency
-mechanism should remain infrastructure-managed rather than requiring ad hoc researcher `pip`
-installs.
+Low-level helpers such as `decode_json_object_text()` and `semantic_scalar_equal()` remain available through `acmm.experiment_api` for specialized cases, but they are no longer the preferred path for ordinary Contract-declared structured output.
 
 ## Apparatus boundary
 

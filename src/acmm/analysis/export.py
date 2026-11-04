@@ -15,7 +15,7 @@ import yaml
 
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import (
-    default_contract_schema_path,
+    load_schema_for_contract,
     load_schema,
     validate_contract,
 )
@@ -230,15 +230,11 @@ def _load_and_validate_contract(
     contract_path: Path,
     contract_schema_path: str | Path | None,
 ) -> dict[str, Any]:
-    schema_path = (
-        Path(contract_schema_path)
-        if contract_schema_path is not None
-        else default_contract_schema_path()
-    )
+    schema_path = Path(contract_schema_path) if contract_schema_path is not None else None
 
     try:
         contract = load_contract(contract_path)
-        schema = load_schema(schema_path)
+        schema = load_schema_for_contract(contract, schema_path)
     except (contract_load_error, OSError, ValueError) as exc:
         raise analysis_export_error(str(exc)) from exc
 

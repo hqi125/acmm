@@ -29,6 +29,8 @@ _NORMALIZATION_COST = {
     "trailing_comma": 1,
     "duplicate_property_quote": 2,
     "quote_deescape": 3,
+    "quote_deescape_x2": 6,
+    "quote_deescape_x3": 9,
 }
 
 
@@ -46,7 +48,7 @@ def decode_json_object_text(
     - surplus trailing text/delimiters after a complete object;
     - one JSON-string wrapper around an object;
     - missing trailing object/array delimiters;
-    - one layer of backslash-escaped JSON quotes;
+    - up to three layers of backslash-escaped JSON quotes;
     - trailing commas immediately before ``]`` or ``}``; and
     - a duplicated opening quote on an object property name.
 
@@ -102,23 +104,35 @@ def decode_json_object_text(
     if trailing_comma_fixed != stripped:
         add_variant(trailing_comma_fixed, ("trailing_comma",))
 
-    if r'\"' in stripped:
-        quote_deescaped = stripped.replace(r'\"', '"')
-        add_variant(quote_deescaped, ("quote_deescape",))
+    # Response wrappers can accidentally add more than one presentation-escape layer.  Recover at
+    # most three layers, and record the depth explicitly.  The bounded depth prevents this helper
+    # from turning into an open-ended recursive decoder.
+    quote_variant = stripped
+    for depth in range(1, 4):
+        if r'\"' not in quote_variant:
+            break
+        quote_deescaped = quote_variant.replace(r'\"', '"')
+        if quote_deescaped == quote_variant:
+            break
+
+        mode = "quote_deescape" if depth == 1 else f"quote_deescape_x{depth}"
+        add_variant(quote_deescaped, (mode,))
 
         duplicate_after_deescape = _repair_duplicate_property_quote(quote_deescaped)
         if duplicate_after_deescape != quote_deescaped:
             add_variant(
                 duplicate_after_deescape,
-                ("quote_deescape", "duplicate_property_quote"),
+                (mode, "duplicate_property_quote"),
             )
 
         comma_after_deescape = _remove_trailing_commas(quote_deescaped)
         if comma_after_deescape != quote_deescaped:
             add_variant(
                 comma_after_deescape,
-                ("quote_deescape", "trailing_comma"),
+                (mode, "trailing_comma"),
             )
+
+        quote_variant = quote_deescaped
 
     # Apply one additional syntax-only cleanup to variants created above.  This keeps the search
     # bounded while covering combinations such as JSON-string wrapping plus a trailing comma.

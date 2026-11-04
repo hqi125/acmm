@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from jsonschema import Draft202012Validator
 
@@ -10,15 +10,45 @@ from jsonschema import Draft202012Validator
 from acmm.validation import validation_issue, validation_result, split_issues
 
 
-def default_contract_schema_path() -> Path:
-    """Return the repository Contract v0.1 schema used by ACMM Core."""
+_CONTRACT_SCHEMA_DIRECTORIES = {
+    "0.1": "v0_1",
+    "0.2": "v0_2",
+}
 
+
+def contract_schema_path(schema_version: str) -> Path:
+    """Return the bundled schema path for one supported Contract version."""
+
+    directory = _CONTRACT_SCHEMA_DIRECTORIES.get(schema_version)
+    if directory is None:
+        raise ValueError(f"Unsupported Experiment Contract schema_version '{schema_version}'.")
     return (
         Path(__file__).resolve().parents[3]
         / "contracts"
-        / "v0_1"
+        / directory
         / "contract.schema.json"
     )
+
+
+def default_contract_schema_path() -> Path:
+    """Return the historical Contract v0.1 schema path for compatibility callers."""
+
+    return contract_schema_path("0.1")
+
+
+def load_schema_for_contract(
+    contract: Mapping[str, Any],
+    schema_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Load an explicit schema override or the bundled schema selected by the Contract."""
+
+    if schema_path is not None:
+        return load_schema(schema_path)
+
+    schema_version = contract.get("schema_version")
+    if not isinstance(schema_version, str) or not schema_version:
+        raise ValueError("Experiment Contract requires a non-empty string schema_version.")
+    return load_schema(contract_schema_path(schema_version))
 
 def load_schema(path: str | Path) -> dict[str, Any]:
     schema_path = Path(path)
@@ -110,6 +140,12 @@ def _validate_semantics(
             opportunities,
         )
 
+        yield from _validate_output_semantics(
+            scenario,
+            scenario_index,
+            set(contract["evidence_policy"]["capture"]),
+        )
+
         for opportunity_index, opportunity in enumerate(opportunities):
             opportunity_path = (
                 f"scenarios[{scenario_index}].opportunities[{opportunity_index}]"
@@ -156,6 +192,93 @@ def _validate_semantics(
             path=_find_id_path("checks", checks, check_id),
             message=f"Check '{check_id}' is never referenced.",
         )
+
+
+def _validate_output_semantics(
+    scenario: dict[str, Any],
+    scenario_index: int,
+    captured_channels: set[str],
+) -> Iterable[validation_issue]:
+    task = scenario.get("task")
+    if not isinstance(task, dict):
+        return
+    output_semantics = task.get("output_semantics")
+    if not isinstance(output_semantics, dict):
+        return
+    structured = output_semantics.get("structured_object")
+    payload_path: str | None = None
+    if isinstance(structured, dict):
+        evidence_id = structured.get("evidence_id")
+        payload_path = structured.get("payload_path")
+        structured_path = (
+            f"scenarios[{scenario_index}].task.output_semantics.structured_object"
+        )
+        if isinstance(evidence_id, str) and evidence_id not in captured_channels:
+            yield validation_issue(
+                severity="error",
+                code="uncaptured_interpreted_evidence",
+                path=f"{structured_path}.evidence_id",
+                message=(
+                    f"Structured output interpretation requires evidence '{evidence_id}', "
+                    "but evidence_policy.capture does not request that channel."
+                ),
+            )
+
+    fields = output_semantics.get("scalar_fields")
+    if not isinstance(fields, list):
+        return
+
+    seen_paths: dict[str, int] = {}
+    for field_index, field in enumerate(fields):
+        if not isinstance(field, dict):
+            continue
+        path = field.get("path")
+        field_path = (
+            f"scenarios[{scenario_index}].task.output_semantics."
+            f"scalar_fields[{field_index}]"
+        )
+        if isinstance(path, str):
+            if isinstance(payload_path, str) and not (
+                path == payload_path or path.startswith(payload_path + ".")
+            ):
+                yield validation_issue(
+                    severity="error",
+                    code="output_semantic_path_outside_payload",
+                    path=f"{field_path}.path",
+                    message=(
+                        f"Output semantic path '{path}' is outside the declared "
+                        f"structured payload path '{payload_path}'."
+                    ),
+                )
+            if path in seen_paths:
+                yield validation_issue(
+                    severity="error",
+                    code="duplicate_output_semantic_path",
+                    path=f"{field_path}.path",
+                    message=(
+                        f"Output semantic path '{path}' duplicates scalar_fields"
+                        f"[{seen_paths[path]}].path."
+                    ),
+                )
+            else:
+                seen_paths[path] = field_index
+
+        semantic_type = field.get("semantic_type")
+        serializations = field.get("accepted_serializations")
+        if (
+            semantic_type == "string"
+            and isinstance(serializations, list)
+            and "canonical_string" in serializations
+        ):
+            yield validation_issue(
+                severity="error",
+                code="redundant_string_serialization",
+                path=f"{field_path}.accepted_serializations",
+                message=(
+                    "semantic_type='string' is already represented natively as a JSON string; "
+                    "canonical_string is not a distinct serialization."
+                ),
+            )
 
 
 def _check_unique_ids(

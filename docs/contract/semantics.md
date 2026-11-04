@@ -1,5 +1,9 @@
 # ACMM Experiment Contract v0.1 Semantics
 
+> **Version note:** This document is the normative semantics reference for Contract v0.1. Contract
+> v0.2 preserves these rules and adds optional structured-output scalar representation declarations;
+> see [`v0_2_semantics.md`](v0_2_semantics.md).
+
 ## 1. Purpose
 
 The ACMM Experiment Contract defines the configuration and normative structure of an

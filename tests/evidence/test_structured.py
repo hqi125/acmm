@@ -138,3 +138,30 @@ def test_decode_json_object_text_prefers_delimiter_completion_over_quote_deescap
     assert result.value == {"result": {"text": 'say "hi"'}}
     assert result.normalizations == ("trailing_delimiter_completion",)
 
+
+
+def test_decode_json_object_text_deescapes_three_presentation_quote_layers() -> None:
+    result = decode_json_object_text(
+        r'{"result":{"events":[{"id":"E1"},{\\\"id\\\":\\\"E2\\\"}]}}"',
+        required_keys=("result",),
+    )
+
+    assert result is not None
+    assert result.value == {
+        "result": {
+            "events": [
+                {"id": "E1"},
+                {"id": "E2"},
+            ]
+        }
+    }
+    assert result.normalizations == ("quote_deescape_x3", "embedded_json")
+
+
+def test_decode_json_object_text_refuses_more_than_three_quote_layers() -> None:
+    result = decode_json_object_text(
+        r'{"result":{"events":[{"id":"E1"},{\\\\"id\\\\":\\\\"E2\\\\"}]}}"',
+        required_keys=("result",),
+    )
+
+    assert result is None

@@ -10,7 +10,7 @@ from jsonschema import Draft202012Validator
 import yaml
 
 from acmm.contract.loader import contract_load_error, load_contract
-from acmm.contract.validator import load_schema, validate_contract
+from acmm.contract.validator import load_schema_for_contract, validate_contract
 from acmm.experiment_api import EXPERIMENT_RUNTIME_API_VERSION
 from acmm.experiment_package.model import (
     experiment_analysis_component,
@@ -40,7 +40,7 @@ class experiment_package_error(ValueError):
 def load_experiment_package(
     package_root: str | Path,
     *,
-    contract_schema_path: str | Path,
+    contract_schema_path: str | Path | None = None,
 ) -> experiment_package:
     unresolved_root = Path(package_root).expanduser()
     if unresolved_root.is_symlink():
@@ -164,11 +164,11 @@ def _validate_manifest_schema(
 
 def _load_and_validate_contract(
     path: Path,
-    schema_path: str | Path,
+    schema_path: str | Path | None,
 ) -> tuple[dict[str, Any], Any]:
     try:
         contract = load_contract(path)
-        schema = load_schema(schema_path)
+        schema = load_schema_for_contract(contract, schema_path)
     except (contract_load_error, OSError, ValueError) as exc:
         raise experiment_package_error(str(exc)) from exc
 

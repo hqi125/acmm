@@ -5,6 +5,7 @@ import hashlib
 from typing import Any, Callable
 import uuid
 
+from acmm.evidence.interpretation import interpretation_detail, interpret_scenario_evidence
 from acmm.runtime.interfaces import (
     adapter_execution_result,
     captured_evidence,
@@ -125,11 +126,13 @@ def execute_planned_run(
                 captured,
             )
 
+        interpreted_evidence = interpret_scenario_evidence(scenario, captured)
         judgments = _evaluate_opportunities(
             contract,
             subject,
             scenario,
             captured,
+            interpreted_evidence,
             registry,
         )
 
@@ -217,6 +220,7 @@ def _evaluate_opportunities(
     subject: dict[str, Any],
     scenario: dict[str, Any],
     evidence: tuple[captured_evidence, ...],
+    interpreted_evidence: dict[str, Any],
     registry: execution_registry,
 ) -> list[dict[str, Any]]:
     checks = {
@@ -237,6 +241,7 @@ def _evaluate_opportunities(
                 opportunity=opportunity,
                 check=check,
                 evidence=evidence,
+                interpreted_evidence=interpreted_evidence,
             )
         )
 
@@ -244,6 +249,7 @@ def _evaluate_opportunities(
             _judgment_to_record(
                 opportunity["id"],
                 result,
+                interpreted_evidence,
             )
         )
 
@@ -253,6 +259,7 @@ def _evaluate_opportunities(
 def _judgment_to_record(
     opportunity_id: str,
     result: judgment_result,
+    interpreted_evidence: dict[str, Any],
 ) -> dict[str, Any]:
     judgment: dict[str, Any] = {
         "opportunity_id": opportunity_id,
@@ -260,8 +267,18 @@ def _judgment_to_record(
         "evidence_ids": list(result.evidence_ids),
     }
 
+    detail_parts: list[str] = []
     if result.detail is not None:
-        judgment["detail"] = result.detail
+        detail_parts.append(result.detail)
+    for evidence_id in result.evidence_ids:
+        view = interpreted_evidence.get(evidence_id)
+        if view is None:
+            continue
+        detail = interpretation_detail(view)
+        if detail is not None:
+            detail_parts.append(detail)
+    if detail_parts:
+        judgment["detail"] = " ".join(detail_parts)
 
     return judgment
 
