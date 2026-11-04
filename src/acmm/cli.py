@@ -1075,10 +1075,16 @@ def _run_experiment(args: argparse.Namespace) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
 
+    expected_ollama_request_count = sum(
+        1
+        for planned in selected_runs
+        if selected_baselines[planned.subject_id].logical_provider == "ollama_cloud"
+    )
     provider_usage_monitor = (
         ollama_cloud_usage_monitor(
             tuple(ollama_usage_models),
             api_key=ollama_api_key,
+            expected_minimum_request_count=expected_ollama_request_count,
         )
         if ollama_usage_models
         else None

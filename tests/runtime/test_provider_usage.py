@@ -174,3 +174,93 @@ def test_ollama_request_count_summary_reports_missing_key() -> None:
 
     assert value is None
     assert detail == "OLLAMA_API_KEY is not set"
+
+
+def test_ollama_usage_monitor_settles_until_expected_request_floor_is_visible() -> None:
+    payloads = []
+    for request_count in (100, 101, 102, 103):
+        payloads.append(
+            {
+                "totals": {
+                    "request_count": request_count,
+                    "groups": [
+                        {
+                            "model": "gpt-oss:120b",
+                            "request_count": request_count,
+                        }
+                    ],
+                }
+            }
+        )
+
+    waits = []
+
+    def opener(request, *, timeout):
+        del request, timeout
+        return _response(json.dumps(payloads.pop(0)).encode("utf-8"))
+
+    monitor = ollama_cloud_usage_monitor(
+        ("gpt-oss:120b-cloud",),
+        api_key="test-key",
+        opener=opener,
+        now=_clock(),
+        expected_minimum_request_count=3,
+        settle_intervals_seconds=(1.0, 5.0, 15.0),
+        wait=waits.append,
+    )
+    monitor.begin()
+    report = monitor.finish()["ollama_cloud"]
+
+    assert report["models"]["gpt-oss:120b-cloud"]["delta"]["request_count"] == 3
+    assert report["after_initial"]["account"]["request_count"] == 101
+    assert report["after"]["account"]["request_count"] == 103
+    assert report["settling"] == {
+        "expected_minimum_request_count": 3,
+        "sample_count": 3,
+        "waits_seconds": [1.0, 5.0],
+        "target_reached": True,
+    }
+    assert waits == [1.0, 5.0]
+
+
+def test_ollama_usage_monitor_records_when_settle_target_is_not_reached() -> None:
+    payloads = []
+    for request_count in (100, 101, 102):
+        payloads.append(
+            {
+                "totals": {
+                    "request_count": request_count,
+                    "groups": [
+                        {
+                            "model": "gpt-oss:120b",
+                            "request_count": request_count,
+                        }
+                    ],
+                }
+            }
+        )
+
+    def opener(request, *, timeout):
+        del request, timeout
+        return _response(json.dumps(payloads.pop(0)).encode("utf-8"))
+
+    monitor = ollama_cloud_usage_monitor(
+        ("gpt-oss:120b-cloud",),
+        api_key="test-key",
+        opener=opener,
+        now=_clock(),
+        expected_minimum_request_count=3,
+        settle_intervals_seconds=(1.0,),
+        wait=lambda seconds: None,
+    )
+    monitor.begin()
+    provider_usage = monitor.finish()
+    report = provider_usage["ollama_cloud"]
+
+    assert report["models"]["gpt-oss:120b-cloud"]["delta"]["request_count"] == 2
+    assert report["settling"]["target_reached"] is False
+
+    value, detail = summarize_ollama_cloud_request_count(provider_usage)
+
+    assert value == 2
+    assert detail == "model-scoped delta; provider settle target not reached"

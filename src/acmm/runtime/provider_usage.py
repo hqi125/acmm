@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import os
+import time
 from typing import Any, Callable, Mapping, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -15,6 +16,7 @@ _OLLAMA_USAGE_RANGE = "24h"
 _OLLAMA_USAGE_SCOPE = "self"
 _OLLAMA_USAGE_GROUP_BY = "model"
 _OLLAMA_USAGE_TIMEOUT_SECONDS = 10.0
+_OLLAMA_USAGE_SETTLE_INTERVALS_SECONDS = (1.0, 2.0, 4.0, 8.0)
 _METRIC_FIELDS = (
     "request_count",
     "usage_usd",
@@ -54,18 +56,35 @@ class ollama_cloud_usage_monitor:
         opener: Callable[..., Any] = urlopen,
         now: Callable[[], datetime] | None = None,
         timeout_seconds: float = _OLLAMA_USAGE_TIMEOUT_SECONDS,
+        expected_minimum_request_count: int | None = None,
+        settle_intervals_seconds: tuple[float, ...] = (
+            _OLLAMA_USAGE_SETTLE_INTERVALS_SECONDS
+        ),
+        wait: Callable[[float], None] = time.sleep,
     ) -> None:
         normalized = tuple(dict.fromkeys(name for name in model_names if name))
         if not normalized:
             raise ValueError("Ollama Cloud usage monitoring requires at least one model.")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero.")
+        if (
+            expected_minimum_request_count is not None
+            and expected_minimum_request_count < 0
+        ):
+            raise ValueError(
+                "expected_minimum_request_count must be non-negative when provided."
+            )
+        if any(interval < 0 for interval in settle_intervals_seconds):
+            raise ValueError("settle intervals must be non-negative.")
 
         self._model_names = normalized
         self._api_key = api_key if api_key is not None else os.getenv("OLLAMA_API_KEY")
         self._opener = opener
         self._now = now if now is not None else lambda: datetime.now(timezone.utc)
         self._timeout_seconds = timeout_seconds
+        self._expected_minimum_request_count = expected_minimum_request_count
+        self._settle_intervals_seconds = settle_intervals_seconds
+        self._wait = wait
         self._before: _usage_snapshot | None = None
 
     def begin(self) -> None:
@@ -77,10 +96,57 @@ class ollama_cloud_usage_monitor:
             before = self._unavailable_snapshot(
                 "provider usage monitoring did not capture a pre-execution snapshot"
             )
-        after = self._sample()
-        return {
-            "ollama_cloud": self._build_report(before, after),
+
+        initial_after = self._sample()
+        after = initial_after
+        waits: list[float] = []
+        sample_count = 1
+        target = self._expected_minimum_request_count
+
+        if target is not None and target > 0:
+            for interval in self._settle_intervals_seconds:
+                if self._request_delta_reaches_target(before, after, target):
+                    break
+                if after.status != "available":
+                    break
+                self._wait(interval)
+                waits.append(interval)
+                after = self._sample()
+                sample_count += 1
+
+        report = self._build_report(before, after)
+        target_reached = (
+            self._request_delta_reaches_target(before, after, target)
+            if target is not None
+            else None
+        )
+        report["settling"] = {
+            "expected_minimum_request_count": target,
+            "sample_count": sample_count,
+            "waits_seconds": waits,
+            "target_reached": target_reached,
         }
+        if sample_count > 1:
+            report["after_initial"] = _snapshot_mapping(initial_after)
+
+        return {
+            "ollama_cloud": report,
+        }
+
+    def _request_delta_reaches_target(
+        self,
+        before: _usage_snapshot,
+        after: _usage_snapshot,
+        target: int | None,
+    ) -> bool:
+        if target is None:
+            return True
+        delta = _observed_model_request_delta(
+            before,
+            after,
+            self._model_names,
+        )
+        return delta is not None and delta >= target
 
     def _sample(self) -> _usage_snapshot:
         sampled_at = _format_timestamp(self._now())
@@ -208,6 +274,31 @@ class ollama_cloud_usage_monitor:
 
 
 
+def _observed_model_request_delta(
+    before: _usage_snapshot,
+    after: _usage_snapshot,
+    model_names: tuple[str, ...],
+) -> int | None:
+    total = 0
+    for model_name in model_names:
+        aliases = _ollama_usage_model_aliases(model_name)
+        _, before_metrics = _first_model_metrics(before.models, aliases)
+        _, after_metrics = _first_model_metrics(after.models, aliases)
+        if before_metrics is None or after_metrics is None:
+            return None
+        before_count = before_metrics.get("request_count")
+        after_count = after_metrics.get("request_count")
+        if (
+            not isinstance(before_count, int)
+            or isinstance(before_count, bool)
+            or not isinstance(after_count, int)
+            or isinstance(after_count, bool)
+        ):
+            return None
+        total += after_count - before_count
+    return total
+
+
 def summarize_ollama_cloud_request_count(
     provider_usage: Mapping[str, object] | None,
 ) -> tuple[int | None, str]:
@@ -248,6 +339,11 @@ def summarize_ollama_cloud_request_count(
             total += request_count
         if complete and observed:
             detail = "model-scoped delta"
+            settling = report.get("settling")
+            if isinstance(settling, Mapping):
+                target_reached = settling.get("target_reached")
+                if target_reached is False:
+                    detail += "; provider settle target not reached"
             if total == 0:
                 detail += "; provider snapshots did not advance"
             return total, detail

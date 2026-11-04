@@ -8,7 +8,7 @@ availability analysis, or statistical results.
 
 When every selected LLM binding relevant to an execution uses the Ollama Cloud provider, `acmm run`
 creates an Ollama Cloud usage monitor. The monitor samples the official `GET /api/usage` endpoint
-immediately before and after experiment-level execution with:
+immediately before experiment-level execution and initially again at execution completion with:
 
 ```text
 range=24h
@@ -28,8 +28,17 @@ If the provider omits a required model group, ACMM falls back to the account-sco
 labels that fallback explicitly. If telemetry is unavailable, the summary reports `N/A` with the
 reason.
 
-A zero delta means only that the two provider usage snapshots did not advance between ACMM's samples.
-It must not be interpreted as proof that the agent made no inference requests.
+The provider's usage view can lag behind completed inference requests. ACMM therefore knows the
+minimum expected request count from the selected Ollama Cloud-backed runs. If the immediate
+post-execution snapshot is below that floor, ACMM performs bounded settling samples after 1, 2, 4,
+and 8 seconds, stopping as soon as the model-scoped delta reaches the floor. The manifest records
+the initial post-execution snapshot when settling was needed, the final snapshot, the wait schedule,
+and whether the expected floor was reached.
+
+A delta below the expected floor after settling is reported explicitly. It means provider telemetry
+had not caught up within the bounded window (or was affected by another provider-side reporting
+limitation); it does not change experiment validity. Likewise, a zero delta must not be interpreted
+as proof that the agent made no inference requests.
 
 ### Cloud model names
 
