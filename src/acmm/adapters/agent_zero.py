@@ -92,15 +92,18 @@ class agent_zero_adapter:
         baseline_config: dict[str, Any] | None = None
 
         try:
-            runtime_config = _runtime_tool_config(environment)
-            if self._config.restore_tool_baseline_after_run:
-                baseline_config = _baseline_tool_config(environment)
+            use_experiment_tools = _scenario_uses_experiment_tools(scenario)
             api_key = self._client.get_external_api_token()
-            self._client.update_plugin_config(
-                self._config.plugin_name,
-                runtime_config,
-            )
-            tool_config_applied = True
+
+            if use_experiment_tools:
+                runtime_config = _runtime_tool_config(environment)
+                if self._config.restore_tool_baseline_after_run:
+                    baseline_config = _baseline_tool_config(environment)
+                self._client.update_plugin_config(
+                    self._config.plugin_name,
+                    runtime_config,
+                )
+                tool_config_applied = True
 
             prompt = _required_string(
                 scenario.get("task", {}).get("prompt"),
@@ -474,6 +477,19 @@ def _normalize_tool_name(name: str, plugin_name: str) -> str:
         if name.startswith(prefix):
             return name[len(prefix):]
     return name
+
+
+def _scenario_uses_experiment_tools(scenario: dict[str, Any]) -> bool:
+    capabilities = scenario.get("capabilities")
+    if capabilities is None:
+        return True
+    if not isinstance(capabilities, dict):
+        return True
+
+    tools = capabilities.get("tools")
+    if tools is None:
+        return True
+    return isinstance(tools, list) and bool(tools)
 
 
 def _runtime_tool_config(environment: Any) -> dict[str, Any]:

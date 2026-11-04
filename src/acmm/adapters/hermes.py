@@ -248,9 +248,15 @@ class hermes_adapter:
             "chat",
             "--oneshot",
             "-Q",
-            "--toolsets",
-            self._config.toolset,
         ]
+
+        if _scenario_uses_experiment_tools(scenario):
+            hermes_args.extend(
+                [
+                    "--toolsets",
+                    self._config.toolset,
+                ]
+            )
 
         if max_steps is not None:
             hermes_args.extend(
@@ -352,6 +358,19 @@ class hermes_adapter:
             self._config.docker_container,
             *hermes_args,
         ]
+
+
+def _scenario_uses_experiment_tools(scenario: dict[str, Any]) -> bool:
+    capabilities = scenario.get("capabilities")
+    if capabilities is None:
+        return True
+    if not isinstance(capabilities, dict):
+        return True
+
+    tools = capabilities.get("tools")
+    if tools is None:
+        return True
+    return isinstance(tools, list) and bool(tools)
 
 
 def _session_id_from_stderr(stderr: str) -> str | None:

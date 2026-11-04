@@ -54,7 +54,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
             adapter_builder=_build_hermes_adapter,
             runtime_details=(
                 ("container", "acmm-hermes"),
-                ("toolset overlay", "acmm"),
+                ("toolset overlay", "scenario-dependent"),
             ),
             infrastructure_subject="hermes",
             llm_baseline_id="nemotron_3_nano_30b_cloud_v1",
@@ -94,7 +94,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
             adapter_builder=_build_hermes_adapter,
             runtime_details=(
                 ("container", "acmm-hermes"),
-                ("toolset overlay", "acmm"),
+                ("toolset overlay", "scenario-dependent"),
             ),
             infrastructure_subject="hermes",
             llm_baseline_id="gpt_oss_120b_cloud_v1",

@@ -29,7 +29,7 @@ def test_subject_catalog_builds_hermes_runtime_adapter() -> None:
 
     assert isinstance(adapter, hermes_adapter)
     assert ("container", "acmm-hermes") in binding.runtime_details
-    assert ("toolset overlay", "acmm") in binding.runtime_details
+    assert ("toolset overlay", "scenario-dependent") in binding.runtime_details
     assert binding.termination_support.max_steps is True
     assert binding.termination_support.timeout_seconds is True
 
