@@ -11,6 +11,10 @@ from acmm.evidence.artifacts import (
     load_json_object_array_evidence,
     load_text_evidence,
 )
+from acmm.evidence.structured import (
+    decode_json_object_text,
+    json_object_decode_result,
+)
 from acmm.evidence.text import (
     contains_numeric_value,
     normalize_text_for_matching,
@@ -101,12 +105,14 @@ __all__ = [
     "EXPERIMENT_RUNTIME_API_VERSION",
     "captured_evidence",
     "contains_numeric_value",
+    "decode_json_object_text",
     "environment_fixture",
     "evaluation_context",
     "experiment_runtime",
     "experiment_runtime_context",
     "find_evidence",
     "harness_capabilities",
+    "json_object_decode_result",
     "judgment_result",
     "load_conversation_messages",
     "load_json_object_array_evidence",

@@ -196,6 +196,21 @@ The API exposes experiment-facing runtime/context types, fixtures/evaluators, ha
 and normalized evidence helpers. It intentionally does not expose subject adapters or the internal
 execution registry.
 
+### Structured JSON response recovery
+
+Experiment evaluators that request JSON should use `decode_json_object_text()` rather than growing
+agent-specific parsing workarounds inside each package. The helper accepts optional `required_keys`
+so a package can identify the intended root/payload object and avoid silently selecting a valid
+nested child object from a malformed outer response.
+
+The decoder keeps persisted evidence immutable and reports any syntax-only normalizations through
+`json_object_decode_result.normalizations`. Its tolerance is deliberately bounded to common
+presentation artifacts: surrounding prose/Markdown, surplus trailing text, one JSON-string wrapper,
+missing trailing delimiters, one layer of escaped structural quotes, trailing commas, and a duplicated
+opening quote on an object property. It does not perform semantic coercion, invent missing values, or
+repair arbitrary malformed JSON. Packages remain responsible for deciding which root fields are
+scientifically required and for any domain-specific semantic equivalence.
+
 The package runtime returns an `experiment_runtime` contribution. Core composes that contribution
 with Core-owned subject adapters and configuration overlays to form the normal execution registry.
 This keeps the execution engine shared while preserving the adapter boundary.
