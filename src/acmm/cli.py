@@ -100,6 +100,24 @@ def _harness_version() -> str:
         return "0.1.0"
 
 
+def _read_ollama_api_key_file(path: Path) -> str:
+    resolved = path.expanduser().resolve()
+    try:
+        value = resolved.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ValueError(
+            f"Could not read Ollama API key file: {exc}"
+        ) from exc
+
+    if not value:
+        raise ValueError("Ollama API key file is empty.")
+    if "\n" in value or "\r" in value:
+        raise ValueError(
+            "Ollama API key file must contain exactly one raw API key token."
+        )
+    return value
+
+
 def _execution_package_provenance(
     package: experiment_package,
 ) -> dict[str, str | None]:
@@ -920,11 +938,27 @@ def _run_experiment(args: argparse.Namespace) -> int:
             if utility_model not in ollama_usage_models:
                 ollama_usage_models.append(utility_model)
 
+    ollama_api_key: str | None = None
+    if args.ollama_api_key_file is not None:
+        try:
+            ollama_api_key = _read_ollama_api_key_file(args.ollama_api_key_file)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+
     provider_usage_monitor = (
-        ollama_cloud_usage_monitor(tuple(ollama_usage_models))
+        ollama_cloud_usage_monitor(
+            tuple(ollama_usage_models),
+            api_key=ollama_api_key,
+        )
         if ollama_usage_models
         else None
     )
+    if ollama_usage_models and args.ollama_api_key_file is not None:
+        print(
+            "Provider usage telemetry: Ollama Cloud credential loaded from "
+            "--ollama-api-key-file."
+        )
     registry = compose_execution_registry(
         loaded_runtime.runtime,
         subject_adapters,
@@ -1417,6 +1451,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "Capture sanitized timestamped per-subject container logs into the "
             "execution result directory. Diagnostic capture is best-effort and "
             "is not used for compliance adjudication."
+        ),
+    )
+    run_parser.add_argument(
+        "--ollama-api-key-file",
+        type=Path,
+        metavar="PATH",
+        help=(
+            "Read the Ollama Cloud API key from a host-side file for provider "
+            "usage telemetry. The file value overrides OLLAMA_API_KEY; neither "
+            "the key nor its path is persisted or mounted into subject runtimes."
         ),
     )
     run_parser.add_argument(

@@ -40,9 +40,12 @@ experiment provenance.
 
 ## API key
 
-The usage endpoint requires direct Ollama Cloud authentication through `OLLAMA_API_KEY`. The API key
-is optional for ACMM execution. Without it, provider telemetry is recorded as unavailable and the
-experiment proceeds normally.
+The usage endpoint requires direct Ollama Cloud authentication. `acmm run` accepts the credential
+through `--ollama-api-key-file PATH` and otherwise falls back to `OLLAMA_API_KEY`. The API key is
+optional for ACMM execution. Without it, provider telemetry is recorded as unavailable and the
+experiment proceeds normally. The file value overrides the environment variable. ACMM reads it only
+in the host process; neither the secret nor the supplied path is persisted or mounted into a subject
+runtime.
 
 Keep the key outside both ACMM repositories. A convenient WSL layout is:
 
@@ -50,8 +53,13 @@ Keep the key outside both ACMM repositories. A convenient WSL layout is:
 ~/.config/acmm/ollama_api_key
 ```
 
-Recommended permissions are owner-only on both the directory and file. For one command, expose the
-secret only through the process environment, for example:
+Recommended permissions are owner-only on both the directory and file. The preferred invocation is:
+
+```text
+acmm run <experiment-selector> --ollama-api-key-file ~/.config/acmm/ollama_api_key
+```
+
+The environment-variable fallback remains available when that is more convenient:
 
 ```text
 OLLAMA_API_KEY="$(cat ~/.config/acmm/ollama_api_key)" acmm run <experiment-selector>

@@ -770,10 +770,12 @@ Interrupted acquisition preserves already-written records plus `experiment_inter
 never writes a completed `experiment_execution.yaml`.
 
 `--capture-runtime-logs` records sanitized container diagnostics without adding them to scientific
-evidence. Provider usage telemetry is likewise operational provenance only. When `OLLAMA_API_KEY` is
-available, `acmm run` can record best-effort Ollama Cloud before/after usage snapshots; missing or
-ambiguous telemetry never affects experiment validity or ACMM scoring. See
-`docs/runtime/provider_usage.md` and `docs/security/secrets.md`.
+evidence. Provider usage telemetry is likewise operational provenance only. `acmm run` can read the
+Ollama Cloud credential from `--ollama-api-key-file PATH` or fall back to `OLLAMA_API_KEY`, then
+record best-effort before/after usage snapshots. The file value overrides the environment variable;
+neither the key nor its path is persisted or mounted into subject runtimes. Missing or ambiguous
+telemetry never affects experiment validity or ACMM scoring. See `docs/runtime/provider_usage.md`
+and `docs/security/secrets.md`.
 
 ## Infrastructure and adapter boundaries
 
