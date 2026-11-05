@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import shutil
 from pathlib import Path
@@ -1360,3 +1361,90 @@ def test_package_backed_doctor_uses_package_apparatus_identity(
     report = manager.doctor()
 
     assert report.is_ready
+
+
+def test_apply_records_and_removes_integration_managed_config(
+    tmp_path: Path,
+) -> None:
+    docker = fake_docker()
+    base_profile = load_hermes_profile(ROOT)
+    experiment_profile = replace(
+        base_profile,
+        managed_config_overrides=(
+            ("external_capabilities.example.url", "https://example.invalid/mcp"),
+        ),
+    )
+    experiment = hermes_manager(
+        repo_root=ROOT,
+        runtime_root=tmp_path,
+        profile=experiment_profile,
+        docker=docker,
+        experiment_id=EXPERIMENT_ID,
+        apparatus_source_sha256="a" * 64,
+    )
+
+    experiment.apply()
+
+    marker_path = experiment.deployment_root / ".acmm-experiment-apparatus.json"
+    state = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert {
+        "kind": "managed_config",
+        "key": "external_capabilities.example.url",
+    } in state["resources"]
+
+    baseline = hermes_manager(
+        repo_root=ROOT,
+        runtime_root=tmp_path,
+        profile=base_profile,
+        docker=docker,
+    )
+    baseline.apply()
+
+    script = docker.provision_calls[-1][0]
+    assert "config unset external_capabilities.example.url" in script
+    assert not marker_path.exists()
+
+
+def test_experiment_switch_removes_only_stale_managed_config(
+    tmp_path: Path,
+) -> None:
+    docker = fake_docker()
+    base = load_hermes_profile(ROOT)
+    first_profile = replace(
+        base,
+        managed_config_overrides=(
+            ("external_capabilities.old.url", "https://old.invalid/mcp"),
+            ("external_capabilities.shared.enabled", "true"),
+        ),
+    )
+    first = hermes_manager(
+        repo_root=ROOT,
+        runtime_root=tmp_path,
+        profile=first_profile,
+        docker=docker,
+        experiment_id=EXPERIMENT_ID,
+        apparatus_source_sha256="a" * 64,
+    )
+    first.apply()
+
+    second_profile = replace(
+        base,
+        managed_config_overrides=(
+            ("external_capabilities.shared.enabled", "true"),
+            ("external_capabilities.new.url", "https://new.invalid/mcp"),
+        ),
+    )
+    second = hermes_manager(
+        repo_root=ROOT,
+        runtime_root=tmp_path,
+        profile=second_profile,
+        docker=docker,
+        experiment_id="second_experiment_v1",
+        apparatus_source_sha256="b" * 64,
+    )
+    second.apply()
+
+    script = docker.provision_calls[-1][0]
+    assert "config unset external_capabilities.old.url" in script
+    assert "config unset external_capabilities.shared.enabled" not in script
+    assert "config set external_capabilities.new.url" in script

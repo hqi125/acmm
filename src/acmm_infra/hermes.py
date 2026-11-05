@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import tempfile
@@ -179,6 +180,10 @@ class hermes_manager:
             previous_state,
             desired_plugins=desired_plugins,
         )
+        stale_managed_config = self._stale_managed_config_keys(
+            previous_state,
+            desired_keys={key for key, _ in self.profile.managed_config_overrides},
+        )
 
         synchronized: list[str] = []
         if experiment_id is None:
@@ -198,7 +203,10 @@ class hermes_manager:
             self.profile,
             plugins=tuple(self.profile.plugins) + tuple(stale_plugins),
         )
-        operation_count = self.client.profile_operation_count(provisioning_profile)
+        operation_count = self.client.profile_operation_count(
+            provisioning_profile,
+            unset_config_keys=stale_managed_config,
+        )
 
         if output_mode != "quiet":
             target = (
@@ -217,6 +225,7 @@ class hermes_manager:
             timeout_seconds=timeout_seconds,
             output_mode=output_mode,
             output=report,
+            unset_config_keys=stale_managed_config,
         )
 
         for plugin in stale_plugins:
@@ -235,15 +244,7 @@ class hermes_manager:
                 experiment_id=experiment_id,
                 source_sha256=source_sha256,
                 application_scope="experiment",
-                resources=[
-                    {
-                        "kind": "plugin",
-                        "name": plugin.name,
-                        "destination": plugin.destination.as_posix(),
-                        "toolsets": ",".join(plugin.toolsets),
-                    }
-                    for plugin in self.profile.plugins
-                ],
+                resources=self._experiment_resources(),
                 package_provenance=self.deployment_provenance,
             )
 
@@ -326,6 +327,10 @@ class hermes_manager:
             previous_state,
             desired_plugins=desired_plugins,
         )
+        stale_managed_config = self._stale_managed_config_keys(
+            previous_state,
+            desired_keys={key for key, _ in self.profile.managed_config_overrides},
+        )
 
         if output_mode != "quiet":
             report("[1/3] Synchronizing selected Hermes experiment apparatus.")
@@ -338,7 +343,10 @@ class hermes_manager:
             self.profile,
             plugins=tuple(self.profile.plugins) + tuple(stale_plugins),
         )
-        operation_count = self.client.tool_operation_count(provisioning_profile)
+        operation_count = self.client.tool_operation_count(
+            provisioning_profile,
+            unset_config_keys=stale_managed_config,
+        )
         if output_mode != "quiet":
             report(
                 "[2/3] Applying "
@@ -349,6 +357,7 @@ class hermes_manager:
             timeout_seconds=timeout_seconds,
             output_mode=output_mode,
             output=report,
+            unset_config_keys=stale_managed_config,
         )
 
         for plugin in stale_plugins:
@@ -419,16 +428,24 @@ class hermes_manager:
 
         previous_state = read_experiment_apparatus_state(self.deployment_root)
         stale_plugins = self._stale_plugins(previous_state, desired_plugins=set())
+        stale_managed_config = self._stale_managed_config_keys(
+            previous_state,
+            desired_keys=set(),
+        )
         provisioning_profile = replace(self.profile, plugins=tuple(stale_plugins))
 
         if output_mode != "quiet":
             report("[1/2] Reconciling Hermes baseline tool policy.")
-        operation_count = self.client.tool_operation_count(provisioning_profile)
+        operation_count = self.client.tool_operation_count(
+            provisioning_profile,
+            unset_config_keys=stale_managed_config,
+        )
         self.client.apply_tools(
             provisioning_profile,
             timeout_seconds=timeout_seconds,
             output_mode=output_mode,
             output=report,
+            unset_config_keys=stale_managed_config,
         )
 
         for plugin in stale_plugins:
@@ -482,6 +499,7 @@ class hermes_manager:
             "env_path": None,
             "plugins_enabled": [],
             "plugin_tool_overrides": {},
+            "managed_config_overrides": {},
             "provider_model_available": None,
             "provider_model_ids": [],
             "provider_model_error": None,
@@ -584,6 +602,10 @@ class hermes_manager:
                     "tool_search_enabled": (
                         self.profile.experiment_isolation.tool_search_enabled
                     ),
+                },
+                "managed_config_overrides": {
+                    key: _expected_managed_config_value(value)
+                    for key, value in self.profile.managed_config_overrides
                 },
                 "blank_slate": {
                     "enabled": self.profile.blank_slate.enabled,
@@ -885,6 +907,16 @@ class hermes_manager:
                 ),
             ]
         )
+
+        for key, expected in desired["managed_config_overrides"].items():
+            actual = observed["managed_config_overrides"].get(key)
+            checks.append(
+                doctor_check(
+                    name=f"managed_config:{key}",
+                    ok=actual == expected,
+                    detail=f"observed={actual!r}, expected={expected!r}",
+                )
+            )
 
         if desired["blank_slate"]["enabled"]:
             blank = desired["blank_slate"]
@@ -1237,6 +1269,50 @@ class hermes_manager:
 
         return list(stale.values())
 
+    def _stale_managed_config_keys(
+        self,
+        state: dict[str, object] | None,
+        *,
+        desired_keys: set[str],
+    ) -> tuple[str, ...]:
+        stale: set[str] = set()
+        if state is None:
+            return ()
+
+        resources = state.get("resources")
+        if not isinstance(resources, list):
+            return ()
+
+        for resource in resources:
+            if (
+                not isinstance(resource, dict)
+                or resource.get("kind") != "managed_config"
+            ):
+                continue
+            key = resource.get("key")
+            if isinstance(key, str) and key.strip() and key not in desired_keys:
+                stale.add(key)
+        return tuple(sorted(stale))
+
+    def _experiment_resources(self) -> list[dict[str, str]]:
+        resources = [
+            {
+                "kind": "plugin",
+                "name": plugin.name,
+                "destination": plugin.destination.as_posix(),
+                "toolsets": ",".join(plugin.toolsets),
+            }
+            for plugin in self.profile.plugins
+        ]
+        resources.extend(
+            {
+                "kind": "managed_config",
+                "key": key,
+            }
+            for key, _ in self.profile.managed_config_overrides
+        )
+        return resources
+
     def _remove_plugin_destination(self, destination: Path) -> None:
         target = _safe_runtime_target(self.data_root, destination)
         if target.is_dir():
@@ -1376,6 +1452,13 @@ def _provider_model_availability_detail(
         f"observed {count} models. Run 'ollama pull {model_name}' on the Ollama "
         "host before qualification."
     )
+
+
+def _expected_managed_config_value(value: str) -> Any:
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
 
 
 def _version_matches(observed: Any, expected: str) -> bool:

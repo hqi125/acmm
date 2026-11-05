@@ -6,9 +6,11 @@ from typing import Any, Protocol
 
 from acmm.experiment_package import (
     compose_staged_experiment_integrations,
+    compose_staged_experiment_manager_integrations,
     deployment_provenance,
     experiment_package,
     load_staged_experiment_apparatus,
+    load_staged_experiment_integrations,
     open_staged_experiment_package,
 )
 from acmm.subjects.catalog import lookup_subject_execution_binding
@@ -93,6 +95,7 @@ def build_package_subject_manager(
     )
     component = package.apparatus.get(infrastructure_subject)
     provenance = deployment_provenance(package, infrastructure_subject)
+    loaded_integrations = load_staged_experiment_integrations(package)
 
     if infrastructure_subject == "hermes":
         profile = load_hermes_profile(repo, baseline_id)
@@ -111,6 +114,7 @@ def build_package_subject_manager(
             infrastructure_subject,
             baseline_id,
             profile,
+            loaded_integrations=loaded_integrations,
         )
         manager = hermes_manager(
             repo,
@@ -137,6 +141,7 @@ def build_package_subject_manager(
             infrastructure_subject,
             baseline_id,
             profile,
+            loaded_integrations=loaded_integrations,
         )
         manager = open_webui_manager(
             repo,
@@ -163,6 +168,7 @@ def build_package_subject_manager(
             infrastructure_subject,
             baseline_id,
             profile,
+            loaded_integrations=loaded_integrations,
         )
         manager = agent_zero_manager(
             repo,
@@ -177,6 +183,14 @@ def build_package_subject_manager(
             "no infrastructure readiness builder is registered for subject "
             f"'{infrastructure_subject}'."
         )
+
+    manager = compose_staged_experiment_manager_integrations(
+        package,
+        infrastructure_subject,
+        baseline_id,
+        manager,
+        loaded_integrations=loaded_integrations,
+    )
 
     return subject_manager_context(
         infrastructure_subject=infrastructure_subject,

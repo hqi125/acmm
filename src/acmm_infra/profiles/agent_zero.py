@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -67,6 +68,8 @@ class agent_zero_profile:
     experiment_isolation: agent_zero_isolation_profile
     plugins: tuple[managed_agent_zero_plugin, ...]
     reset_scopes: dict[str, tuple[Path, ...]]
+    managed_environment_overrides: tuple[tuple[str, str], ...] = ()
+    managed_settings_overrides: tuple[tuple[str, Any], ...] = ()
 
 
 def load_agent_zero_profile(

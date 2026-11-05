@@ -830,7 +830,7 @@ class agent_zero_manager:
 
     def _managed_env(self) -> dict[str, str]:
         isolation = self.profile.experiment_isolation
-        return {
+        values = {
             "AGENT_ZERO_IMAGE": self.profile.image,
             "AGENT_ZERO_CONTAINER_NAME": self.profile.container_name,
             "AGENT_ZERO_PORT": str(self.profile.web_port),
@@ -842,10 +842,16 @@ class agent_zero_manager:
             "AGENT_ZERO_CHAT_INHERIT_PROJECT": bool_text(isolation.chat_inherit_project),
             "AGENT_ZERO_RFC_AUTO_DOCKER": bool_text(isolation.rfc_auto_docker),
         }
+        _apply_overrides(
+            values,
+            self.profile.managed_environment_overrides,
+            "Agent Zero managed environment overrides",
+        )
+        return values
 
     def _managed_settings(self) -> dict[str, Any]:
         isolation = self.profile.experiment_isolation
-        return {
+        values: dict[str, Any] = {
             "agent_profile": self.profile.agent_profile,
             "mcp_servers": '{"mcpServers":{}}',
             "mcp_server_enabled": isolation.mcp_server_enabled,
@@ -854,6 +860,12 @@ class agent_zero_manager:
             "chat_inherit_project": isolation.chat_inherit_project,
             "rfc_auto_docker": isolation.rfc_auto_docker,
         }
+        _apply_overrides(
+            values,
+            self.profile.managed_settings_overrides,
+            "Agent Zero managed settings overrides",
+        )
+        return values
 
     def _reconcile_persistent_settings(self) -> str:
         client = self.api
@@ -1296,6 +1308,20 @@ _AGENT_ZERO_RUNTIME_PLUGIN_FILE_NAMES = frozenset(
     }
 )
 _AGENT_ZERO_RUNTIME_PLUGIN_DIRECTORY_NAMES = frozenset({"data"})
+
+
+def _apply_overrides(
+    values: dict[str, Any],
+    overrides: tuple[tuple[str, Any], ...],
+    description: str,
+) -> None:
+    keys = [key for key, _ in overrides]
+    if len(keys) != len(set(keys)):
+        raise infrastructure_error(f"{description} must have unique keys.")
+    for key, value in overrides:
+        if not key:
+            raise infrastructure_error(f"{description} keys must be non-empty.")
+        values[key] = value
 
 
 def _directories_equal(left: Path, right: Path) -> bool:

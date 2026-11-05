@@ -4,8 +4,10 @@ from acmm.experiment_package.apparatus import (
 )
 from acmm.experiment_package.integration import (
     compose_staged_experiment_integrations,
+    compose_staged_experiment_manager_integrations,
     experiment_integration_error,
     load_staged_experiment_integration,
+    load_staged_experiment_integrations,
     loaded_experiment_integration,
 )
 from acmm.experiment_package.loader import (
@@ -61,6 +63,7 @@ __all__ = [
     "install_experiment_package",
     "compose_execution_registry",
     "compose_staged_experiment_integrations",
+    "compose_staged_experiment_manager_integrations",
     "experiment_analysis_component",
     "experiment_apparatus_component",
     "experiment_apparatus_error",
@@ -77,6 +80,7 @@ __all__ = [
     "load_experiment_package",
     "load_staged_experiment_apparatus",
     "load_staged_experiment_integration",
+    "load_staged_experiment_integrations",
     "loaded_experiment_integration",
     "load_staged_experiment_runtime",
     "loaded_experiment_runtime",

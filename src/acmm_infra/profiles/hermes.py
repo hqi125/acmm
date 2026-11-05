@@ -71,6 +71,7 @@ class hermes_profile:
     experiment_isolation: experiment_isolation_profile
     plugins: tuple[managed_hermes_plugin, ...]
     reset_scopes: dict[str, tuple[Path, ...]]
+    managed_config_overrides: tuple[tuple[str, str], ...] = ()
 
 def load_hermes_profile(
     repo_root: str | Path,

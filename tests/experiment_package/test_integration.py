@@ -8,9 +8,11 @@ import pytest
 from acmm.experiment_package import (
     acquire_experiment_package,
     compose_staged_experiment_integrations,
+    compose_staged_experiment_manager_integrations,
     experiment_integration_error,
     load_experiment_package,
     load_staged_experiment_integration,
+    load_staged_experiment_integrations,
 )
 from acmm_infra.profiles.hermes import load_hermes_profile
 from acmm_infra.subject_managers import build_package_subject_manager
@@ -24,7 +26,7 @@ EXPERIMENT_ID = "package_fixture_v1"
 
 INTEGRATION_SOURCE = '''from dataclasses import replace
 
-from acmm.integration_api import experiment_integration
+from acmm.integration_api import experiment_integration, subject_integration
 
 
 class hermes_profile_integration:
@@ -40,7 +42,59 @@ class hermes_profile_integration:
 
 def build_integration(context):
     return experiment_integration(
-        subjects={"hermes": hermes_profile_integration(context)},
+        subjects={
+            "hermes": subject_integration(
+                profile=hermes_profile_integration(context),
+            )
+        },
+    )
+'''
+
+
+MANAGER_INTEGRATION_SOURCE = '''from acmm.integration_api import (
+    experiment_integration,
+    subject_integration,
+)
+
+
+class manager_wrapper:
+    def __init__(self, manager, integration_id):
+        self._manager = manager
+        self.integration_id = integration_id
+        self.profile = manager.profile
+        self.deployment_root = manager.deployment_root
+        self.docker = manager.docker
+
+    def apply(self, **kwargs):
+        result = self._manager.apply(**kwargs)
+        return {**result, "integration_id": self.integration_id}
+
+    def status(self):
+        return {**self._manager.status(), "integration_id": self.integration_id}
+
+    def doctor(self):
+        return self._manager.doctor()
+
+    def up(self, **kwargs):
+        return self._manager.up(**kwargs)
+
+    def down(self):
+        return self._manager.down()
+
+
+class hermes_manager_integration:
+    def compose_manager(self, context, manager):
+        return manager_wrapper(manager, context.integration_id)
+
+
+def build_integration(context):
+    del context
+    return experiment_integration(
+        subjects={
+            "hermes": subject_integration(
+                manager=hermes_manager_integration(),
+            )
+        },
     )
 '''
 
@@ -58,7 +112,7 @@ def _write_integration_package(
         "contract: experiment.yaml\n"
         "integrations:\n"
         "  - id: profile-test\n"
-        '    api_version: "0.1"\n'
+        '    api_version: "0.2"\n'
         "    root: integrations/profile-test\n"
         "    entrypoint: build_integration\n"
         "    preset: test_preset_v1\n"
@@ -74,10 +128,14 @@ def _write_integration_package(
     )
 
 
-def _acquire(tmp_path: Path):
+def _acquire(
+    tmp_path: Path,
+    *,
+    integration_source: str = INTEGRATION_SOURCE,
+):
     source = tmp_path / "source"
     runtime_root = tmp_path / "runtime-root"
-    _write_integration_package(source)
+    _write_integration_package(source, integration_source=integration_source)
     package = acquire_experiment_package(
         source,
         runtime_root,
@@ -99,7 +157,7 @@ def test_package_schema_v0_2_loads_integration_component(tmp_path: Path) -> None
     assert len(package.integrations) == 1
     component = package.integrations[0]
     assert component.integration_id == "profile-test"
-    assert component.api_version == "0.1"
+    assert component.api_version == "0.2"
     assert component.preset == "test_preset_v1"
     assert component.configuration["reasoning_effort"] == "low"
     assert component.root == source.resolve() / "integrations/profile-test"
@@ -160,8 +218,49 @@ def test_package_subject_manager_applies_generic_integration(tmp_path: Path) -> 
     assert context.package_sha256 == package.package_sha256
 
 
+def test_manager_integration_wraps_subject_manager(tmp_path: Path) -> None:
+    _, package, runtime_root = _acquire(
+        tmp_path,
+        integration_source=MANAGER_INTEGRATION_SOURCE,
+    )
+
+    context = build_package_subject_manager(
+        ROOT,
+        runtime_root,
+        "hermes",
+        package,
+    )
+
+    assert context.manager.integration_id == "profile-test"
+    assert context.manager.profile.llm_baseline_id == context.llm_baseline_id
+
+
+def test_manager_integration_can_reuse_loaded_snapshot(tmp_path: Path) -> None:
+    _, package, runtime_root = _acquire(
+        tmp_path,
+        integration_source=MANAGER_INTEGRATION_SOURCE,
+    )
+    loaded = load_staged_experiment_integrations(package)
+    context = build_package_subject_manager(
+        ROOT,
+        runtime_root,
+        "hermes",
+        package,
+    )
+
+    recomposed = compose_staged_experiment_manager_integrations(
+        package,
+        "hermes",
+        context.llm_baseline_id,
+        context.manager._manager,
+        loaded_integrations=loaded,
+    )
+
+    assert recomposed.integration_id == "profile-test"
+
+
 def test_integration_must_preserve_subject_profile_type(tmp_path: Path) -> None:
-    source = '''from acmm.integration_api import experiment_integration
+    source = '''from acmm.integration_api import experiment_integration, subject_integration
 
 
 class bad_integration:
@@ -172,7 +271,9 @@ class bad_integration:
 
 def build_integration(context):
     del context
-    return experiment_integration(subjects={"hermes": bad_integration()})
+    return experiment_integration(
+        subjects={"hermes": subject_integration(profile=bad_integration())}
+    )
 '''
     package_root = tmp_path / "source"
     _write_integration_package(package_root, integration_source=source)
@@ -189,4 +290,55 @@ def build_integration(context):
             "hermes",
             baseline.llm_baseline_id,
             baseline,
+        )
+
+
+def test_manager_integration_must_preserve_deployment_root(tmp_path: Path) -> None:
+    source = '''from pathlib import Path
+
+from acmm.integration_api import experiment_integration, subject_integration
+
+
+class bad_manager:
+    def __init__(self, manager):
+        self.profile = manager.profile
+        self.deployment_root = Path("/tmp/not-the-subject-runtime")
+        self.docker = manager.docker
+
+    def apply(self, **kwargs):
+        return {}
+
+    def status(self):
+        return {}
+
+    def doctor(self):
+        return None
+
+    def up(self, **kwargs):
+        return None
+
+    def down(self):
+        return None
+
+
+class bad_integration:
+    def compose_manager(self, context, manager):
+        del context
+        return bad_manager(manager)
+
+
+def build_integration(context):
+    del context
+    return experiment_integration(
+        subjects={"hermes": subject_integration(manager=bad_integration())}
+    )
+'''
+    _, package, runtime_root = _acquire(tmp_path, integration_source=source)
+
+    with pytest.raises(experiment_integration_error, match="preserve the subject deployment root"):
+        build_package_subject_manager(
+            ROOT,
+            runtime_root,
+            "hermes",
+            package,
         )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from acmm_infra.hermes_client import (
@@ -26,6 +27,11 @@ class fake_docker:
         self.last_script = ""
         self.last_line_handler = None
         self.last_failure_transform = None
+        self.exec_stdout = (
+            '__ACMM__model_provider="custom"\n'
+            '__ACMM__plugins_enabled=["acmm-tools"]\n'
+            '__ACMM__plugin_override:acmm-tools=false\n'
+        )
 
     def provision(
         self,
@@ -58,11 +64,7 @@ class fake_docker:
         return command_result(
             args=("exec-script",),
             returncode=0,
-            stdout=(
-                '__ACMM__model_provider="custom"\n'
-                '__ACMM__plugins_enabled=["acmm-tools"]\n'
-                '__ACMM__plugin_override:acmm-tools=false\n'
-            ),
+            stdout=self.exec_stdout,
             stderr="",
         )
 
@@ -129,3 +131,96 @@ def test_provider_model_catalog_probe_is_valid_python() -> None:
     assert "http://host.docker.internal:11434" in code
     assert "api/tags" in code
     assert "gpt-oss:120b-cloud" in code
+
+
+def test_client_applies_and_observes_managed_config_overrides() -> None:
+    docker = fake_docker()
+    client = hermes_client(docker)  # type: ignore[arg-type]
+    profile = replace(
+        load_hermes_profile(ROOT),
+        managed_config_overrides=(
+            ("external_capabilities.example.url", "https://example.invalid/mcp"),
+        ),
+    )
+
+    client.apply_profile(
+        profile,
+        timeout_seconds=120.0,
+        output_mode="quiet",
+        output=lambda _: None,
+    )
+
+    assert "external_capabilities.example.url" in docker.last_script
+    assert "https://example.invalid/mcp" in docker.last_script
+
+    docker.exec_stdout = (
+        '__ACMM__managed_config_override:0="https://example.invalid/mcp"\n'
+    )
+    observation = client.observe(profile)
+
+    assert observation.succeeded
+    assert observation.values["managed_config_overrides"] == {
+        "external_capabilities.example.url": "https://example.invalid/mcp",
+    }
+
+
+def test_client_rejects_managed_config_override_of_baseline_key() -> None:
+    docker = fake_docker()
+    client = hermes_client(docker)  # type: ignore[arg-type]
+    profile = replace(
+        load_hermes_profile(ROOT),
+        managed_config_overrides=(("model.default", "other-model"),),
+    )
+
+    try:
+        client.profile_operation_count(profile)
+    except ValueError as exc:
+        assert "baseline-managed keys" in str(exc)
+    else:
+        raise AssertionError("Expected baseline-key override to be rejected.")
+
+
+def test_client_unsets_stale_managed_config_before_profile_apply() -> None:
+    docker = fake_docker()
+    client = hermes_client(docker)  # type: ignore[arg-type]
+    profile = load_hermes_profile(ROOT)
+
+    assert client.profile_operation_count(
+        profile,
+        unset_config_keys=("external_capabilities.old.url",),
+    ) == client.profile_operation_count(profile) + 1
+
+    client.apply_profile(
+        profile,
+        timeout_seconds=120.0,
+        output_mode="quiet",
+        output=lambda _: None,
+        unset_config_keys=("external_capabilities.old.url",),
+    )
+
+    unset = "config unset external_capabilities.old.url"
+    first_set = "config set model.provider"
+    assert unset in docker.last_script
+    assert docker.last_script.index(unset) < docker.last_script.index(first_set)
+
+
+def test_client_tool_apply_includes_managed_config_and_cleanup() -> None:
+    docker = fake_docker()
+    client = hermes_client(docker)  # type: ignore[arg-type]
+    profile = replace(
+        load_hermes_profile(ROOT),
+        managed_config_overrides=(
+            ("external_capabilities.current.url", "https://example.invalid/mcp"),
+        ),
+    )
+
+    client.apply_tools(
+        profile,
+        timeout_seconds=120.0,
+        output_mode="quiet",
+        output=lambda _: None,
+        unset_config_keys=("external_capabilities.old.url",),
+    )
+
+    assert "config unset external_capabilities.old.url" in docker.last_script
+    assert "config set external_capabilities.current.url" in docker.last_script

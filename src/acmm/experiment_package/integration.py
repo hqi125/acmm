@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import sys
 from types import ModuleType
-from typing import Any
+from typing import Any, Iterable
 
 from acmm.experiment_package.model import (
     experiment_integration_component,
@@ -26,6 +26,8 @@ from acmm.integration_api import (
 
 
 _SUBJECT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+_REQUIRED_MANAGER_METHODS = ("apply", "status", "doctor", "up", "down")
+_REQUIRED_MANAGER_ATTRIBUTES = ("profile", "deployment_root", "docker")
 
 
 class experiment_integration_error(ValueError):
@@ -93,36 +95,48 @@ def load_staged_experiment_integration(
     )
 
 
+def load_staged_experiment_integrations(
+    package: experiment_package,
+) -> tuple[loaded_experiment_integration, ...]:
+    return tuple(
+        load_staged_experiment_integration(package, component.integration_id)
+        for component in package.integrations
+    )
+
+
 def compose_staged_experiment_integrations(
     package: experiment_package,
     infrastructure_subject: str,
     llm_baseline_id: str,
     profile: Any,
+    *,
+    loaded_integrations: Iterable[loaded_experiment_integration] | None = None,
 ) -> Any:
+    """Compose package integrations into a subject profile.
+
+    Retained as the compatibility name for the original profile-only integration
+    API. Manager lifecycle composition is handled separately by
+    compose_staged_experiment_manager_integrations().
+    """
+
+    loaded = _resolved_integrations(package, loaded_integrations)
     composed = profile
 
-    for component in package.integrations:
-        loaded = load_staged_experiment_integration(
-            package,
-            component.integration_id,
-        )
-        subject_integration = loaded.integration.subjects.get(infrastructure_subject)
-        if subject_integration is None:
+    for item in loaded:
+        component = item.component
+        binding = item.integration.subjects.get(infrastructure_subject)
+        if binding is None or binding.profile is None:
             continue
 
-        context = subject_integration_context(
-            experiment_id=package.experiment_id,
-            integration_id=component.integration_id,
-            preset=component.preset,
-            configuration=component.configuration,
-            package_sha256=package.package_sha256,
-            package_root=package.root,
-            infrastructure_subject=infrastructure_subject,
-            llm_baseline_id=llm_baseline_id,
+        context = _subject_context(
+            package,
+            component,
+            infrastructure_subject,
+            llm_baseline_id,
         )
         profile_type = type(composed)
         try:
-            realized = subject_integration.compose_profile(context, composed)
+            realized = binding.profile.compose_profile(context, composed)
         except Exception as exc:
             raise experiment_integration_error(
                 f"Integration '{component.integration_id}' failed to compose profile "
@@ -137,6 +151,92 @@ def compose_staged_experiment_integrations(
         composed = realized
 
     return composed
+
+
+def compose_staged_experiment_manager_integrations(
+    package: experiment_package,
+    infrastructure_subject: str,
+    llm_baseline_id: str,
+    manager: Any,
+    *,
+    loaded_integrations: Iterable[loaded_experiment_integration] | None = None,
+) -> Any:
+    loaded = _resolved_integrations(package, loaded_integrations)
+    composed = manager
+
+    _validate_manager_shape(composed, integration_id=None)
+    baseline_deployment_root = composed.deployment_root
+    baseline_docker = composed.docker
+
+    for item in loaded:
+        component = item.component
+        binding = item.integration.subjects.get(infrastructure_subject)
+        if binding is None or binding.manager is None:
+            continue
+
+        context = _subject_context(
+            package,
+            component,
+            infrastructure_subject,
+            llm_baseline_id,
+        )
+        try:
+            realized = binding.manager.compose_manager(context, composed)
+        except Exception as exc:
+            raise experiment_integration_error(
+                f"Integration '{component.integration_id}' failed to compose manager "
+                f"for '{infrastructure_subject}': {exc}"
+            ) from exc
+
+        _validate_manager_shape(realized, integration_id=component.integration_id)
+        if realized.deployment_root != baseline_deployment_root:
+            raise experiment_integration_error(
+                f"Integration '{component.integration_id}' must preserve the subject "
+                "deployment root."
+            )
+        if realized.docker is not baseline_docker:
+            raise experiment_integration_error(
+                f"Integration '{component.integration_id}' must preserve the subject "
+                "Docker client identity."
+            )
+        composed = realized
+
+    return composed
+
+
+def _resolved_integrations(
+    package: experiment_package,
+    loaded_integrations: Iterable[loaded_experiment_integration] | None,
+) -> tuple[loaded_experiment_integration, ...]:
+    if loaded_integrations is None:
+        return load_staged_experiment_integrations(package)
+
+    loaded = tuple(loaded_integrations)
+    expected = tuple(component.integration_id for component in package.integrations)
+    observed = tuple(item.component.integration_id for item in loaded)
+    if observed != expected:
+        raise experiment_integration_error(
+            "Loaded Experiment Package integrations do not match manifest order."
+        )
+    return loaded
+
+
+def _subject_context(
+    package: experiment_package,
+    component: experiment_integration_component,
+    infrastructure_subject: str,
+    llm_baseline_id: str,
+) -> subject_integration_context:
+    return subject_integration_context(
+        experiment_id=package.experiment_id,
+        integration_id=component.integration_id,
+        preset=component.preset,
+        configuration=component.configuration,
+        package_sha256=package.package_sha256,
+        package_root=package.root,
+        infrastructure_subject=infrastructure_subject,
+        llm_baseline_id=llm_baseline_id,
+    )
 
 
 def _find_component(
@@ -241,7 +341,7 @@ def _remove_failed_integration_modules(
 
 
 def _validate_integration(integration: experiment_integration) -> None:
-    for subject, subject_integration in integration.subjects.items():
+    for subject, binding in integration.subjects.items():
         if (
             not isinstance(subject, str)
             or _SUBJECT_ID_PATTERN.fullmatch(subject) is None
@@ -249,8 +349,39 @@ def _validate_integration(integration: experiment_integration) -> None:
             raise experiment_integration_error(
                 f"Integration subject identifier is invalid: {subject!r}."
             )
-        if not callable(getattr(subject_integration, "compose_profile", None)):
+
+        profile = getattr(binding, "profile", None)
+        manager = getattr(binding, "manager", None)
+        if profile is None and manager is None:
             raise experiment_integration_error(
-                f"Integration subject '{subject}' does not provide callable "
-                "compose_profile()."
+                f"Integration subject '{subject}' must provide profile and/or manager "
+                "composition."
+            )
+        if profile is not None and not callable(getattr(profile, "compose_profile", None)):
+            raise experiment_integration_error(
+                f"Integration subject '{subject}' profile integration does not provide "
+                "callable compose_profile()."
+            )
+        if manager is not None and not callable(getattr(manager, "compose_manager", None)):
+            raise experiment_integration_error(
+                f"Integration subject '{subject}' manager integration does not provide "
+                "callable compose_manager()."
+            )
+
+
+def _validate_manager_shape(manager: Any, integration_id: str | None) -> None:
+    label = (
+        f"Integration '{integration_id}' manager"
+        if integration_id is not None
+        else "Subject manager"
+    )
+    for attribute in _REQUIRED_MANAGER_ATTRIBUTES:
+        if not hasattr(manager, attribute):
+            raise experiment_integration_error(
+                f"{label} does not provide required attribute '{attribute}'."
+            )
+    for method in _REQUIRED_MANAGER_METHODS:
+        if not callable(getattr(manager, method, None)):
+            raise experiment_integration_error(
+                f"{label} does not provide callable {method}()."
             )

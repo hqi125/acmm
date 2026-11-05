@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Any, Mapping, Protocol
 
 
-EXPERIMENT_INTEGRATION_API_VERSION = "0.1"
+EXPERIMENT_INTEGRATION_API_VERSION = "0.2"
 
 
 @dataclass(frozen=True)
@@ -100,9 +100,30 @@ class subject_profile_integration(Protocol):
         ...
 
 
+class subject_manager_integration(Protocol):
+    def compose_manager(
+        self,
+        context: subject_integration_context,
+        manager: object,
+    ) -> object:
+        ...
+
+
+@dataclass(frozen=True)
+class subject_integration:
+    profile: subject_profile_integration | None = None
+    manager: subject_manager_integration | None = None
+
+    def __post_init__(self) -> None:
+        if self.profile is None and self.manager is None:
+            raise ValueError(
+                "Subject integration must provide profile and/or manager composition."
+            )
+
+
 @dataclass(frozen=True)
 class experiment_integration:
-    subjects: Mapping[str, subject_profile_integration] = field(default_factory=dict)
+    subjects: Mapping[str, subject_integration] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -127,6 +148,8 @@ __all__ = [
     "EXPERIMENT_INTEGRATION_API_VERSION",
     "experiment_integration",
     "experiment_integration_context",
+    "subject_integration",
     "subject_integration_context",
+    "subject_manager_integration",
     "subject_profile_integration",
 ]

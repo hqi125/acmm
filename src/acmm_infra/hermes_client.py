@@ -25,21 +25,39 @@ class hermes_client:
     def __init__(self, docker: docker_client) -> None:
         self.docker = docker
 
-    def profile_operation_count(self, profile: hermes_profile) -> int:
+    def profile_operation_count(
+        self,
+        profile: hermes_profile,
+        *,
+        unset_config_keys: tuple[str, ...] = (),
+    ) -> int:
         settings = _profile_settings(profile)
         extra_operations = 3 if profile.blank_slate.enabled else 0
         residue_operation = 1 if _disabled_plugin_toolsets(profile.plugins) else 0
         return (
-            len(settings)
+            len(unset_config_keys)
+            + len(settings)
             + len(profile.plugins)
             + extra_operations
             + residue_operation
         )
 
-    def tool_operation_count(self, profile: hermes_profile) -> int:
+    def tool_operation_count(
+        self,
+        profile: hermes_profile,
+        *,
+        unset_config_keys: tuple[str, ...] = (),
+    ) -> int:
         toolset_operation = 1 if profile.plugins else 0
         residue_operation = 1 if _disabled_plugin_toolsets(profile.plugins) else 0
-        return 1 + toolset_operation + len(profile.plugins) + residue_operation
+        return (
+            len(unset_config_keys)
+            + 1
+            + len(profile.managed_config_overrides)
+            + toolset_operation
+            + len(profile.plugins)
+            + residue_operation
+        )
 
     def apply_profile(
         self,
@@ -48,11 +66,13 @@ class hermes_client:
         timeout_seconds: float,
         output_mode: Literal["quiet", "normal", "verbose"],
         output: Callable[[str], None],
+        unset_config_keys: tuple[str, ...] = (),
     ) -> None:
         script = _build_provisioning_script(
             settings=_profile_settings(profile),
             plugins=profile.plugins,
             profile=profile,
+            unset_config_keys=unset_config_keys,
         )
         result = self.docker.provision(
             script,
@@ -72,16 +92,19 @@ class hermes_client:
         timeout_seconds: float,
         output_mode: Literal["quiet", "normal", "verbose"],
         output: Callable[[str], None],
+        unset_config_keys: tuple[str, ...] = (),
     ) -> None:
         settings = (
             (
                 "tools.tool_search.enabled",
                 profile.experiment_isolation.tool_search_enabled,
             ),
+            *profile.managed_config_overrides,
         )
         script = _build_tool_provisioning_script(
             settings=settings,
             plugins=profile.plugins,
+            unset_config_keys=unset_config_keys,
         )
         result = self.docker.provision(
             script,
@@ -112,7 +135,7 @@ class hermes_client:
             )
         return hermes_observation(
             succeeded=True,
-            values=_parse_observation_output(result.stdout, profile.plugins),
+            values=_parse_observation_output(result.stdout, profile),
             error=None,
         )
 
@@ -120,7 +143,7 @@ class hermes_client:
 def _profile_settings(
     profile: hermes_profile,
 ) -> tuple[tuple[str, str], ...]:
-    return (
+    baseline = (
         ("model.provider", profile.model_provider),
         ("model.base_url", profile.model_base_url),
         ("model.api_mode", profile.model_api_mode),
@@ -130,6 +153,20 @@ def _profile_settings(
         ("terminal.backend", profile.terminal_backend),
         *_experiment_isolation_settings(profile),
     )
+    baseline_keys = {key for key, _ in baseline}
+    override_keys = [key for key, _ in profile.managed_config_overrides]
+
+    if len(override_keys) != len(set(override_keys)):
+        raise ValueError("Hermes managed config overrides must have unique keys.")
+
+    conflicts = sorted(baseline_keys.intersection(override_keys))
+    if conflicts:
+        raise ValueError(
+            "Hermes managed config overrides conflict with baseline-managed keys: "
+            + ", ".join(conflicts)
+        )
+
+    return baseline + profile.managed_config_overrides
 
 
 def _build_observation_script(
@@ -325,6 +362,14 @@ def _build_observation_script(
         for plugin in profile.plugins
     )
 
+    managed_config_commands = tuple(
+        (
+            f"managed_config_override:{index}",
+            [HERMES_CLI, "config", "get", key, "--json"],
+        )
+        for index, (key, _) in enumerate(profile.managed_config_overrides)
+    )
+
     expected_disabled_command = [
         HERMES_PYTHON,
         "-c",
@@ -365,6 +410,7 @@ def _build_observation_script(
     commands = (
         commands
         + plugin_commands
+        + managed_config_commands
         + (
             (
                 "expected_disabled_toolsets",
@@ -411,7 +457,7 @@ def _build_observation_script(
 
 def _parse_observation_output(
     stdout: str,
-    managed_hermes_plugins: tuple[managed_hermes_plugin, ...],
+    profile: hermes_profile,
 ) -> dict[str, Any]:
     raw: dict[str, str] = {}
 
@@ -483,12 +529,21 @@ def _parse_observation_output(
 
     observed["plugin_tool_overrides"] = {}
 
-    for plugin in managed_hermes_plugins:
+    for plugin in profile.plugins:
         raw_value = raw.get(f"plugin_override:{plugin.name}", "")
         value = _parse_json_scalar(raw_value) if raw_value else None
         observed["plugin_tool_overrides"][plugin.name] = (
             value if isinstance(value, bool) else None
         )
+
+    observed["managed_config_overrides"] = {
+        key: (
+            _parse_json_value(raw.get(f"managed_config_override:{index}", ""))
+            if raw.get(f"managed_config_override:{index}", "")
+            else None
+        )
+        for index, (key, _) in enumerate(profile.managed_config_overrides)
+    }
 
     return observed
 
@@ -533,11 +588,33 @@ def _experiment_isolation_settings(
     )
 
 
+def _config_unset_operations(
+    keys: tuple[str, ...],
+) -> list[tuple[str, str]]:
+    if len(keys) != len(set(keys)):
+        raise ValueError("Hermes managed config cleanup keys must be unique.")
+
+    operations: list[tuple[str, str]] = []
+    for key in keys:
+        if not key.strip():
+            raise ValueError("Hermes managed config cleanup keys must not be empty.")
+        command = [HERMES_CLI, "config", "unset", key]
+        operations.append(
+            (
+                f"unset {key}",
+                " ".join(shlex.quote(part) for part in command),
+            )
+        )
+    return operations
+
+
 def _build_tool_provisioning_script(
     settings: tuple[tuple[str, str], ...],
     plugins: tuple[managed_hermes_plugin, ...],
+    *,
+    unset_config_keys: tuple[str, ...] = (),
 ) -> str:
-    operations: list[tuple[str, str]] = []
+    operations = _config_unset_operations(unset_config_keys)
 
     for key, value in settings:
         command = [
@@ -733,8 +810,10 @@ def _build_provisioning_script(
     settings: tuple[tuple[str, str], ...],
     plugins: tuple[managed_hermes_plugin, ...],
     profile: hermes_profile,
+    *,
+    unset_config_keys: tuple[str, ...] = (),
 ) -> str:
-    operations: list[tuple[str, str]] = []
+    operations = _config_unset_operations(unset_config_keys)
 
     for key, value in settings:
         command = [

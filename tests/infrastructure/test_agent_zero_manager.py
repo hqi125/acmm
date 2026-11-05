@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 import shutil
 from pathlib import Path
 
@@ -745,3 +746,31 @@ def test_package_backed_doctor_uses_package_apparatus_identity(
     report = manager.doctor()
 
     assert report.is_ready
+
+
+def test_managed_host_overrides_compose_after_baseline(tmp_path: Path) -> None:
+    manager, _, _ = _manager(tmp_path)
+    server_json = '{"mcpServers":{"example":{"url":"https://example.invalid"}}}'
+    manager.profile = replace(
+        manager.profile,
+        managed_environment_overrides=(("AGENT_ZERO_MCP_SERVERS", server_json),),
+        managed_settings_overrides=(("mcp_servers", server_json),),
+    )
+
+    assert manager._managed_env()["AGENT_ZERO_MCP_SERVERS"] == server_json
+    assert manager._managed_settings()["mcp_servers"] == server_json
+
+
+def test_managed_host_overrides_reject_duplicate_keys(tmp_path: Path) -> None:
+    manager, _, _ = _manager(tmp_path)
+    manager.profile = replace(
+        manager.profile,
+        managed_settings_overrides=(("duplicate", 1), ("duplicate", 2)),
+    )
+
+    try:
+        manager._managed_settings()
+    except Exception as exc:
+        assert "unique keys" in str(exc)
+    else:
+        raise AssertionError("Expected duplicate managed setting keys to fail.")

@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 import shutil
 from pathlib import Path
 
@@ -488,3 +489,101 @@ def test_package_backed_doctor_uses_package_apparatus_identity(
     report = manager.doctor()
 
     assert report.is_ready
+
+
+def test_managed_environment_overrides_compose_after_baseline(tmp_path: Path) -> None:
+    manager, _, _ = _manager(tmp_path)
+    manager.profile = replace(
+        manager.profile,
+        managed_environment_overrides=(
+            ("OPEN_WEBUI_TOOL_SERVER_CONNECTIONS", '[{"url":"https://example.invalid"}]'),
+            ("ACMM_CAPABILITY_MARKER", "enabled"),
+        ),
+    )
+
+    managed = manager._managed_env()
+
+    assert managed["OPEN_WEBUI_TOOL_SERVER_CONNECTIONS"] == (
+        '[{"url":"https://example.invalid"}]'
+    )
+    assert managed["ACMM_CAPABILITY_MARKER"] == "enabled"
+
+
+def test_managed_environment_overrides_reject_duplicate_keys(tmp_path: Path) -> None:
+    manager, _, _ = _manager(tmp_path)
+    manager.profile = replace(
+        manager.profile,
+        managed_environment_overrides=(("DUP", "one"), ("DUP", "two")),
+    )
+
+    try:
+        manager._managed_env()
+    except Exception as exc:
+        assert "unique keys" in str(exc)
+    else:
+        raise AssertionError("Expected duplicate managed environment keys to fail.")
+
+
+def test_external_tool_server_enablement_releases_connection_ownership(
+    tmp_path: Path,
+) -> None:
+    manager, _, _ = _manager(tmp_path)
+    manager.profile = replace(
+        manager.profile,
+        experiment_isolation=replace(
+            manager.profile.experiment_isolation,
+            external_tool_servers_enabled=True,
+        ),
+    )
+
+    desired = manager._desired_isolation_config()
+
+    assert "tool_server.connections" not in desired
+    assert desired["terminal_server.connections"] == []
+
+
+
+
+def test_managed_persistent_config_overrides_fill_released_keys(
+    tmp_path: Path,
+) -> None:
+    manager, _, _ = _manager(tmp_path)
+    connection = [{"url": "https://example.invalid", "type": "mcp"}]
+    manager.profile = replace(
+        manager.profile,
+        experiment_isolation=replace(
+            manager.profile.experiment_isolation,
+            external_tool_servers_enabled=True,
+        ),
+        managed_config_overrides=(("tool_server.connections", connection),),
+    )
+
+    desired = manager._desired_isolation_config()
+
+    assert desired["tool_server.connections"] == connection
+
+
+def test_managed_persistent_config_overrides_reject_baseline_key_collision(
+    tmp_path: Path,
+) -> None:
+    manager, _, _ = _manager(tmp_path)
+    manager.profile = replace(
+        manager.profile,
+        managed_config_overrides=(("web.search.enable", True),),
+    )
+
+    try:
+        manager._desired_isolation_config()
+    except Exception as exc:
+        assert "must not override baseline-managed key" in str(exc)
+    else:
+        raise AssertionError("Expected persistent-config key collision to fail.")
+
+def test_baseline_keeps_external_tool_server_connections_empty(
+    tmp_path: Path,
+) -> None:
+    manager, _, _ = _manager(tmp_path)
+
+    desired = manager._desired_isolation_config()
+
+    assert desired["tool_server.connections"] == []

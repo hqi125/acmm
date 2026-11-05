@@ -71,6 +71,8 @@ class open_webui_profile:
     experiment_isolation: open_webui_isolation_profile
     tools: tuple[managed_open_webui_tool, ...]
     reset_scopes: dict[str, tuple[Path, ...]]
+    managed_environment_overrides: tuple[tuple[str, str], ...] = ()
+    managed_config_overrides: tuple[tuple[str, Any], ...] = ()
 
 
 def load_open_webui_profile(

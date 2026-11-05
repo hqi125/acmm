@@ -785,7 +785,7 @@ class open_webui_manager:
 
     def _desired_isolation_config(self) -> dict[str, Any]:
         isolation = self.profile.experiment_isolation
-        return {
+        desired = {
             "direct.enable": isolation.direct_connections_enabled,
             "direct.integrations.enable": isolation.direct_integrations_enabled,
             "web.search.enable": isolation.web_search_enabled,
@@ -804,13 +804,17 @@ class open_webui_manager:
             "task.autocomplete.enable": isolation.autocomplete_generation_enabled,
             "task.query.search.enable": isolation.search_query_generation_enabled,
             "task.query.retrieval.enable": isolation.retrieval_query_generation_enabled,
-            "tool_server.connections": (
-                [] if not isolation.external_tool_servers_enabled else None
-            ),
-            "terminal_server.connections": (
-                [] if not isolation.terminal_servers_enabled else None
-            ),
         }
+        if not isolation.external_tool_servers_enabled:
+            desired["tool_server.connections"] = []
+        if not isolation.terminal_servers_enabled:
+            desired["terminal_server.connections"] = []
+        _apply_config_overrides(
+            desired,
+            self.profile.managed_config_overrides,
+            "Open WebUI managed persistent-config overrides",
+        )
+        return desired
 
     def _backend_status(self) -> dict[str, Any]:
         state = _empty_backend_status(self.profile)
@@ -885,7 +889,7 @@ class open_webui_manager:
 
     def _managed_env(self) -> dict[str, str]:
         telemetry = self.profile.telemetry_enabled
-        return {
+        values = {
             "OPEN_WEBUI_IMAGE": self.profile.image,
             "OPEN_WEBUI_CONTAINER_NAME": self.profile.container_name,
             "OPEN_WEBUI_PORT": str(self.profile.web_port),
@@ -909,7 +913,44 @@ class open_webui_manager:
             "OPEN_WEBUI_DO_NOT_TRACK": bool_text(not telemetry),
             "OPEN_WEBUI_ANONYMIZED_TELEMETRY": bool_text(telemetry),
         }
+        _apply_string_overrides(
+            values,
+            self.profile.managed_environment_overrides,
+            "Open WebUI managed environment overrides",
+        )
+        return values
 
+
+def _apply_string_overrides(
+    values: dict[str, str],
+    overrides: tuple[tuple[str, str], ...],
+    description: str,
+) -> None:
+    keys = [key for key, _ in overrides]
+    if len(keys) != len(set(keys)):
+        raise infrastructure_error(f"{description} must have unique keys.")
+    for key, value in overrides:
+        if not key:
+            raise infrastructure_error(f"{description} keys must be non-empty.")
+        values[key] = value
+
+
+def _apply_config_overrides(
+    values: dict[str, Any],
+    overrides: tuple[tuple[str, Any], ...],
+    description: str,
+) -> None:
+    keys = [key for key, _ in overrides]
+    if len(keys) != len(set(keys)):
+        raise infrastructure_error(f"{description} must have unique keys.")
+    for key, value in overrides:
+        if not key:
+            raise infrastructure_error(f"{description} keys must be non-empty.")
+        if key in values:
+            raise infrastructure_error(
+                f"{description} must not override baseline-managed key {key!r}."
+            )
+        values[key] = value
 
 
 def _isolation_env(profile: open_webui_profile) -> dict[str, str]:
