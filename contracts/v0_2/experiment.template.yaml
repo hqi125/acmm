@@ -21,6 +21,13 @@ scenarios:
     task:
       prompt: Return {"result":{"count":6}}.
       output_semantics:
+        structured_object:
+          evidence_id: final_response
+          payload_path: result
+          required_payload_keys:
+            - count
+          accepted_presentations:
+            - exact_json_object
         scalar_fields:
           - path: result.count
             semantic_type: integer

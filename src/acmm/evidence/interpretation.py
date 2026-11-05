@@ -25,6 +25,8 @@ class interpreted_structured_output:
     payload: dict[str, Any] | None = None
     syntax_normalizations: tuple[str, ...] = ()
     semantic_normalizations: tuple[semantic_scalar_normalization, ...] = ()
+    representation_status: str = "unreadable"
+    representation_conforming: bool | None = None
     error: str | None = None
 
 
@@ -52,6 +54,7 @@ def interpret_scenario_evidence(
     evidence_id = structured.get("evidence_id")
     payload_path = structured.get("payload_path")
     required_payload_keys = structured.get("required_payload_keys")
+    accepted_presentations = structured.get("accepted_presentations")
     if (
         not isinstance(evidence_id, str)
         or not isinstance(payload_path, str)
@@ -64,6 +67,8 @@ def interpret_scenario_evidence(
         return {
             evidence_id: interpreted_structured_output(
                 evidence_id=evidence_id,
+                representation_status="unreadable",
+                representation_conforming=(False if accepted_presentations else None),
                 error=f"Required evidence '{evidence_id}' is missing.",
             )
         }
@@ -73,6 +78,8 @@ def interpret_scenario_evidence(
         return {
             evidence_id: interpreted_structured_output(
                 evidence_id=evidence_id,
+                representation_status="unreadable",
+                representation_conforming=(False if accepted_presentations else None),
                 error=f"Evidence '{evidence_id}' is not valid UTF-8 text.",
             )
         }
@@ -83,6 +90,9 @@ def interpret_scenario_evidence(
         text,
         payload_path,
         tuple(str(key) for key in required_payload_keys),
+        tuple(str(item) for item in accepted_presentations)
+        if isinstance(accepted_presentations, list)
+        else (),
     )
     return {evidence_id: view}
 
@@ -112,6 +122,7 @@ def _interpret_structured_text(
     text: str,
     payload_path: str,
     required_payload_keys: tuple[str, ...],
+    accepted_presentations: tuple[str, ...],
 ) -> interpreted_structured_output:
     segments = tuple(payload_path.split("."))
     root = None
@@ -147,6 +158,8 @@ def _interpret_structured_text(
     if root is None:
         return interpreted_structured_output(
             evidence_id=evidence_id,
+            representation_status="unreadable",
+            representation_conforming=(False if accepted_presentations else None),
             error="The evidence did not contain a readable Contract-declared structured payload.",
         )
 
@@ -158,6 +171,10 @@ def _interpret_structured_text(
             error="The interpreted structured payload does not satisfy the Contract declaration.",
             syntax_normalizations=syntax,
             semantic_normalizations=semantic_normalizations,
+            representation_status=_representation_status(syntax),
+            representation_conforming=_representation_conforming(
+                syntax, accepted_presentations
+            ),
         )
 
     return interpreted_structured_output(
@@ -166,7 +183,25 @@ def _interpret_structured_text(
         payload=payload,
         syntax_normalizations=syntax,
         semantic_normalizations=semantic_normalizations,
+        representation_status=_representation_status(syntax),
+        representation_conforming=_representation_conforming(
+            syntax, accepted_presentations
+        ),
     )
+
+
+def _representation_status(syntax_normalizations: tuple[str, ...]) -> str:
+    return "exact_json_object" if not syntax_normalizations else "recovered_json_object"
+
+
+def _representation_conforming(
+    syntax_normalizations: tuple[str, ...],
+    accepted_presentations: tuple[str, ...],
+) -> bool | None:
+    if not accepted_presentations:
+        return None
+    source = _representation_status(syntax_normalizations)
+    return source in accepted_presentations
 
 
 def _apply_scalar_semantics(

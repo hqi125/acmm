@@ -165,3 +165,25 @@ def test_decode_json_object_text_refuses_more_than_three_quote_layers() -> None:
     )
 
     assert result is None
+
+
+def test_decode_json_object_text_repairs_one_unmatched_closing_delimiter() -> None:
+    result = decode_json_object_text(
+        r'{"result":{"cases":[{"id":"Q1"},{\"id\":\"Q2\"}}]}}"}',
+        required_keys=("result",),
+    )
+
+    assert result is not None
+    assert result.value == {
+        "result": {
+            "cases": [
+                {"id": "Q1"},
+                {"id": "Q2"},
+            ]
+        }
+    }
+    assert result.normalizations == (
+        "quote_deescape",
+        "unmatched_closing_delimiter",
+        "embedded_json",
+    )

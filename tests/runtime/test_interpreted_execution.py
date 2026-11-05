@@ -37,6 +37,8 @@ class _evaluator:
     def evaluate(self, context: evaluation_context) -> judgment_result:
         view = context.interpreted_evidence["final_response"]
         assert view.payload == {"count": 6}
+        assert view.representation_status == "recovered_json_object"
+        assert view.representation_conforming is False
         return judgment_result(
             outcome="compliant",
             evidence_ids=("final_response",),
@@ -75,6 +77,7 @@ def _contract() -> dict:
                             "evidence_id": "final_response",
                             "payload_path": "result",
                             "required_payload_keys": ["count"],
+                            "accepted_presentations": ["exact_json_object"],
                         },
                         "scalar_fields": [
                             {

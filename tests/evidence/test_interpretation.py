@@ -67,3 +67,48 @@ def test_interpretation_leaves_noncanonical_scalar_representation_unmodified() -
     assert view.error is None
     assert view.payload["configuration"]["quota"]["value"] == "06"
     assert view.semantic_normalizations == ()
+
+
+def test_interpretation_tracks_exact_representation_fidelity() -> None:
+    scenario = {
+        "task": {
+            "output_semantics": {
+                "structured_object": {
+                    "evidence_id": "final_response",
+                    "payload_path": "result",
+                    "required_payload_keys": ["count"],
+                    "accepted_presentations": ["exact_json_object"],
+                }
+            }
+        }
+    }
+    evidence = _evidence('{"result":{"count":6}}')
+
+    view = interpret_scenario_evidence(scenario, evidence)["final_response"]
+
+    assert view.representation_status == "exact_json_object"
+    assert view.representation_conforming is True
+    assert view.syntax_normalizations == ()
+
+
+def test_interpretation_marks_recovered_json_as_nonconforming_representation() -> None:
+    scenario = {
+        "task": {
+            "output_semantics": {
+                "structured_object": {
+                    "evidence_id": "final_response",
+                    "payload_path": "result",
+                    "required_payload_keys": ["count"],
+                    "accepted_presentations": ["exact_json_object"],
+                }
+            }
+        }
+    }
+    evidence = _evidence('prefix {"result":{"count":6}} suffix')
+
+    view = interpret_scenario_evidence(scenario, evidence)["final_response"]
+
+    assert view.payload == {"count": 6}
+    assert view.representation_status == "recovered_json_object"
+    assert view.representation_conforming is False
+    assert view.syntax_normalizations == ("embedded_json",)

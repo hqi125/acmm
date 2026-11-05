@@ -474,6 +474,16 @@
             "type": "string",
             "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
           }
+        },
+        "accepted_presentations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "exact_json_object"
+            ]
+          }
         }
       }
     }

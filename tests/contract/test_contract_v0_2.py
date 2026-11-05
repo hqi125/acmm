@@ -158,3 +158,19 @@ def test_contract_v0_2_rejects_scalar_semantics_outside_structured_payload() -> 
     result = validate_contract(contract, schema)
 
     assert any(issue.code == "output_semantic_path_outside_payload" for issue in result.errors)
+
+
+def test_contract_v0_2_accepts_exact_json_representation_policy() -> None:
+    contract = _base_contract()
+    output = contract["scenarios"][0]["task"]["output_semantics"]
+    output["structured_object"] = {
+        "evidence_id": "final_response",
+        "payload_path": "result",
+        "required_payload_keys": ["count"],
+        "accepted_presentations": ["exact_json_object"],
+    }
+    schema = load_schema_for_contract(contract)
+
+    result = validate_contract(contract, schema)
+
+    assert result.is_valid

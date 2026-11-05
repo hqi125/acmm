@@ -28,6 +28,7 @@ _NORMALIZATION_COST = {
     "trailing_delimiter_completion": 1,
     "trailing_comma": 1,
     "duplicate_property_quote": 2,
+    "unmatched_closing_delimiter": 2,
     "quote_deescape": 3,
     "quote_deescape_x2": 6,
     "quote_deescape_x3": 9,
@@ -50,7 +51,8 @@ def decode_json_object_text(
     - missing trailing object/array delimiters;
     - up to three layers of backslash-escaped JSON quotes;
     - trailing commas immediately before ``]`` or ``}``; and
-    - a duplicated opening quote on an object property name.
+    - a duplicated opening quote on an object property name; and
+    - one structurally impossible unmatched closing delimiter.
 
     Persisted evidence is never changed.  ``normalizations`` records every syntax-only transform
     used to recover the returned object.  The decoder never falls back to an arbitrary child object
@@ -104,6 +106,13 @@ def decode_json_object_text(
     if trailing_comma_fixed != stripped:
         add_variant(trailing_comma_fixed, ("trailing_comma",))
 
+    unmatched_closer_fixed = _remove_one_unmatched_closing_delimiter(stripped)
+    if unmatched_closer_fixed is not None and unmatched_closer_fixed != stripped:
+        add_variant(
+            unmatched_closer_fixed,
+            ("unmatched_closing_delimiter",),
+        )
+
     # Response wrappers can accidentally add more than one presentation-escape layer.  Recover at
     # most three layers, and record the depth explicitly.  The bounded depth prevents this helper
     # from turning into an open-ended recursive decoder.
@@ -150,6 +159,16 @@ def decode_json_object_text(
             add_variant(
                 comma_fixed,
                 (*normalizations, "trailing_comma"),
+            )
+
+        unmatched_closer_fixed = _remove_one_unmatched_closing_delimiter(value)
+        if (
+            unmatched_closer_fixed is not None
+            and unmatched_closer_fixed != value
+        ):
+            add_variant(
+                unmatched_closer_fixed,
+                (*normalizations, "unmatched_closing_delimiter"),
             )
 
     # Missing final delimiters are only completed after all non-structural cleanups.  Completion
@@ -273,6 +292,64 @@ def _remove_trailing_commas(text: str) -> str:
         output.append(char)
         index += 1
 
+    return "".join(output)
+
+
+def _remove_one_unmatched_closing_delimiter(text: str) -> str | None:
+    """Remove one closing delimiter that is impossible at its observed nesting position.
+
+    The repair is deliberately bounded to one removal.  A second mismatch rejects the variant
+    rather than guessing how a structurally damaged payload should be rewritten.
+    """
+
+    output: list[str] = []
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    removed = 0
+    closing = {
+        "{": "}",
+        "[": "]",
+    }
+    opening = {
+        "}": "{",
+        "]": "[",
+    }
+
+    for char in text:
+        if in_string:
+            output.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            output.append(char)
+            continue
+        if char in closing:
+            stack.append(char)
+            output.append(char)
+            continue
+        if char in opening:
+            if stack and stack[-1] == opening[char]:
+                stack.pop()
+                output.append(char)
+                continue
+
+            removed += 1
+            if removed > 1:
+                return None
+            continue
+
+        output.append(char)
+
+    if removed != 1:
+        return text
     return "".join(output)
 
 
