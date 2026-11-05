@@ -1,9 +1,5 @@
-from acmm.experiment_package.apparatus import (
-    experiment_apparatus_error,
-    load_staged_experiment_apparatus,
-)
 from acmm.experiment_package.integration import (
-    compose_staged_experiment_integrations,
+    compose_staged_experiment_profile_integrations,
     compose_staged_experiment_manager_integrations,
     experiment_integration_error,
     load_staged_experiment_integration,
@@ -16,13 +12,11 @@ from acmm.experiment_package.loader import (
 )
 from acmm.experiment_package.model import (
     experiment_analysis_component,
-    experiment_apparatus_component,
     experiment_integration_component,
     experiment_package,
     experiment_runtime_component,
 )
 from acmm.experiment_package.provenance import (
-    apparatus_provenance,
     deployment_provenance,
     experiment_deployment_provenance,
     experiment_package_provenance,
@@ -53,7 +47,6 @@ from acmm.experiment_package.staging import (
 
 
 __all__ = [
-    "apparatus_provenance",
     "deployment_provenance",
     "experiment_deployment_provenance",
     "experiment_package_provenance",
@@ -62,11 +55,9 @@ __all__ = [
     "acquire_experiment_package",
     "install_experiment_package",
     "compose_execution_registry",
-    "compose_staged_experiment_integrations",
+    "compose_staged_experiment_profile_integrations",
     "compose_staged_experiment_manager_integrations",
     "experiment_analysis_component",
-    "experiment_apparatus_component",
-    "experiment_apparatus_error",
     "experiment_integration_component",
     "experiment_integration_error",
     "experiment_package",
@@ -78,7 +69,6 @@ __all__ = [
     "experiment_runtime_component",
     "experiment_runtime_error",
     "load_experiment_package",
-    "load_staged_experiment_apparatus",
     "load_staged_experiment_integration",
     "load_staged_experiment_integrations",
     "loaded_experiment_integration",

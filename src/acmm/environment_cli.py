@@ -55,7 +55,7 @@ def _register_environment_subcommands(
         "set-llm",
         help=(
             "Reconcile qualified subjects to a registered LLM and remove any "
-            "active experiment apparatus."
+            "active Experiment Package state."
         ),
     )
     set_llm_parser.add_argument(
@@ -103,7 +103,7 @@ def _register_environment_subcommands(
 
     stop_parser = subparsers.add_parser(
         "stop",
-        help="Stop running qualified ACMM subject runtimes without changing apparatus.",
+        help="Stop running qualified ACMM subject runtimes without changing package state.",
     )
     _add_subject_arguments(stop_parser)
     stop_parser.add_argument("--json", action="store_true")
@@ -191,10 +191,7 @@ def run_environment_status(args: argparse.Namespace) -> int:
         print(f"      experiment:        {item.experiment_id or 'none'}")
         if item.package_sha256 is not None:
             print(f"      package SHA-256:   {item.package_sha256}")
-        print(f"      application scope: {item.application_scope or 'none'}")
-        print(f"      apparatus:         {item.apparatus_state}")
-        if item.source_sha256 is not None:
-            print(f"      apparatus SHA-256: {item.source_sha256}")
+        print(f"      package state:     {item.package_state}")
     _print_context_comparability(statuses)
     return 0
 
@@ -257,15 +254,13 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         context_ready = all(
             item.error is None
             and item.experiment_id is None
-            and item.application_scope is None
-            and item.apparatus_state == "none"
+            and item.package_state == "none"
             for item in contexts
         )
     else:
         context_ready = (
             context.state == "converged"
-            and all(item.application_scope == "experiment" for item in contexts)
-            and all(item.apparatus_state == "match" for item in contexts)
+            and all(item.package_state == "match" for item in contexts)
         )
     ready = subject_ready and context_ready
 
@@ -289,11 +284,6 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
                     "initially_running": item.initially_running,
                     "started_by_acmm": item.started_by_acmm,
                     "release_error": item.release_error,
-                    "application_scope": (
-                        state.get("application_scope")
-                        if isinstance(state, dict)
-                        else None
-                    ),
                     "llm": asdict(item.llm) if item.llm is not None else None,
                     "checks": (
                         [asdict(check) for check in result.report.checks]
@@ -337,10 +327,6 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
                 package_sha256 = package.get("sha256")
                 if isinstance(package_sha256, str):
                     print(f"      package SHA-256:   {package_sha256}")
-            print(
-                "      application scope: "
-                f"{state.get('application_scope', 'unknown')}"
-            )
         if result.error is not None:
             print(f"      error:             {result.error}")
         elif result.report is not None:
@@ -362,8 +348,8 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
             )
         else:
             print(
-                "Experiment cohort context is not fully converged with full "
-                "experiment apparatus."
+                "Experiment cohort context is not fully converged with the "
+                "selected package revision."
             )
     print("READY" if ready else "NOT READY")
     return 0 if ready else 1

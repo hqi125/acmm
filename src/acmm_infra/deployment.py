@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
-from typing import Iterable, Literal
+from typing import Iterable
 
 from acmm.experiment_package.provenance import experiment_deployment_provenance
 from acmm_infra.common import infrastructure_error
@@ -117,13 +117,12 @@ def write_llm_baseline_state(
         newline="\n",
     )
     temporary.replace(path)
-EXPERIMENT_APPARATUS_STATE_FILE = ".acmm-experiment-apparatus.json"
-experiment_application_scope = Literal["experiment", "tools"]
-EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION = "0.3"
+EXPERIMENT_PACKAGE_STATE_FILE = ".acmm-experiment-package.json"
+EXPERIMENT_PACKAGE_STATE_SCHEMA_VERSION = "0.1"
 
 
-def read_experiment_apparatus_state(deployment_root: Path) -> dict[str, object] | None:
-    path = deployment_root / EXPERIMENT_APPARATUS_STATE_FILE
+def read_experiment_package_state(deployment_root: Path) -> dict[str, object] | None:
+    path = deployment_root / EXPERIMENT_PACKAGE_STATE_FILE
     if not path.is_file():
         return None
 
@@ -131,90 +130,71 @@ def read_experiment_apparatus_state(deployment_root: Path) -> dict[str, object] 
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise infrastructure_error(
-            f"Could not read experiment apparatus state '{path}': {exc}"
+            f"Could not read experiment package state '{path}': {exc}"
         ) from exc
 
     if not isinstance(value, dict):
         raise infrastructure_error(
-            f"Experiment apparatus state '{path}' has an unsupported format."
+            f"Experiment package state '{path}' has an unsupported format."
+        )
+    if value.get("schema_version") != EXPERIMENT_PACKAGE_STATE_SCHEMA_VERSION:
+        raise infrastructure_error(
+            f"Experiment package state '{path}' has an unsupported format."
         )
 
-    schema_version = value.get("schema_version")
-    if schema_version == "0.1":
-        value = dict(value)
-        value["application_scope"] = "experiment"
-        value["package"] = None
-        return value
-
-    if schema_version == "0.2":
-        value = dict(value)
-        value["package"] = None
-    elif schema_version == EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION:
-        value = dict(value)
-    else:
+    experiment_id = value.get("experiment_id")
+    if not isinstance(experiment_id, str) or not experiment_id.strip():
         raise infrastructure_error(
-            f"Experiment apparatus state '{path}' has an unsupported format."
-        )
-
-    application_scope = value.get("application_scope")
-    if application_scope not in {"experiment", "tools"}:
-        raise infrastructure_error(
-            f"Experiment apparatus state '{path}' has an invalid application scope."
+            f"Experiment package state '{path}' has an invalid experiment ID."
         )
 
     package = value.get("package")
-    if package is not None:
-        _validate_experiment_package_state(path, value, package)
+    _validate_experiment_package_state(path, package)
     return value
 
 
 def active_experiment_id(deployment_root: Path) -> str | None:
-    state = read_experiment_apparatus_state(deployment_root)
+    state = read_experiment_package_state(deployment_root)
     if state is None:
         return None
-
-    experiment_id = state.get("experiment_id")
-    if not isinstance(experiment_id, str) or not experiment_id.strip():
-        path = deployment_root / EXPERIMENT_APPARATUS_STATE_FILE
-        raise infrastructure_error(
-            f"Experiment apparatus state '{path}' has an invalid experiment ID."
-        )
-
-    return experiment_id
+    value = state["experiment_id"]
+    assert isinstance(value, str)
+    return value
 
 
-def write_experiment_apparatus_state(
+def write_experiment_package_state(
     deployment_root: Path,
     *,
     experiment_id: str,
-    source_sha256: str | None,
-    application_scope: experiment_application_scope,
     resources: list[dict[str, str]],
-    package_provenance: experiment_deployment_provenance | None = None,
+    package_provenance: experiment_deployment_provenance,
 ) -> None:
-    path = deployment_root / EXPERIMENT_APPARATUS_STATE_FILE
-    payload: dict[str, object] = {
-        "schema_version": EXPERIMENT_APPARATUS_STATE_SCHEMA_VERSION,
-        "experiment_id": experiment_id,
-        "source_sha256": source_sha256,
-        "application_scope": application_scope,
-        "resources": resources,
-    }
-    if package_provenance is not None:
-        _validate_write_package_provenance(
-            experiment_id,
-            source_sha256,
-            package_provenance,
+    if package_provenance.package.experiment_id != experiment_id:
+        raise infrastructure_error(
+            "Experiment Package provenance experiment ID does not match the active "
+            "experiment."
         )
-        package = package_provenance.package
-        payload["package"] = {
-            "schema_version": package.package_schema_version,
-            "sha256": package.package_sha256,
-            "contract_sha256": package.contract_sha256,
-            "runtime_sha256": package.runtime_sha256,
-            "apparatus_subject": package_provenance.infrastructure_subject,
-            "apparatus_sha256": package_provenance.apparatus_sha256,
-        }
+
+    path = deployment_root / EXPERIMENT_PACKAGE_STATE_FILE
+    payload: dict[str, object] = {
+        "schema_version": EXPERIMENT_PACKAGE_STATE_SCHEMA_VERSION,
+        "experiment_id": experiment_id,
+        "resources": resources,
+        "package": {
+            "schema_version": package_provenance.package.package_schema_version,
+            "sha256": package_provenance.package.package_sha256,
+            "contract_sha256": package_provenance.package.contract_sha256,
+            "runtime_sha256": package_provenance.package.runtime_sha256,
+            "subject": package_provenance.infrastructure_subject,
+            "integrations": [
+                {
+                    "id": item.integration_id,
+                    "sha256": item.sha256,
+                }
+                for item in package_provenance.integrations
+            ],
+        },
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(
@@ -225,36 +205,30 @@ def write_experiment_apparatus_state(
     temporary.replace(path)
 
 
-def clear_experiment_apparatus_state(deployment_root: Path) -> None:
-    path = deployment_root / EXPERIMENT_APPARATUS_STATE_FILE
+def clear_experiment_package_state(deployment_root: Path) -> None:
+    path = deployment_root / EXPERIMENT_PACKAGE_STATE_FILE
     if path.exists():
         path.unlink()
 
 
-def _validate_experiment_package_state(
-    path: Path,
-    state: dict[str, object],
-    package: object,
-) -> None:
+def _validate_experiment_package_state(path: Path, package: object) -> None:
     if not isinstance(package, dict):
         raise infrastructure_error(
-            f"Experiment apparatus state '{path}' has invalid package provenance."
+            f"Experiment package state '{path}' has invalid package provenance."
         )
 
-    experiment_id = state.get("experiment_id")
-    source_sha256 = state.get("source_sha256")
     required_strings = (
         "schema_version",
         "sha256",
         "contract_sha256",
-        "apparatus_subject",
+        "subject",
     )
     for field in required_strings:
         value = package.get(field)
         if not isinstance(value, str) or not value.strip():
             raise infrastructure_error(
-                f"Experiment apparatus state '{path}' has invalid package "
-                f"provenance field '{field}'."
+                f"Experiment package state '{path}' has invalid package provenance "
+                f"field '{field}'."
             )
 
     for field in ("sha256", "contract_sha256"):
@@ -262,53 +236,47 @@ def _validate_experiment_package_state(
         assert isinstance(value, str)
         if not _is_sha256(value):
             raise infrastructure_error(
-                f"Experiment apparatus state '{path}' has invalid package "
-                f"SHA-256 field '{field}'."
+                f"Experiment package state '{path}' has invalid package SHA-256 "
+                f"field '{field}'."
             )
-
-    apparatus_sha256 = package.get("apparatus_sha256")
-    if apparatus_sha256 is not None and (
-        not isinstance(apparatus_sha256, str) or not _is_sha256(apparatus_sha256)
-    ):
-        raise infrastructure_error(
-            f"Experiment apparatus state '{path}' has invalid package "
-            "apparatus_sha256."
-        )
 
     runtime_sha256 = package.get("runtime_sha256")
     if runtime_sha256 is not None and (
         not isinstance(runtime_sha256, str) or not _is_sha256(runtime_sha256)
     ):
         raise infrastructure_error(
-            f"Experiment apparatus state '{path}' has invalid package "
-            "runtime_sha256."
+            f"Experiment package state '{path}' has invalid runtime SHA-256."
         )
 
-    if source_sha256 != apparatus_sha256:
+    integrations = package.get("integrations")
+    if not isinstance(integrations, list):
         raise infrastructure_error(
-            f"Experiment apparatus state '{path}' package apparatus SHA-256 "
-            "does not match source_sha256."
-        )
-    if not isinstance(experiment_id, str) or not experiment_id.strip():
-        raise infrastructure_error(
-            f"Experiment apparatus state '{path}' has an invalid experiment ID."
+            f"Experiment package state '{path}' has invalid integration provenance."
         )
 
-
-def _validate_write_package_provenance(
-    experiment_id: str,
-    source_sha256: str | None,
-    provenance: experiment_deployment_provenance,
-) -> None:
-    if provenance.package.experiment_id != experiment_id:
-        raise infrastructure_error(
-            "Experiment Package provenance experiment ID does not match the active "
-            "experiment."
-        )
-    if provenance.apparatus_sha256 != source_sha256:
-        raise infrastructure_error(
-            "Experiment Package apparatus provenance does not match source_sha256."
-        )
+    seen: set[str] = set()
+    for index, item in enumerate(integrations):
+        if not isinstance(item, dict):
+            raise infrastructure_error(
+                f"Experiment package state '{path}' integration {index} is invalid."
+            )
+        integration_id = item.get("id")
+        sha256 = item.get("sha256")
+        if (
+            not isinstance(integration_id, str)
+            or not integration_id.strip()
+            or integration_id in seen
+        ):
+            raise infrastructure_error(
+                f"Experiment package state '{path}' integration {index} has an "
+                "invalid ID."
+            )
+        if not isinstance(sha256, str) or not _is_sha256(sha256):
+            raise infrastructure_error(
+                f"Experiment package state '{path}' integration {index} has an "
+                "invalid SHA-256."
+            )
+        seen.add(integration_id)
 
 
 def _is_sha256(value: str) -> bool:
@@ -316,3 +284,50 @@ def _is_sha256(value: str) -> bool:
         character in "0123456789abcdef"
         for character in value
     )
+
+
+def experiment_package_state_matches(
+    state: dict[str, object] | None,
+    *,
+    experiment_id: str | None,
+    provenance: experiment_deployment_provenance | None,
+) -> tuple[bool, str]:
+    if experiment_id is None:
+        if state is None:
+            return True, "none"
+        return False, f"active={state.get('experiment_id')!r}"
+
+    if provenance is None:
+        return False, "experiment manager has no package provenance"
+    if state is None:
+        return False, f"observed=None, expected_id={experiment_id!r}"
+    if state.get("experiment_id") != experiment_id:
+        return (
+            False,
+            f"observed_id={state.get('experiment_id')!r}, expected_id={experiment_id!r}",
+        )
+
+    package = state.get("package")
+    if not isinstance(package, dict):
+        return False, "deployment state has no package provenance mapping"
+
+    expected_integrations = [
+        {"id": item.integration_id, "sha256": item.sha256}
+        for item in provenance.integrations
+    ]
+    checks = (
+        ("schema_version", provenance.package.package_schema_version),
+        ("sha256", provenance.package.package_sha256),
+        ("contract_sha256", provenance.package.contract_sha256),
+        ("runtime_sha256", provenance.package.runtime_sha256),
+        ("subject", provenance.infrastructure_subject),
+        ("integrations", expected_integrations),
+    )
+    mismatches = [
+        f"{key}={package.get(key)!r} expected {expected!r}"
+        for key, expected in checks
+        if package.get(key) != expected
+    ]
+    if mismatches:
+        return False, "; ".join(mismatches)
+    return True, f"package={provenance.package.package_sha256}"

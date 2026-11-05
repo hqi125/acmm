@@ -235,25 +235,6 @@ def _print_deployment_preflight(
 
     for subject in result.subjects:
         experiment = subject.experiment_id or "none"
-        scope = subject.application_scope or "none"
-        if (
-            subject.package_sha256 is not None
-            and subject.expected_apparatus_sha256 is None
-            and subject.observed_apparatus_sha256 is None
-        ):
-            apparatus = "match (none declared)"
-        elif subject.expected_apparatus_sha256 is None:
-            apparatus = "unavailable"
-        elif subject.observed_apparatus_sha256 is None:
-            apparatus = "none"
-        elif (
-            subject.observed_apparatus_sha256
-            == subject.expected_apparatus_sha256
-        ):
-            apparatus = "match"
-        else:
-            apparatus = "mismatch"
-
         context = "ready" if subject.is_ready else "not-ready"
         print(f"  {subject.subject_id}:")
         _print_labeled_fields(
@@ -261,8 +242,6 @@ def _print_deployment_preflight(
                 ("context", context),
                 ("experiment", experiment),
                 ("package SHA-256", subject.package_sha256 or "none"),
-                ("application scope", scope),
-                ("apparatus", apparatus),
             ],
             indent=4,
         )

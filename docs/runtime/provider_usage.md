@@ -74,7 +74,7 @@ The environment-variable fallback remains available when that is more convenient
 OLLAMA_API_KEY="$(cat ~/.config/acmm/ollama_api_key)" acmm run <experiment-selector>
 ```
 
-Do not place the key in `experiment.yaml`, `experiment-package.yaml`, apparatus files, `.env` files
+Do not place the key in `experiment.yaml`, `experiment-package.yaml`, integration files, `.env` files
 inside either repository, command examples committed to Git, execution notes, or test fixtures.
 
 ## Interpretation limits

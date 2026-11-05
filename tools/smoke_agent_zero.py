@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from acmm.adapters.agent_zero import agent_zero_adapter
 from acmm.adapters.agent_zero_api import agent_zero_runtime_api_client
-from controlled_tool_smoke import (
+from llm_behavioral_smoke import (
     build_environment,
     build_scenario,
     build_subject,

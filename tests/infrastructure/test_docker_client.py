@@ -126,8 +126,9 @@ def test_write_container_files_updates_without_replacing_tree(
     args = call["args"]
     assert args[:4] == ("docker", "exec", "-i", "acmm-agent")
     script = args[6]
-    assert "shutil.rmtree" not in script
-    assert args[-2] == "/a0/usr/agents/acmm"
+    assert "shutil.rmtree" in script
+    assert args[-3] == "/a0/usr/agents/acmm"
+    assert args[-1] == "merge"
 
 def test_provision_uses_one_named_compose_container(
     tmp_path: Path,

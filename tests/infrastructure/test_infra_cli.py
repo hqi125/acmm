@@ -17,10 +17,6 @@ def test_cli_exposes_baseline_infrastructure_commands() -> None:
     assert args.quiet is False
     assert args.verbose is False
 
-    args = parser.parse_args(["hermes", "apply-tools", "--timeout-seconds", "30"])
-    assert args.hermes_command == "apply-tools"
-    assert args.timeout_seconds == 30.0
-
     args = parser.parse_args(["hermes", "doctor", "--json"])
     assert args.hermes_command == "doctor"
     assert args.json is True
@@ -35,13 +31,10 @@ def test_cli_rejects_retired_experiment_selection_paths() -> None:
 
     for argv in (
         ["hermes", "apply", "--experiment", "legacy_v1"],
-        ["hermes", "apply-tools", "--experiment", "legacy_v1"],
         ["hermes", "apply-experiment", "legacy_v1"],
         ["open-webui", "apply", "--experiment", "legacy_v1"],
-        ["open-webui", "apply-tools", "--experiment", "legacy_v1"],
         ["open-webui", "apply-experiment", "legacy_v1"],
         ["agent-zero", "apply", "--experiment", "legacy_v1"],
-        ["agent-zero", "apply-tools", "--experiment", "legacy_v1"],
         ["agent-zero", "apply-experiment", "legacy_v1"],
     ):
         with pytest.raises(SystemExit):
@@ -77,10 +70,6 @@ def test_cli_exposes_open_webui_lifecycle() -> None:
     assert args.open_webui_command == "apply"
     assert args.timeout_seconds == 120.0
 
-    args = parser.parse_args(["open-webui", "apply-tools"])
-    assert args.open_webui_command == "apply-tools"
-    assert args.timeout_seconds == 60.0
-
     for command in ["down", "status", "doctor"]:
         args = parser.parse_args(["open-webui", command])
         assert args.open_webui_command == command
@@ -108,9 +97,6 @@ def test_cli_exposes_agent_zero_lifecycle() -> None:
     args = parser.parse_args(["agent-zero", "apply"])
     assert args.agent_zero_command == "apply"
     assert args.timeout_seconds == 120.0
-
-    args = parser.parse_args(["agent-zero", "apply-tools"])
-    assert args.agent_zero_command == "apply-tools"
 
     args = parser.parse_args(["agent-zero", "reset", "configuration", "--yes"])
     assert args.scope == "configuration"

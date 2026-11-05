@@ -20,10 +20,16 @@ class experiment_package_provenance:
 
 
 @dataclass(frozen=True)
+class experiment_integration_provenance:
+    integration_id: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class experiment_deployment_provenance:
     package: experiment_package_provenance
     infrastructure_subject: str
-    apparatus_sha256: str | None
+    integrations: tuple[experiment_integration_provenance, ...]
 
 
 class experiment_provenance_error(ValueError):
@@ -43,11 +49,7 @@ def package_provenance(
         package_schema_version=package.schema_version,
         package_sha256=package.package_sha256,
         contract_sha256=package.contract_sha256,
-        runtime_sha256=(
-            package.runtime.sha256
-            if package.runtime is not None
-            else None
-        ),
+        runtime_sha256=(package.runtime.sha256 if package.runtime is not None else None),
     )
 
 
@@ -56,39 +58,27 @@ def deployment_provenance(
     infrastructure_subject: str,
 ) -> experiment_deployment_provenance:
     package_identity = package_provenance(package)
-    component = package.apparatus.get(infrastructure_subject)
-    if component is None:
-        return experiment_deployment_provenance(
-            package=package_identity,
-            infrastructure_subject=infrastructure_subject,
-            apparatus_sha256=None,
-        )
+    integrations: list[experiment_integration_provenance] = []
 
-    try:
-        verify_staged_component_snapshot(
-            package,
-            component.root,
-            component.sha256,
-            f"apparatus '{infrastructure_subject}'",
+    for component in package.integrations:
+        try:
+            verify_staged_component_snapshot(
+                package,
+                component.root,
+                component.sha256,
+                f"integration '{component.integration_id}'",
+            )
+        except staged_package_verification_error as exc:
+            raise experiment_provenance_error(str(exc)) from exc
+        integrations.append(
+            experiment_integration_provenance(
+                integration_id=component.integration_id,
+                sha256=component.sha256,
+            )
         )
-    except staged_package_verification_error as exc:
-        raise experiment_provenance_error(str(exc)) from exc
 
     return experiment_deployment_provenance(
         package=package_identity,
         infrastructure_subject=infrastructure_subject,
-        apparatus_sha256=component.sha256,
+        integrations=tuple(integrations),
     )
-
-
-def apparatus_provenance(
-    package: experiment_package,
-    infrastructure_subject: str,
-) -> experiment_deployment_provenance:
-    provenance = deployment_provenance(package, infrastructure_subject)
-    if provenance.apparatus_sha256 is None:
-        raise experiment_provenance_error(
-            f"Experiment Package '{package.experiment_id}' does not declare apparatus "
-            f"for infrastructure subject '{infrastructure_subject}'."
-        )
-    return provenance

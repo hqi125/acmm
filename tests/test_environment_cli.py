@@ -122,9 +122,7 @@ def test_environment_set_llm_reconciles_without_experiment(
                 infrastructure_subject=subject.infrastructure_subject,
                 running=False,
                 experiment_id=None,
-                application_scope=None,
-                apparatus_state="none",
-                source_sha256=None,
+                package_state="none",
             ),
         )
 
@@ -208,9 +206,7 @@ def test_environment_status_reports_llm_context_observability(
                 infrastructure_subject=hermes.infrastructure_subject,
                 running=True,
                 experiment_id=None,
-                application_scope="baseline",
-                apparatus_state="none",
-                source_sha256=None,
+                package_state="none",
                 llm=cohort_llm_observation(
                     expected_baseline_id=hermes.llm_baseline_id,
                     deployed_baseline_id=hermes.llm_baseline_id,
@@ -233,9 +229,7 @@ def test_environment_status_reports_llm_context_observability(
                 infrastructure_subject=open_webui.infrastructure_subject,
                 running=True,
                 experiment_id=None,
-                application_scope="baseline",
-                apparatus_state="none",
-                source_sha256=None,
+                package_state="none",
                 llm=cohort_llm_observation(
                     expected_baseline_id=open_webui.llm_baseline_id,
                     deployed_baseline_id=open_webui.llm_baseline_id,
@@ -315,9 +309,7 @@ def test_environment_status_explains_unknown_context(
                 infrastructure_subject=subject.infrastructure_subject,
                 running=False,
                 experiment_id=None,
-                application_scope=None,
-                apparatus_state="none",
-                source_sha256=None,
+                package_state="none",
                 llm=cohort_llm_observation(
                     expected_baseline_id=subject.llm_baseline_id,
                     deployed_baseline_id=subject.llm_baseline_id,
@@ -387,9 +379,7 @@ def test_environment_doctor_reports_subject_progress(
                 infrastructure_subject=subject.infrastructure_subject,
                 running=False,
                 experiment_id=EXPERIMENT,
-                application_scope="experiment",
-                apparatus_state="match",
-                source_sha256="abc",
+                package_state="match",
             ),
         ),
     )
@@ -501,9 +491,7 @@ def test_environment_doctor_accepts_converged_baseline_context(
                 infrastructure_subject=subject.infrastructure_subject,
                 running=False,
                 experiment_id=None,
-                application_scope=None,
-                apparatus_state="none",
-                source_sha256=None,
+                package_state="none",
             ),
         ),
     )

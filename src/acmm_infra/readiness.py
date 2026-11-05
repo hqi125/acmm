@@ -5,7 +5,7 @@ from pathlib import Path
 
 from acmm_infra.common import doctor_report, infrastructure_error
 from acmm_infra.profiles.common import profile_error
-from acmm_infra.subject_managers import build_deployed_subject_manager
+from acmm_infra.subjects.factory import build_deployed_subject_manager
 
 
 @dataclass(frozen=True)

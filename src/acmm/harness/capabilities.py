@@ -7,5 +7,4 @@ from dataclasses import dataclass
 class harness_capabilities:
     evaluators: frozenset[str]
     fixtures: frozenset[str]
-    tools: frozenset[str]
     evidence_channels: frozenset[str]

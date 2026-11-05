@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from acmm_infra.profiles.hermes import load_hermes_profile
+from acmm_infra.subjects.hermes.profile import load_hermes_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +38,5 @@ def test_hermes_profile_loads_repository_baseline() -> None:
     assert profile.experiment_isolation.tool_search_enabled == "off"
     assert profile.deployment_directory == Path("hermes")
     assert profile.data_directory == Path("data")
-    assert profile.plugins == ()
     assert "experiment" in profile.reset_scopes
     assert profile.reset_scopes["configuration"] == (Path("config.yaml"),)

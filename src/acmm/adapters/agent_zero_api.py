@@ -53,22 +53,6 @@ class agent_zero_runtime_api_client:
             payload={"agent_profile": agent_profile},
         )
 
-    def update_plugin_config(
-        self,
-        plugin_name: str,
-        settings: dict[str, Any],
-    ) -> dict[str, Any]:
-        return self._protected_json(
-            "POST",
-            "/api/plugins",
-            payload={
-                "action": "save_config",
-                "plugin_name": plugin_name,
-                "project_name": "",
-                "agent_profile": "",
-                "settings": settings,
-            },
-        )
 
     def create_context(self, context_id: str) -> dict[str, Any]:
         return self._protected_json(

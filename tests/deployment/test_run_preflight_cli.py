@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from acmm.cli import _build_parser
-from acmm_infra.deployment import write_experiment_apparatus_state
 from experiment_package.support import (
     PACKAGE_SMOKE_CONTRACT,
     SMOKE_RUNTIME_SOURCE,
@@ -20,19 +19,17 @@ def test_real_run_rejects_wrong_deployment_context_before_execution(
     monkeypatch,
     capsys,
 ) -> None:
-    _, runtime_root = install_test_package(
+    package, runtime_root = install_test_package(
         tmp_path,
         monkeypatch,
         contract_path=CONTRACT,
         runtime_source=SMOKE_RUNTIME_SOURCE,
     )
-    write_experiment_apparatus_state(
-        runtime_root / "hermes",
-        experiment_id="other_package_v1",
-        source_sha256=None,
-        application_scope="experiment",
-        resources=[],
-    )
+    write_package_context(package, runtime_root, "hermes_gpt_oss120b")
+    marker = runtime_root / "hermes" / ".acmm-experiment-package.json"
+    payload = __import__("json").loads(marker.read_text(encoding="utf-8"))
+    payload["experiment_id"] = "other_package_v1"
+    marker.write_text(__import__("json").dumps(payload), encoding="utf-8")
 
     def forbidden_adapter_builder():
         raise AssertionError("adapter construction must not occur after preflight failure")
@@ -81,13 +78,11 @@ def test_real_run_requires_selected_subjects_to_converge_on_contract_experiment(
         runtime_source=SMOKE_RUNTIME_SOURCE,
     )
     write_package_context(package, runtime_root, "hermes_gpt_oss120b")
-    write_experiment_apparatus_state(
-        runtime_root / "open-webui",
-        experiment_id="other_package_v1",
-        source_sha256=None,
-        application_scope="experiment",
-        resources=[],
-    )
+    write_package_context(package, runtime_root, "open_webui_gpt_oss120b")
+    marker = runtime_root / "open-webui" / ".acmm-experiment-package.json"
+    payload = __import__("json").loads(marker.read_text(encoding="utf-8"))
+    payload["experiment_id"] = "other_package_v1"
+    marker.write_text(__import__("json").dumps(payload), encoding="utf-8")
 
     parser = _build_parser()
     args = parser.parse_args(
@@ -107,8 +102,8 @@ def test_real_run_requires_selected_subjects_to_converge_on_contract_experiment(
     assert not (tmp_path / "results").exists()
 
     captured = capsys.readouterr()
-    assert "  hermes_gpt_oss120b:\n    context:           ready" in captured.out
-    assert "  open_webui_gpt_oss120b:\n    context:           not-ready" in captured.out
+    assert "  hermes_gpt_oss120b:\n    context:         ready" in captured.out
+    assert "  open_webui_gpt_oss120b:\n    context:         not-ready" in captured.out
     assert "active experiment is 'other_package_v1'" in captured.err
     assert "no execution session was created" in captured.err
 
@@ -222,7 +217,7 @@ def test_preview_does_not_run_live_readiness(
 
     assert args.handler(args) == 0
     captured = capsys.readouterr()
-    assert "    context:           ready" in captured.out
+    assert "    context:         ready" in captured.out
     assert "Live readiness preflight" not in captured.out
 
 

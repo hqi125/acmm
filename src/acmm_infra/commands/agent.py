@@ -37,12 +37,6 @@ STANDARD_AGENT_COMMANDS = (
         "configure_apply_parser",
     ),
     command_definition(
-        "apply-tools",
-        "Reconcile the baseline tool policy and managed tool resources.",
-        "run_apply_tools",
-        "configure_apply_tools_parser",
-    ),
-    command_definition(
         "status",
         "Show desired and observed infrastructure state.",
         "run_status",
@@ -104,9 +98,6 @@ class agent_cli(ABC):
     def configure_apply_parser(self, parser: argparse.ArgumentParser) -> None:
         del parser
 
-    def configure_apply_tools_parser(self, parser: argparse.ArgumentParser) -> None:
-        del parser
-
     def configure_status_parser(self, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--json", action="store_true")
 
@@ -131,10 +122,6 @@ class agent_cli(ABC):
 
     @abstractmethod
     def run_apply(self, args: argparse.Namespace) -> int:
-        raise NotImplementedError
-
-    @abstractmethod
-    def run_apply_tools(self, args: argparse.Namespace) -> int:
         raise NotImplementedError
 
     @abstractmethod

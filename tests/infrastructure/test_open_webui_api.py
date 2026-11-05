@@ -4,7 +4,7 @@ from urllib.error import HTTPError
 
 import pytest
 
-from acmm_infra.open_webui_api import open_webui_api_client, open_webui_api_error
+from acmm_infra.subjects.open_webui.api import open_webui_api_client, open_webui_api_error
 
 
 class fake_response:
@@ -157,68 +157,10 @@ def test_get_models_uses_bearer_token_and_extracts_data() -> None:
     assert request.get_header("Authorization") == "Bearer session-token"
 
 
-def test_get_tool_returns_none_for_not_found() -> None:
-    def opener(request, *, timeout):
-        del timeout
-        raise HTTPError(
-            request.full_url,
-            404,
-            "Not Found",
-            {},
-            BytesIO(b'{"detail":"Not found"}'),
-        )
-
-    client = open_webui_api_client("http://127.0.0.1:3000", opener=opener)
-
-    assert client.get_tool("session-token", "acmm_tools") is None
 
 
-def test_delete_tool_uses_supported_delete_endpoint() -> None:
-    captured = {}
-
-    def opener(request, *, timeout):
-        del timeout
-        captured["request"] = request
-        return fake_response(True)
-
-    client = open_webui_api_client("http://127.0.0.1:3000", opener=opener)
-
-    deleted = client.delete_tool("session-token", "acmm_tools")
-    request = captured["request"]
-
-    assert deleted is True
-    assert request.get_method() == "DELETE"
-    assert request.full_url.endswith("/api/v1/tools/id/acmm_tools/delete")
-    assert request.get_header("Authorization") == "Bearer session-token"
 
 
-def test_update_tool_valves_posts_valve_fields_directly() -> None:
-    captured = {}
-
-    def opener(request, *, timeout):
-        del timeout
-        captured["request"] = request
-        return fake_response(
-            {
-                "magic_number": 87,
-                "retrieval_mode": "success",
-                "addition_mode": "failure",
-            }
-        )
-
-    client = open_webui_api_client("http://127.0.0.1:3000", opener=opener)
-    valves = {
-        "magic_number": 87,
-        "retrieval_mode": "success",
-        "addition_mode": "failure",
-    }
-
-    result = client.update_tool_valves("session-token", "acmm_tools", valves)
-    request = captured["request"]
-
-    assert result == valves
-    assert request.full_url.endswith("/api/v1/tools/id/acmm_tools/valves/update")
-    assert json.loads(request.data.decode("utf-8")) == valves
 
 
 def test_invalid_model_response_is_rejected() -> None:

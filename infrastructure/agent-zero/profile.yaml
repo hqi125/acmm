@@ -39,9 +39,6 @@ experiment_isolation:
   chat_naming:
     automatic_naming: false
 
-plugins:
-  managed: []
-
 reset_scopes:
   configuration:
     - settings.json

@@ -45,18 +45,6 @@ def _iter_compatibility_issues(
                 message=f"Fixture '{fixture}' is not registered by the harness.",
             )
 
-        tools = scenario.get("capabilities", {}).get("tools", [])
-
-        for tool_index, tool in enumerate(tools):
-            if tool not in capabilities.tools:
-                yield validation_issue(
-                    severity="error",
-                    code="unavailable_tool",
-                    path=(
-                        f"scenarios[{scenario_index}].capabilities.tools[{tool_index}]"
-                    ),
-                    message=f"Tool '{tool}' is not available from the harness.",
-                )
 
     capture = contract["evidence_policy"]["capture"]
 

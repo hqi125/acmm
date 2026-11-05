@@ -1,7 +1,0 @@
-name: acmm_tools
-title: ACMM Tools
-description: Controlled tools used by ACMM LLM behavioral qualification.
-version: 0.1.0
-settings_sections: []
-per_project_config: false
-per_agent_config: false

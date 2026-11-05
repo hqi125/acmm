@@ -54,7 +54,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
             adapter_builder=_build_hermes_adapter,
             runtime_details=(
                 ("container", "acmm-hermes"),
-                ("toolset overlay", "scenario-dependent"),
+                ("experiment integrations", "package-managed"),
             ),
             infrastructure_subject="hermes",
             llm_baseline_id="nemotron_3_nano_30b_cloud_v1",
@@ -67,7 +67,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
             adapter_builder=_build_open_webui_adapter,
             runtime_details=(
                 ("API", "http://127.0.0.1:3000"),
-                ("experiment Tool apparatus", "selected separately"),
+                ("experiment integrations", "package-managed"),
             ),
             infrastructure_subject="open-webui",
             llm_baseline_id="nemotron_3_nano_30b_cloud_v1",
@@ -81,7 +81,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
             runtime_details=(
                 ("API", "http://127.0.0.1:50080"),
                 ("profile", "acmm"),
-                ("experiment plugin apparatus", "selected separately"),
+                ("experiment integrations", "package-managed"),
             ),
             infrastructure_subject="agent-zero",
             llm_baseline_id="nemotron_3_nano_30b_cloud_v1",
@@ -94,7 +94,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
             adapter_builder=_build_hermes_adapter,
             runtime_details=(
                 ("container", "acmm-hermes"),
-                ("toolset overlay", "scenario-dependent"),
+                ("experiment integrations", "package-managed"),
             ),
             infrastructure_subject="hermes",
             llm_baseline_id="gpt_oss_120b_cloud_v1",
@@ -107,7 +107,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
             adapter_builder=_build_open_webui_adapter,
             runtime_details=(
                 ("API", "http://127.0.0.1:3000"),
-                ("experiment Tool apparatus", "selected separately"),
+                ("experiment integrations", "package-managed"),
             ),
             infrastructure_subject="open-webui",
             llm_baseline_id="gpt_oss_120b_cloud_v1",
@@ -121,7 +121,7 @@ def _build_catalog() -> Mapping[str, subject_execution_binding]:
             runtime_details=(
                 ("API", "http://127.0.0.1:50080"),
                 ("profile", "acmm"),
-                ("experiment plugin apparatus", "selected separately"),
+                ("experiment integrations", "package-managed"),
             ),
             infrastructure_subject="agent-zero",
             llm_baseline_id="gpt_oss_120b_cloud_v1",

@@ -1,9 +1,0 @@
-schema_version: "0.1"
-experiment_id: llm_behavioral_tool_smoke_v1
-
-tools:
-  managed:
-    - id: acmm_tools
-      name: ACMM Tools
-      description: Controlled tools used by ACMM LLM behavioral qualification.
-      source: tools/acmm_tools.py

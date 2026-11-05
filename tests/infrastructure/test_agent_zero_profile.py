@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from acmm_infra.profiles.agent_zero import load_agent_zero_profile
+from acmm_infra.subjects.agent_zero.profile import load_agent_zero_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,7 +32,6 @@ def test_agent_zero_profile_loads_repository_baseline() -> None:
     assert profile.experiment_isolation.mcp_tool_default == "block"
     assert profile.experiment_isolation.automatic_chat_naming is False
     assert profile.experiment_isolation.allowed_tools == ()
-    assert profile.plugins == ()
     assert profile.reset_scopes["configuration"] == (
         Path("settings.json"),
         Path("agents/acmm"),

@@ -6,7 +6,7 @@ from pathlib import Path
 from acmm_infra.common import infrastructure_error
 from acmm_infra.docker import docker_error
 from acmm_infra.profiles.common import profile_error
-from acmm_infra.subject_managers import (
+from acmm_infra.subjects.factory import (
     build_deployed_subject_manager,
     subject_manager_context,
 )

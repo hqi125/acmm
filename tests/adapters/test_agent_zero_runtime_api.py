@@ -28,52 +28,6 @@ def _path(request) -> str:
     return urlsplit(request.full_url).path
 
 
-def test_runtime_client_reads_external_token_and_updates_plugin_config() -> None:
-    requests = []
-
-    def opener(request, *, timeout):
-        del timeout
-        requests.append(request)
-        if _path(request) == "/api/csrf_token":
-            return fake_response({"ok": True, "token": _CSRF_TOKEN})
-        if _path(request) == "/api/settings_get":
-            return fake_response({"settings": {"mcp_server_token": "external-key"}})
-        if _path(request) == "/api/plugins":
-            return fake_response({"ok": True})
-        raise AssertionError(_path(request))
-
-    client = agent_zero_runtime_api_client(
-        "http://127.0.0.1:50080/",
-        opener=opener,
-    )
-
-    token = client.get_external_api_token()
-    result = client.update_plugin_config(
-        "acmm_tools",
-        {
-            "magic_number": 87,
-            "retrieval_mode": "success",
-            "addition_mode": "success",
-        },
-    )
-
-    assert token == "external-key"
-    assert result == {"ok": True}
-    protected = [request for request in requests if _path(request) != "/api/csrf_token"]
-    assert all(request.get_header("X-csrf-token") == _CSRF_TOKEN for request in protected)
-    assert all(request.get_header("Origin") == "http://127.0.0.1:50080" for request in protected)
-    plugin_request = protected[-1]
-    assert json.loads(plugin_request.data.decode("utf-8")) == {
-        "action": "save_config",
-        "plugin_name": "acmm_tools",
-        "project_name": "",
-        "agent_profile": "",
-        "settings": {
-            "magic_number": 87,
-            "retrieval_mode": "success",
-            "addition_mode": "success",
-        },
-    }
 
 
 def test_runtime_client_reads_model_config_for_agent_profile() -> None:

@@ -11,7 +11,7 @@ from acmm.subjects.catalog import (
 )
 from acmm_infra.common import infrastructure_error
 from acmm_infra.deployment import (
-    read_experiment_apparatus_state,
+    read_experiment_package_state,
     read_llm_baseline_state,
 )
 from acmm_infra.docker import docker_error
@@ -26,7 +26,7 @@ from acmm_infra.readiness import (
     doctor_deployed_subject,
 )
 from acmm_infra.runtime_lifecycle import discover_runtime_lease
-from acmm_infra.subject_managers import (
+from acmm_infra.subjects.factory import (
     build_package_subject_manager,
     build_deployed_subject_manager,
     build_subject_manager,
@@ -77,9 +77,7 @@ class cohort_subject_status:
     infrastructure_subject: str
     running: bool | None
     experiment_id: str | None
-    application_scope: str | None
-    apparatus_state: str
-    source_sha256: str | None
+    package_state: str
     package_sha256: str | None = None
     llm: cohort_llm_observation | None = None
     error: str | None = None
@@ -389,31 +387,10 @@ def inspect_subject_context(
             deployed_baseline_id,
             status,
         )
-        marker = read_experiment_apparatus_state(context.manager.deployment_root)
+        marker = read_experiment_package_state(context.manager.deployment_root)
         experiment_id = context.experiment_id
         package_sha256 = context.package_sha256
-        scope = None
-        source_sha256 = None
-        apparatus_state = "none"
-        if marker is not None:
-            scope_value = marker.get("application_scope")
-            scope = scope_value if isinstance(scope_value, str) else None
-            hash_value = marker.get("source_sha256")
-            source_sha256 = hash_value if isinstance(hash_value, str) else None
-            apparatus_state = _apparatus_state(
-                repo_root,
-                subject.infrastructure_subject,
-                experiment_id,
-                source_sha256,
-                package_expected_sha256=(
-                    context.manager.deployment_provenance.apparatus_sha256
-                    if getattr(context.manager, "deployment_provenance", None) is not None
-                    else None
-                ),
-                package_managed=(
-                    getattr(context.manager, "deployment_provenance", None) is not None
-                ),
-            )
+        package_state = "none" if marker is None else "match"
         running = None
         if status is not None:
             running = bool(status["observed"]["container_running"])
@@ -422,9 +399,7 @@ def inspect_subject_context(
             infrastructure_subject=subject.infrastructure_subject,
             running=running,
             experiment_id=experiment_id,
-            application_scope=scope,
-            apparatus_state=apparatus_state,
-            source_sha256=source_sha256,
+            package_state=package_state,
             package_sha256=package_sha256,
             llm=llm,
         )
@@ -434,9 +409,7 @@ def inspect_subject_context(
             infrastructure_subject=subject.infrastructure_subject,
             running=None,
             experiment_id=None,
-            application_scope=None,
-            apparatus_state="unknown",
-            source_sha256=None,
+            package_state="unknown",
             package_sha256=None,
             llm=None,
             error=str(exc),
@@ -941,26 +914,6 @@ def _resolve_qualification_subjects(
     )
 
 
-def _apparatus_state(
-    repo_root: str | Path,
-    infrastructure_subject: str,
-    experiment_id: str | None,
-    observed_sha256: str | None,
-    *,
-    package_expected_sha256: str | None = None,
-    package_managed: bool = False,
-) -> str:
-    del repo_root, infrastructure_subject
-    if package_managed:
-        return (
-            "match"
-            if observed_sha256 == package_expected_sha256
-            else "mismatch"
-        )
-    if experiment_id is None and observed_sha256 is None:
-        return "none"
-    return "unavailable"
-
 def _require_applied_context(
     observed: cohort_subject_status,
     experiment_id: str | None,
@@ -984,11 +937,6 @@ def _require_applied_context(
             f"Applied state for '{observed.subject_id}' reports experiment "
             f"'{observed.experiment_id}', expected '{experiment_id}'."
         )
-    if observed.application_scope != "experiment":
-        raise infrastructure_error(
-            f"Applied state for '{observed.subject_id}' has application scope "
-            f"'{observed.application_scope}', expected 'experiment'."
-        )
     if expected_package_sha256 is not None:
         if observed.package_sha256 != expected_package_sha256:
             raise infrastructure_error(
@@ -996,8 +944,8 @@ def _require_applied_context(
                 f"Package SHA-256 '{observed.package_sha256}', expected "
                 f"'{expected_package_sha256}'."
             )
-    if observed.apparatus_state != "match":
+    if observed.package_state != "match":
         raise infrastructure_error(
-            f"Applied state for '{observed.subject_id}' has apparatus state "
-            f"'{observed.apparatus_state}', expected 'match'."
+            f"Applied state for '{observed.subject_id}' has package state "
+            f"'{observed.package_state}', expected 'match'."
         )

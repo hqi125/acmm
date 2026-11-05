@@ -35,19 +35,6 @@ class open_webui_runtime_api_client:
         )
         return _require_object(result, "Open WebUI sign-in response")
 
-    def update_tool_valves(
-        self,
-        token: str,
-        tool_id: str,
-        valves: dict[str, Any],
-    ) -> dict[str, Any]:
-        result = self._request_json(
-            "POST",
-            f"/api/v1/tools/id/{tool_id}/valves/update",
-            payload=valves,
-            token=token,
-        )
-        return _require_object(result, "Open WebUI tool valve response")
 
     def create_chat(
         self,

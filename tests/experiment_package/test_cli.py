@@ -11,7 +11,7 @@ from acmm.experiment_package import (
     acquire_experiment_package,
     deployment_provenance,
 )
-from acmm_infra.deployment import write_experiment_apparatus_state
+from acmm_infra.deployment import write_experiment_package_state
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -47,7 +47,6 @@ def build_runtime(context):
         capabilities=harness_capabilities(
             evaluators=frozenset({"fixture_value_retrieval", "fixture_value_addition"}),
             fixtures=frozenset({"package_fixture_environment_v1"}),
-            tools=frozenset({"get_fixture_value", "add_numbers"}),
             evidence_channels=frozenset(
                 {"conversation", "tool_calls", "tool_results", "final_response"}
             ),
@@ -213,11 +212,9 @@ def test_run_installed_unregistered_package_uses_explicit_selector(
     shutil.rmtree(source)
 
     provenance = deployment_provenance(package, "hermes")
-    write_experiment_apparatus_state(
+    write_experiment_package_state(
         runtime_root / "hermes",
         experiment_id=EXPERIMENT_ID,
-        source_sha256=None,
-        application_scope="experiment",
         resources=[],
         package_provenance=provenance,
     )
@@ -237,7 +234,7 @@ def test_run_installed_unregistered_package_uses_explicit_selector(
     captured = capsys.readouterr()
     assert "installed Experiment Package" in captured.out
     assert EXPERIMENT_ID in captured.out
-    assert "apparatus:         match (none declared)" in captured.out
+    assert "context:         ready" in captured.out
     assert captured.err == ""
 
 
@@ -271,9 +268,7 @@ def test_package_apply_resolves_installed_package_cohort(
                 infrastructure_subject=subject.infrastructure_subject,
                 running=False,
                 experiment_id=cohort.experiment_id,
-                application_scope="experiment",
-                apparatus_state="match",
-                source_sha256=None,
+                package_state="match",
                 package_sha256=cohort.package.package_sha256,
             ),
         )

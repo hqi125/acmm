@@ -3,18 +3,15 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from acmm_infra.hermes_client import (
+from acmm_infra.subjects.hermes.client import (
     _provider_model_catalog_python,
     hermes_client,
 )
 from acmm_infra.process import command_result
-from acmm_infra.profiles.experiments import with_hermes_apparatus
-from acmm_infra.profiles.hermes import load_hermes_profile
+from acmm_infra.subjects.hermes.profile import load_hermes_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
-APPARATUS_ID = "llm_behavioral_tool_smoke_v1"
-
 
 class fake_docker:
     def __init__(self) -> None:
@@ -102,21 +99,13 @@ def test_client_filters_hermes_provision_progress() -> None:
 def test_client_observes_and_parses_hermes_state() -> None:
     docker = fake_docker()
     client = hermes_client(docker)  # type: ignore[arg-type]
-    profile = with_hermes_apparatus(
-        ROOT / "tools" / "fixtures" / "llm_behavioral_tool_smoke" / "hermes",
-        load_hermes_profile(ROOT),
-        APPARATUS_ID,
-    )
+    profile = load_hermes_profile(ROOT)
 
     observation = client.observe(profile)
 
     assert observation.succeeded
     assert observation.error is None
     assert observation.values["model_provider"] == "custom"
-    assert observation.values["plugins_enabled"] == ["acmm-tools"]
-    assert observation.values["plugin_tool_overrides"] == {
-        "acmm-tools": False,
-    }
 
 
 def test_provider_model_catalog_probe_is_valid_python() -> None:
@@ -204,23 +193,3 @@ def test_client_unsets_stale_managed_config_before_profile_apply() -> None:
     assert docker.last_script.index(unset) < docker.last_script.index(first_set)
 
 
-def test_client_tool_apply_includes_managed_config_and_cleanup() -> None:
-    docker = fake_docker()
-    client = hermes_client(docker)  # type: ignore[arg-type]
-    profile = replace(
-        load_hermes_profile(ROOT),
-        managed_config_overrides=(
-            ("external_capabilities.current.url", "https://example.invalid/mcp"),
-        ),
-    )
-
-    client.apply_tools(
-        profile,
-        timeout_seconds=120.0,
-        output_mode="quiet",
-        output=lambda _: None,
-        unset_config_keys=("external_capabilities.old.url",),
-    )
-
-    assert "config unset external_capabilities.old.url" in docker.last_script
-    assert "config set external_capabilities.current.url" in docker.last_script

@@ -23,12 +23,6 @@ class agent_zero_adapter_client(Protocol):
     def get_model_config(self, *, agent_profile: str) -> dict[str, Any]:
         ...
 
-    def update_plugin_config(
-        self,
-        plugin_name: str,
-        settings: dict[str, Any],
-    ) -> dict[str, Any]:
-        ...
 
     def create_context(self, context_id: str) -> dict[str, Any]:
         ...
@@ -60,12 +54,10 @@ class agent_zero_adapter_client(Protocol):
 
 @dataclass(frozen=True)
 class agent_zero_adapter_config:
-    plugin_name: str = "acmm_tools"
     agent_profile: str = "acmm"
     context_lifetime_hours: float = 1.0
     log_length: int = 1000
     terminate_context_after_run: bool = True
-    restore_tool_baseline_after_run: bool = True
 
 
 class agent_zero_adapter:
@@ -88,22 +80,9 @@ class agent_zero_adapter:
         context_id: str | None = None
         prompt: str | None = None
         model_observation: dict[str, Any] | None = None
-        tool_config_applied = False
-        baseline_config: dict[str, Any] | None = None
 
         try:
-            use_experiment_tools = _scenario_uses_experiment_tools(scenario)
             api_key = self._client.get_external_api_token()
-
-            if use_experiment_tools:
-                runtime_config = _runtime_tool_config(environment)
-                if self._config.restore_tool_baseline_after_run:
-                    baseline_config = _baseline_tool_config(environment)
-                self._client.update_plugin_config(
-                    self._config.plugin_name,
-                    runtime_config,
-                )
-                tool_config_applied = True
 
             prompt = _required_string(
                 scenario.get("task", {}).get("prompt"),
@@ -171,7 +150,6 @@ class agent_zero_adapter:
                 prompt=prompt,
                 final_response=final_response,
                 subject=subject,
-                plugin_name=self._config.plugin_name,
                 agent_profile=self._config.agent_profile,
                 model_observation=model_observation,
             )
@@ -209,8 +187,7 @@ class agent_zero_adapter:
                     prompt=prompt,
                     final_response="",
                     subject=subject,
-                    plugin_name=self._config.plugin_name,
-                    agent_profile=self._config.agent_profile,
+                        agent_profile=self._config.agent_profile,
                     model_observation=model_observation,
                     require_final_response=False,
                 )
@@ -249,18 +226,6 @@ class agent_zero_adapter:
                 except Exception:
                     pass
 
-            if (
-                self._config.restore_tool_baseline_after_run
-                and tool_config_applied
-                and baseline_config is not None
-            ):
-                try:
-                    self._client.update_plugin_config(
-                        self._config.plugin_name,
-                        baseline_config,
-                    )
-                except Exception:
-                    pass
 
 
 @dataclass(frozen=True)
@@ -277,7 +242,6 @@ def _parse_run(
     prompt: str,
     final_response: str,
     subject: dict[str, Any],
-    plugin_name: str,
     agent_profile: str,
     model_observation: dict[str, Any] | None,
     require_final_response: bool = True,
@@ -307,7 +271,6 @@ def _parse_run(
         prompt=prompt,
         items=items,
         final_response=final_response,
-        plugin_name=plugin_name,
     )
     provenance = _subject_provenance(
         subject=subject,
@@ -369,7 +332,6 @@ def _normalize_log_items(
     prompt: str,
     items: list[Any],
     final_response: str,
-    plugin_name: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     conversation: list[dict[str, Any]] = [
         {
@@ -392,7 +354,7 @@ def _normalize_log_items(
         if not isinstance(raw_name, str) or not raw_name:
             continue
 
-        name = _normalize_tool_name(raw_name, plugin_name)
+        name = raw_name
 
         call_id = item.get("id")
         if not isinstance(call_id, str) or not call_id:
@@ -467,63 +429,6 @@ def _normalize_log_items(
     )
     return conversation, tool_calls, tool_results
 
-
-def _normalize_tool_name(name: str, plugin_name: str) -> str:
-    prefixes = (
-        f"plugin:{plugin_name}:",
-        f"{plugin_name}:",
-    )
-    for prefix in prefixes:
-        if name.startswith(prefix):
-            return name[len(prefix):]
-    return name
-
-
-def _scenario_uses_experiment_tools(scenario: dict[str, Any]) -> bool:
-    capabilities = scenario.get("capabilities")
-    if capabilities is None:
-        return True
-    if not isinstance(capabilities, dict):
-        return True
-
-    tools = capabilities.get("tools")
-    if tools is None:
-        return True
-    return isinstance(tools, list) and bool(tools)
-
-
-def _runtime_tool_config(environment: Any) -> dict[str, Any]:
-    if not isinstance(environment, dict):
-        raise agent_zero_adapter_error(
-            "Agent Zero Tool execution requires a fixture environment mapping."
-        )
-
-    if "ACMM_TOOL_CONFIG_JSON" not in environment:
-        raise agent_zero_adapter_error(
-            "Agent Zero fixture environment is missing ACMM_TOOL_CONFIG_JSON."
-        )
-
-    return _json_object_configuration(
-        environment["ACMM_TOOL_CONFIG_JSON"],
-        "ACMM_TOOL_CONFIG_JSON",
-    )
-
-
-def _baseline_tool_config(environment: Any) -> dict[str, Any]:
-    if not isinstance(environment, dict):
-        raise agent_zero_adapter_error(
-            "Agent Zero Tool execution requires a fixture environment mapping."
-        )
-
-    if "ACMM_TOOL_BASELINE_JSON" not in environment:
-        raise agent_zero_adapter_error(
-            "Agent Zero fixture environment is missing ACMM_TOOL_BASELINE_JSON."
-        )
-
-    return _json_object_configuration(
-        environment["ACMM_TOOL_BASELINE_JSON"],
-        "ACMM_TOOL_BASELINE_JSON",
-    )
 
 def _json_object_configuration(value: Any, name: str) -> dict[str, Any]:
     if not isinstance(value, str):

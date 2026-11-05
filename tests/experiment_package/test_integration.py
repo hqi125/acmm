@@ -7,15 +7,15 @@ import pytest
 
 from acmm.experiment_package import (
     acquire_experiment_package,
-    compose_staged_experiment_integrations,
+    compose_staged_experiment_profile_integrations,
     compose_staged_experiment_manager_integrations,
     experiment_integration_error,
     load_experiment_package,
     load_staged_experiment_integration,
     load_staged_experiment_integrations,
 )
-from acmm_infra.profiles.hermes import load_hermes_profile
-from acmm_infra.subject_managers import build_package_subject_manager
+from acmm_infra.subjects.hermes.profile import load_hermes_profile
+from acmm_infra.subjects.factory import build_package_subject_manager
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -193,7 +193,7 @@ def test_integration_composes_subject_profile_from_staged_code(tmp_path: Path) -
     shutil.rmtree(source)
     baseline = load_hermes_profile(ROOT)
 
-    composed = compose_staged_experiment_integrations(
+    composed = compose_staged_experiment_profile_integrations(
         package,
         "hermes",
         baseline.llm_baseline_id,
@@ -285,7 +285,7 @@ def build_integration(context):
     baseline = load_hermes_profile(ROOT)
 
     with pytest.raises(experiment_integration_error, match="preserve the subject profile type"):
-        compose_staged_experiment_integrations(
+        compose_staged_experiment_profile_integrations(
             package,
             "hermes",
             baseline.llm_baseline_id,

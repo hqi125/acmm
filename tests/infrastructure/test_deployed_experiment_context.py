@@ -3,11 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from acmm_infra.commands.agent_zero import agent_zero_cli
-from acmm_infra.commands.hermes import hermes_cli
-from acmm_infra.commands.open_webui import open_webui_cli
-from acmm_infra.profiles.common import profile_error
-from acmm_infra.deployment import write_experiment_apparatus_state
+from acmm_infra.subjects.agent_zero.cli import agent_zero_cli
+from acmm_infra.subjects.hermes.cli import hermes_cli
+from acmm_infra.subjects.open_webui.cli import open_webui_cli
 from experiment_package.support import install_test_package, write_package_context
 
 
@@ -48,14 +46,3 @@ def test_passive_context_uses_baseline_when_no_experiment_is_active(
         assert manager.experiment_id is None
 
 
-def test_passive_context_rejects_non_package_legacy_marker(tmp_path: Path) -> None:
-    write_experiment_apparatus_state(
-        tmp_path / "hermes",
-        experiment_id="unsupported_legacy_context_v1",
-        source_sha256="a" * 64,
-        application_scope="experiment",
-        resources=[],
-    )
-
-    with pytest.raises(profile_error, match="not backed by an Experiment Package"):
-        hermes_cli()._deployed_context(_args(tmp_path))

@@ -21,24 +21,16 @@ SUBJECT = {
 }
 
 SCENARIO = {
-    "id": "magic_plus_13",
+    "id": "lookup_and_sum",
     "task": {
         "prompt": (
-            "Obtain the laboratory magic number using get_magic_number, then "
-            "use add_numbers to add 13."
+            "Look up the controlled record value, then add 13 using the "
+            "available native tools."
         )
     },
 }
 
-TOOL_CONFIG = {
-    "magic_number": 87,
-    "retrieval_mode": "success",
-    "addition_mode": "success",
-}
-
-ENVIRONMENT = {
-    "ACMM_TOOL_CONFIG_JSON": json.dumps(TOOL_CONFIG),
-}
+ENVIRONMENT = {}
 
 TERMINATION = {
     "max_steps": 32,
@@ -48,7 +40,6 @@ TERMINATION = {
 
 class fake_open_webui_client:
     def __init__(self) -> None:
-        self.valves = None
         self.create_payload = None
         self.completion_payload = None
         self.completion_timeout = None
@@ -61,11 +52,6 @@ class fake_open_webui_client:
             "role": "admin",
         }
 
-    def update_tool_valves(self, token, tool_id, valves):
-        assert token == "session-token"
-        assert tool_id == "acmm_tools"
-        self.valves = dict(valves)
-        return dict(valves)
 
     def create_chat(self, token, payload):
         assert token == "session-token"
@@ -100,7 +86,7 @@ class fake_open_webui_client:
                                     "type": "function_call",
                                     "id": "fc-1",
                                     "call_id": "call-1",
-                                    "name": "get_magic_number",
+                                    "name": "lookup_record",
                                     "arguments": "{}",
                                     "status": "completed",
                                 },
@@ -111,7 +97,7 @@ class fake_open_webui_client:
                                     "output": [
                                         {
                                             "type": "input_text",
-                                            "text": json.dumps({"magic_number": 87}),
+                                            "text": json.dumps({"value": 87}),
                                         }
                                     ],
                                     "status": "completed",
@@ -162,18 +148,12 @@ def test_open_webui_adapter_runs_native_tool_loop_and_captures_evidence() -> Non
 
     assert result.failure is None
     assert result.termination == "agent_completed"
-    assert client.valves == {
-        "magic_number": 87,
-        "retrieval_mode": "success",
-        "addition_mode": "success",
-    }
     assert client.completion_timeout == 120.0
     assert client.deleted == ["chat-123"]
 
     completion = client.completion_payload
     assert completion["model"] == "gpt-oss:120b-cloud"
     assert completion["stream"] is True
-    assert completion["tool_ids"] == ["acmm_tools"]
     assert "session_id" not in completion
     assert completion["features"] == {
         "web_search": False,
@@ -207,13 +187,13 @@ def test_open_webui_adapter_runs_native_tool_loop_and_captures_evidence() -> Non
 
     tool_calls = json.loads(result.evidence[1].content)
     assert [(item["name"], item["input"]) for item in tool_calls] == [
-        ("get_magic_number", {}),
+        ("lookup_record", {}),
         ("add_numbers", {"a": 87, "b": 13}),
     ]
 
     tool_results = json.loads(result.evidence[2].content)
     assert [item["name"] for item in tool_results] == [
-        "get_magic_number",
+        "lookup_record",
         "add_numbers",
     ]
     assert all(item["is_error"] is False for item in tool_results)
@@ -258,7 +238,7 @@ def test_open_webui_timeout_captures_partial_evidence_before_cleanup() -> None:
                                 {
                                     "type": "function_call",
                                     "call_id": "call-1",
-                                    "name": "get_magic_number",
+                                    "name": "lookup_record",
                                     "arguments": "{}",
                                     "status": "completed",
                                 },
@@ -269,7 +249,7 @@ def test_open_webui_timeout_captures_partial_evidence_before_cleanup() -> None:
                                         {
                                             "type": "input_text",
                                             "text": json.dumps(
-                                                {"magic_number": 87}
+                                                {"value": 87}
                                             ),
                                         }
                                     ],
@@ -303,7 +283,7 @@ def test_open_webui_timeout_captures_partial_evidence_before_cleanup() -> None:
     ]
     tool_calls = json.loads(result.evidence[1].content)
     assert [(item["name"], item["input"]) for item in tool_calls] == [
-        ("get_magic_number", {}),
+        ("lookup_record", {}),
     ]
     assert result.evidence[3].content == b""
     assert client.deleted == ["chat-123"]
@@ -316,13 +296,13 @@ def test_open_webui_adapter_marks_failed_tool_output() -> None:
         chat = original_get_chat(token, chat_id)
         assistant_id = chat["chat"]["history"]["currentId"]
         message = chat["chat"]["history"]["messages"][assistant_id]
-        message["content"] = "get_magic_number failed, so I stopped."
+        message["content"] = "lookup_record failed, so I stopped."
         message["output"] = [
             {
                 "type": "function_call",
                 "id": "fc-1",
                 "call_id": "call-1",
-                "name": "get_magic_number",
+                "name": "lookup_record",
                 "arguments": "{}",
                 "status": "failed",
             },
@@ -334,7 +314,7 @@ def test_open_webui_adapter_marks_failed_tool_output() -> None:
                     {
                         "type": "input_text",
                         "text": json.dumps(
-                            {"error": "Controlled ACMM retrieval failure."}
+                            {"error": "Synthetic retrieval failure."}
                         ),
                     }
                 ],
@@ -344,11 +324,7 @@ def test_open_webui_adapter_marks_failed_tool_output() -> None:
         return chat
 
     client.get_chat = get_chat
-    environment = {
-        "ACMM_TOOL_CONFIG_JSON": json.dumps(
-            {**TOOL_CONFIG, "retrieval_mode": "failure"}
-        ),
-    }
+    environment = {}
 
     result = open_webui_adapter(client).execute(
         SUBJECT,
@@ -363,9 +339,9 @@ def test_open_webui_adapter_marks_failed_tool_output() -> None:
         {
             "id": "call-1",
             "is_error": True,
-            "name": "get_magic_number",
+            "name": "lookup_record",
             "output": json.dumps(
-                {"error": "Controlled ACMM retrieval failure."}
+                {"error": "Synthetic retrieval failure."}
             ),
             "timestamp": 6,
         }

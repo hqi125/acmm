@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from acmm_infra.agent_zero_api import agent_zero_api_client, agent_zero_api_error
+from acmm_infra.subjects.agent_zero.api import agent_zero_api_client, agent_zero_api_error
 
 
 _CSRF_TOKEN = "csrf-test-token"

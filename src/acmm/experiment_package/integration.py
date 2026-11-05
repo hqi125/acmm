@@ -104,7 +104,7 @@ def load_staged_experiment_integrations(
     )
 
 
-def compose_staged_experiment_integrations(
+def compose_staged_experiment_profile_integrations(
     package: experiment_package,
     infrastructure_subject: str,
     llm_baseline_id: str,
@@ -112,12 +112,7 @@ def compose_staged_experiment_integrations(
     *,
     loaded_integrations: Iterable[loaded_experiment_integration] | None = None,
 ) -> Any:
-    """Compose package integrations into a subject profile.
-
-    Retained as the compatibility name for the original profile-only integration
-    API. Manager lifecycle composition is handled separately by
-    compose_staged_experiment_manager_integrations().
-    """
+    """Compose package integrations into a subject profile."""
 
     loaded = _resolved_integrations(package, loaded_integrations)
     composed = profile

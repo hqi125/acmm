@@ -237,9 +237,8 @@ def run_package_apply(args: argparse.Namespace) -> int:
     print("  deployment contexts:")
     for item in results:
         print(f"    {item.subject_id}:")
-        print(f"      application scope: {item.application_scope}")
-        print(f"      apparatus:         {item.apparatus_state}")
-        print(f"      apparatus SHA-256: {item.source_sha256 or 'none'}")
+        print(f"      package state:     {item.package_state}")
+        print(f"      package SHA-256:   {item.package_sha256 or 'none'}")
     return 0
 
 
@@ -433,13 +432,6 @@ def _print_package_summary(package: experiment_package, *, installed: bool) -> N
         print("  runtime:          none")
     else:
         print(f"  runtime SHA-256:  {package.runtime.sha256}")
-
-    if package.apparatus:
-        print("  apparatus:")
-        for subject, component in package.apparatus.items():
-            print(f"    {subject}: {component.sha256}")
-    else:
-        print("  apparatus:        none")
 
     if package.integrations:
         print("  integrations:")

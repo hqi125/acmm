@@ -38,9 +38,6 @@ experiment_isolation:
   background_review_enabled: false
   tool_search_enabled: "off"
 
-plugins:
-  managed: []
-
 reset_scopes:
   sessions:
     - sessions

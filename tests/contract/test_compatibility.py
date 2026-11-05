@@ -18,12 +18,6 @@ def _full_capabilities() -> harness_capabilities:
             }
         ),
         fixtures=frozenset({"synthetic_environment_v1"}),
-        tools=frozenset(
-            {
-                "get_fixture_value",
-                "add_numbers",
-            }
-        ),
         evidence_channels=frozenset(
             {
                 "conversation",
@@ -55,7 +49,6 @@ def test_missing_harness_resources_are_reported() -> None:
         harness_capabilities(
             evaluators=frozenset(),
             fixtures=frozenset(),
-            tools=frozenset(),
             evidence_channels=frozenset(),
         ),
     )
@@ -64,5 +57,4 @@ def test_missing_harness_resources_are_reported() -> None:
 
     assert "unavailable_evaluator" in codes
     assert "unavailable_fixture" in codes
-    assert "unavailable_tool" in codes
     assert "unsupported_evidence_channel" in codes

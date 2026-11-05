@@ -14,7 +14,7 @@ from acmm_infra.cohort import (
     summarize_context,
 )
 from acmm_infra.common import infrastructure_error
-from acmm_infra.subject_managers import subject_manager_context
+from acmm_infra.subjects.factory import subject_manager_context
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -97,9 +97,7 @@ def test_resolve_attached_package_cohort_filters_exact_package_revision(
             infrastructure_subject=subject.infrastructure_subject,
             running=None,
             experiment_id="external_v1",
-            application_scope="experiment",
-            apparatus_state="match",
-            source_sha256=None,
+            package_state="match",
             package_sha256=package_sha,
         )
 
@@ -205,9 +203,7 @@ def test_apply_cohort_propagates_selected_llm_baseline(monkeypatch, tmp_path: Pa
             infrastructure_subject=subject.infrastructure_subject,
             running=None,
             experiment_id=None,
-            application_scope=None,
-            apparatus_state="none",
-            source_sha256=None,
+            package_state="none",
         )
 
     monkeypatch.setattr(cohort_module, "build_subject_manager", fake_builder)
@@ -267,9 +263,7 @@ def test_apply_cohort_uses_package_subject_manager_when_package_is_present(
             infrastructure_subject=subject.infrastructure_subject,
             running=None,
             experiment_id="external_v1",
-            application_scope="experiment",
-            apparatus_state="match",
-            source_sha256=None,
+            package_state="match",
             package_sha256="a" * 64,
         )
 
@@ -353,9 +347,7 @@ def test_summarize_context_distinguishes_convergence_states() -> None:
             infrastructure_subject=subject_id,
             running=False,
             experiment_id=experiment_id,
-            application_scope="experiment" if experiment_id else None,
-            apparatus_state="match" if experiment_id else "none",
-            source_sha256=None,
+            package_state="match" if experiment_id else "none",
             package_sha256=package_sha256,
         )
 
@@ -420,9 +412,7 @@ def test_apply_cohort_reports_partial_failure_without_rollback(monkeypatch, tmp_
             infrastructure_subject=subject.infrastructure_subject,
             running=None,
             experiment_id="example_v1",
-            application_scope="experiment",
-            apparatus_state="match",
-            source_sha256="abc",
+            package_state="match",
         )
 
     monkeypatch.setattr(cohort_module, "build_subject_manager", fake_builder)

@@ -9,7 +9,7 @@ from acmm.experiment_package import (
     install_experiment_package,
 )
 from acmm.subjects.catalog import lookup_subject_execution_binding
-from acmm_infra.deployment import write_experiment_apparatus_state
+from acmm_infra.deployment import write_experiment_package_state
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,7 +41,6 @@ def build_runtime(context):
         capabilities=harness_capabilities(
             evaluators=frozenset({"always_compliant"}),
             fixtures=frozenset(),
-            tools=frozenset(),
             evidence_channels=frozenset({"final_response"}),
         ),
         evaluators={"always_compliant": always_compliant_evaluator()},
@@ -98,11 +97,9 @@ def write_package_context(
     binding = lookup_subject_execution_binding(subject_id)
     assert binding is not None
     provenance = deployment_provenance(package, binding.infrastructure_subject)
-    write_experiment_apparatus_state(
+    write_experiment_package_state(
         runtime_root / binding.infrastructure_subject,
         experiment_id=package.experiment_id,
-        source_sha256=provenance.apparatus_sha256,
-        application_scope="experiment",
         resources=[],
         package_provenance=provenance,
     )

@@ -61,7 +61,6 @@ def build_runtime(context):
         capabilities=harness_capabilities(
             evaluators=frozenset({"fixture_value_retrieval", "fixture_value_addition"}),
             fixtures=frozenset({"package_fixture_environment_v1"}),
-            tools=frozenset({"get_fixture_value", "add_numbers"}),
             evidence_channels=frozenset(
                 {"conversation", "tool_calls", "tool_results", "final_response"}
             ),

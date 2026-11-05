@@ -34,9 +34,6 @@ def _write_package(root: Path, *, full: bool = True) -> None:
             '  api_version: "0.1"\n'
             "  root: runtime\n"
             "  entrypoint: build_runtime\n"
-            "apparatus:\n"
-            "  hermes: apparatus/hermes\n"
-            "  open-webui: apparatus/open-webui\n"
             "analysis:\n"
             "  supplementary:\n"
             "    - kind: interaction\n"
@@ -56,14 +53,6 @@ def _write_package(root: Path, *, full: bool = True) -> None:
     )
     (runtime_root / "fixtures.py").write_text("VALUE = 1\n", encoding="utf-8")
 
-    for subject in ("hermes", "open-webui"):
-        apparatus_root = root / "apparatus" / subject
-        apparatus_root.mkdir(parents=True)
-        (apparatus_root / "apparatus.yaml").write_text(
-            'schema_version: "0.1"\n'
-            f"experiment_id: {EXPERIMENT_ID}\n",
-            encoding="utf-8",
-        )
 
     analysis_root = root / "analysis"
     analysis_root.mkdir()
@@ -93,9 +82,6 @@ def test_load_experiment_package_enumerates_declared_components(tmp_path: Path) 
     assert package.runtime.root == package_root.resolve() / "runtime"
     assert package.runtime.entrypoint == "build_runtime"
     assert len(package.runtime.sha256) == 64
-    assert tuple(package.apparatus) == ("hermes", "open-webui")
-    assert package.apparatus["hermes"].root == package_root.resolve() / "apparatus/hermes"
-    assert len(package.apparatus["hermes"].sha256) == 64
     assert len(package.analysis) == 1
     assert package.analysis[0].kind == "interaction"
     assert package.analysis[0].configuration == (
@@ -113,7 +99,6 @@ def test_minimal_package_requires_only_manifest_and_contract(tmp_path: Path) -> 
     )
 
     assert package.runtime is None
-    assert not package.apparatus
     assert package.analysis == ()
 
 
@@ -126,7 +111,6 @@ def test_package_digest_is_deterministic_and_component_specific(tmp_path: Path) 
         contract_schema_path=CONTRACT_SCHEMA,
     )
     runtime_sha256 = first.runtime.sha256 if first.runtime is not None else None
-    apparatus_sha256 = first.apparatus["hermes"].sha256
 
     (package_root / "README.md").write_text("Research notes.\n", encoding="utf-8")
     second = load_experiment_package(
@@ -138,7 +122,6 @@ def test_package_digest_is_deterministic_and_component_specific(tmp_path: Path) 
     assert second.contract_sha256 == first.contract_sha256
     assert second.runtime is not None
     assert second.runtime.sha256 == runtime_sha256
-    assert second.apparatus["hermes"].sha256 == apparatus_sha256
 
 
 def test_package_digest_ignores_fixed_generated_artifacts(tmp_path: Path) -> None:
@@ -216,20 +199,6 @@ def test_manifest_and_contract_experiment_ids_must_match(tmp_path: Path) -> None
         )
 
 
-def test_apparatus_experiment_id_must_match_package(tmp_path: Path) -> None:
-    package_root = tmp_path / "package"
-    _write_package(package_root)
-    apparatus = package_root / "apparatus" / "hermes" / "apparatus.yaml"
-    apparatus.write_text(
-        'schema_version: "0.1"\nexperiment_id: wrong_experiment_v1\n',
-        encoding="utf-8",
-    )
-
-    with pytest.raises(experiment_package_error, match="apparatus experiment_id"):
-        load_experiment_package(
-            package_root,
-            contract_schema_path=CONTRACT_SCHEMA,
-        )
 
 
 def test_runtime_root_must_contain_python_package_entrypoint(tmp_path: Path) -> None:

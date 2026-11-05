@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -12,48 +11,28 @@ from acmm.experiment_package.provenance import (
     experiment_package_provenance,
 )
 from acmm_infra.docker import docker_error
-from acmm_infra.hermes import hermes_manager, infrastructure_error
+from acmm_infra.subjects.hermes.manager import hermes_manager, infrastructure_error
 from acmm_infra.process import command_result
-from acmm_infra.profiles.experiments import (
-    apparatus_tree_sha256,
-    with_hermes_apparatus,
-)
-from acmm_infra.profiles.hermes import load_hermes_profile
+from acmm_infra.subjects.hermes.profile import load_hermes_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXPERIMENT_ID = "manager_apparatus_fixture_v1"
-
-EXTERNAL_PACKAGE_EXPERIMENT_ID = "external_package_doctor_v1"
-
-
-def _apparatus_root(tmp_path: Path, experiment_id: str = EXPERIMENT_ID) -> Path:
-    source = ROOT / "tools" / "fixtures" / "llm_behavioral_tool_smoke" / "hermes"
-    target = tmp_path / "apparatus-source" / "hermes" / experiment_id
-    if target.exists():
-        shutil.rmtree(target)
-    shutil.copytree(source, target)
-    manifest = target / "apparatus.yaml"
-    text = manifest.read_text(encoding="utf-8")
-    text = text.replace("llm_behavioral_tool_smoke_v1", experiment_id)
-    manifest.write_text(text, encoding="utf-8")
-    return target
+EXPERIMENT_ID = "integration_fixture_v1"
 
 
 def _package_provenance(
-    infrastructure_subject: str,
-    apparatus_sha256: str,
+    experiment_id: str,
 ) -> experiment_deployment_provenance:
     return experiment_deployment_provenance(
         package=experiment_package_provenance(
-            experiment_id=EXTERNAL_PACKAGE_EXPERIMENT_ID,
-            package_schema_version="0.1",
+            experiment_id=experiment_id,
+            package_schema_version="0.2",
             package_sha256="1" * 64,
             contract_sha256="2" * 64,
             runtime_sha256="3" * 64,
         ),
-        infrastructure_subject=infrastructure_subject,
-        apparatus_sha256=apparatus_sha256,
+        infrastructure_subject="hermes",
+        integrations=(),
     )
 
 
@@ -477,29 +456,16 @@ def _ok(args: tuple[str, ...], stdout: str) -> command_result:
 def _manager(
     tmp_path: Path,
     docker: fake_docker | None = None,
-    *,
-    experiment: bool = False,
 ):
     profile = load_hermes_profile(ROOT)
-    if experiment:
-        profile = with_hermes_apparatus(_apparatus_root(tmp_path), profile, EXPERIMENT_ID)
     docker_instance = docker or fake_docker()
     manager = hermes_manager(
         repo_root=ROOT,
         runtime_root=tmp_path,
         profile=profile,
         docker=docker_instance,
-        experiment_id=EXPERIMENT_ID if experiment else None,
-        apparatus_source_sha256=(
-            apparatus_tree_sha256(_apparatus_root(tmp_path)) if experiment else None
-        ),
     )
     return manager, docker_instance
-
-
-def _experiment_manager(tmp_path: Path, docker: fake_docker) -> hermes_manager:
-    manager, _ = _manager(tmp_path, docker, experiment=True)
-    return manager
 
 
 def test_apply_configures_experiment_independent_hermes_baseline(
@@ -514,7 +480,6 @@ def test_apply_configures_experiment_independent_hermes_baseline(
 
     deployed = manager.data_root / "plugins" / "acmm-tools"
     assert not deployed.exists()
-    assert result["plugins_synchronized"] == []
     assert result["model_provider"] == "custom"
     assert result["model_default"] == "gpt-oss:120b-cloud"
     assert result["blank_slate"] is True
@@ -557,7 +522,6 @@ def test_status_reports_desired_and_observed_state(tmp_path: Path) -> None:
     assert status["observed"]["bundled_skill_manifest"] == [
         "hermes-agent"
     ]
-    assert status["plugins"] == []
     assert len(docker.exec_script_calls) == 1
     assert docker.exec_script_calls[0][1] == 30.0
     assert "/opt/hermes/bin/hermes" in docker.exec_script_calls[0][0]
@@ -713,216 +677,23 @@ def test_apply_refuses_while_gateway_is_running(
     assert docker.provision_calls == []
 
 
-def test_apply_with_experiment_reconciles_one_composed_state(
-    tmp_path: Path,
-) -> None:
-    manager, docker = _manager(tmp_path, experiment=True)
-
-    result = manager.apply()
-
-    assert result["experiment_id"] == EXPERIMENT_ID
-    assert result["application_scope"] == "experiment"
-    assert result["plugins_synchronized"] == ["acmm-tools"]
-    assert result["provisioning_operations"] == 14
-    assert len(docker.provision_calls) == 1
-
-    script, timeout_seconds = docker.provision_calls[0]
-    assert timeout_seconds == 120.0
-    assert script.count("config set tools.tool_search.enabled") == 1
-    assert "model.provider" in script
-    assert "plugins enable acmm-tools --no-allow-tool-override" in script
-    assert "acmm-tools" in docker.plugins_enabled
-    assert "acmm" not in docker.disabled_toolsets
-
-    marker_path = manager.deployment_root / ".acmm-experiment-apparatus.json"
-    state = json.loads(marker_path.read_text(encoding="utf-8"))
-    assert state["experiment_id"] == EXPERIMENT_ID
-    assert state["application_scope"] == "experiment"
 
 
-def test_apply_experiment_reconciles_only_experiment_scope(
-    tmp_path: Path,
-) -> None:
-    baseline, docker = _manager(tmp_path)
-    baseline.initialize_deployment()
-    manager = _experiment_manager(tmp_path, docker)
-
-    docker.model_provider = "custom-stable"
-    docker.model_default = "stable-model"
-    docker.context_window = 12345
-    docker.title_generation_enabled = True
-    docker.background_review_enabled = True
-    docker.tool_search_enabled = "auto"
-    docker.plugins_enabled = []
-    docker.disabled_toolsets = [*docker.disabled_toolsets, "acmm"]
-
-    result = manager.apply_experiment(EXPERIMENT_ID)
-
-    assert result["plugins_synchronized"] == ["acmm-tools"]
-    assert result["application_scope"] == "experiment"
-    assert result["tool_search_enabled"] == "off"
-    assert result["provisioning_operations"] == 3
-    assert docker.model_provider == "custom-stable"
-    assert docker.model_default == "stable-model"
-    assert docker.context_window == 12345
-    assert docker.title_generation_enabled is True
-    assert docker.background_review_enabled is True
-    assert docker.tool_search_enabled == "off"
-    assert docker.plugins_enabled == ["acmm-tools"]
-    assert "acmm" not in docker.disabled_toolsets
-
-    deployed = manager.data_root / "plugins" / "acmm-tools"
-    plugin = manager.profile.plugins[0]
-    assert plugin.source_root is not None
-    source = plugin.source_root / plugin.source
-    assert (deployed / "plugin.yaml").read_bytes() == (
-        source / "plugin.yaml"
-    ).read_bytes()
-    script, timeout_seconds = docker.provision_calls[-1]
-    assert timeout_seconds == 120.0
-    assert "tools.tool_search.enabled" in script
-    assert "plugins enable acmm-tools --no-allow-tool-override" in script
-    assert "acmm-tools" in docker.plugins_enabled
-    assert "acmm" not in docker.disabled_toolsets
-    assert "model.provider" not in script
 
 
-def test_apply_tools_records_tool_only_experiment_scope(tmp_path: Path) -> None:
-    baseline, docker = _manager(tmp_path)
-    baseline.apply()
-    manager = _experiment_manager(tmp_path, docker)
-
-    result = manager.apply_tools(EXPERIMENT_ID)
-
-    assert result["application_scope"] == "tools"
-    marker = json.loads(
-        (manager.deployment_root / ".acmm-experiment-apparatus.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert marker["application_scope"] == "tools"
 
 
-def test_apply_tools_without_experiment_restores_baseline_tool_policy(
-    tmp_path: Path,
-) -> None:
-    baseline, docker = _manager(tmp_path)
-    baseline.apply()
-    experiment = _experiment_manager(tmp_path, docker)
-    experiment.apply_tools(EXPERIMENT_ID)
-
-    baseline.apply_tools(None)
-
-    assert "acmm-tools" not in docker.plugins_enabled
-    assert "acmm" not in docker.disabled_toolsets
-    assert not (
-        baseline.deployment_root / ".acmm-experiment-apparatus.json"
-    ).exists()
 
 
-def test_experiment_doctor_rejects_wrong_apparatus_identity(
-    tmp_path: Path,
-) -> None:
-    baseline, docker = _manager(tmp_path)
-    baseline.apply()
-    manager = _experiment_manager(tmp_path, docker)
-    manager.apply_experiment(EXPERIMENT_ID)
-    marker_path = manager.deployment_root / ".acmm-experiment-apparatus.json"
-    marker = json.loads(marker_path.read_text(encoding="utf-8"))
-    marker["experiment_id"] = "other_apparatus_v1"
-    marker_path.write_text(json.dumps(marker), encoding="utf-8")
-    docker.running = True
-
-    report = manager.doctor()
-
-    assert not report.is_ready
-    check = next(
-        item for item in report.checks
-        if item.name == "experiment_apparatus_identity"
-    )
-    assert not check.ok
 
 
-def test_apply_experiment_refuses_while_gateway_is_running(
-    tmp_path: Path,
-) -> None:
-    docker = fake_docker()
-    docker.running = True
-    manager, _ = _manager(tmp_path, docker, experiment=True)
-
-    with pytest.raises(infrastructure_error, match="gateway is running"):
-        manager.apply_experiment(EXPERIMENT_ID)
-
-    assert docker.provision_calls == []
 
 
-def test_apply_experiment_reports_narrow_progress(
-    tmp_path: Path,
-) -> None:
-    manager, _ = _manager(tmp_path, experiment=True)
-    messages: list[str] = []
-
-    manager.apply_experiment(EXPERIMENT_ID, progress=messages.append)
-
-    assert messages[0] == "[1/3] Synchronizing selected Hermes experiment apparatus."
-    assert messages[1] == "[2/3] Applying 3 experiment-apparatus operation(s)."
-    assert "[Hermes 1/3] set tools.tool_search.enabled" in messages
-    assert messages[-1] == "[3/3] Hermes experiment apparatus applied successfully."
 
 
-def test_baseline_apply_removes_active_experiment_apparatus(
-    tmp_path: Path,
-) -> None:
-    baseline, docker = _manager(tmp_path)
-    baseline.apply()
-    experiment = _experiment_manager(tmp_path, docker)
-    experiment.apply_experiment(EXPERIMENT_ID)
-    plugin_root = experiment.data_root / "plugins" / "acmm-tools"
-    assert plugin_root.is_dir()
-    assert "acmm-tools" in docker.plugins_enabled
-
-    baseline.apply()
-
-    assert not plugin_root.exists()
-    assert "acmm-tools" not in docker.plugins_enabled
-    assert "acmm" not in docker.disabled_toolsets
-    assert not (
-        baseline.deployment_root / ".acmm-experiment-apparatus.json"
-    ).exists()
-
-def test_baseline_apply_clears_orphaned_disabled_toolset_residue(
-    tmp_path: Path,
-) -> None:
-    manager, docker = _manager(tmp_path)
-    docker.disabled_toolsets.append("acmm")
-
-    manager.apply()
-    docker.running = True
-
-    assert "acmm" not in docker.disabled_toolsets
-    assert manager.doctor().is_ready
 
 
-def test_baseline_doctor_is_ready_after_removing_experiment_apparatus(
-    tmp_path: Path,
-) -> None:
-    baseline, docker = _manager(tmp_path)
-    baseline.apply()
-    experiment = _experiment_manager(tmp_path, docker)
-    experiment.apply_experiment(EXPERIMENT_ID)
 
-    baseline.apply()
-    docker.running = True
-    report = baseline.doctor()
-
-    assert report.is_ready
-    disabled_check = next(
-        item
-        for item in report.checks
-        if item.name == "blank_slate_disabled_toolsets"
-    )
-    assert disabled_check.ok
-    assert "acmm" not in docker.disabled_toolsets
 
 
 def test_doctor_detects_experiment_isolation_drift(
@@ -977,7 +748,7 @@ def test_apply_reports_progress_stages(
         "[1/4] Verifying initialized Hermes deployment.",
         "[2/4] Reconciling experiment-independent Hermes state.",
         (
-            "[3/4] Applying 13 operations for Hermes baseline state in one "
+            "[3/4] Applying 13 Hermes configuration operation(s) in one "
             "provisioning container (timeout 120s)."
         ),
         "[Hermes 1/13] set model.provider",
@@ -1018,7 +789,7 @@ def test_apply_verbose_mode_uses_raw_provision_output(
         "[1/4] Verifying initialized Hermes deployment.",
         "[2/4] Reconciling experiment-independent Hermes state.",
         (
-            "[3/4] Applying 13 operations for Hermes baseline state in one "
+            "[3/4] Applying 13 Hermes configuration operation(s) in one "
             "provisioning container (timeout 120s)."
         ),
         "[4/4] Hermes baseline applied successfully.",
@@ -1097,7 +868,6 @@ def test_initialize_deployment_installs_ready_to_use_defaults(
     ).read_bytes()
 
     assert manager.data_root.is_dir()
-    assert (manager.data_root / "plugins").is_dir()
 
 
 def test_initialize_deployment_preserves_existing_local_files(
@@ -1338,29 +1108,6 @@ def test_blank_slate_python_runs_directly_in_already_unprivileged_shell(
 
 
 
-def test_package_backed_doctor_uses_package_apparatus_identity(
-    tmp_path: Path,
-) -> None:
-    profile = with_hermes_apparatus(_apparatus_root(tmp_path), load_hermes_profile(ROOT), EXPERIMENT_ID)
-    apparatus_sha256 = apparatus_tree_sha256(_apparatus_root(tmp_path))
-    docker = fake_docker()
-    manager = hermes_manager(
-        ROOT,
-        tmp_path,
-        profile,
-        docker,
-        experiment_id=EXTERNAL_PACKAGE_EXPERIMENT_ID,
-        deployment_provenance=_package_provenance(
-            "hermes",
-            apparatus_sha256,
-        ),
-    )
-    manager.apply()
-    docker.running = True
-
-    report = manager.doctor()
-
-    assert report.is_ready
 
 
 def test_apply_records_and_removes_integration_managed_config(
@@ -1380,12 +1127,12 @@ def test_apply_records_and_removes_integration_managed_config(
         profile=experiment_profile,
         docker=docker,
         experiment_id=EXPERIMENT_ID,
-        apparatus_source_sha256="a" * 64,
+        deployment_provenance=_package_provenance(EXPERIMENT_ID),
     )
 
     experiment.apply()
 
-    marker_path = experiment.deployment_root / ".acmm-experiment-apparatus.json"
+    marker_path = experiment.deployment_root / ".acmm-experiment-package.json"
     state = json.loads(marker_path.read_text(encoding="utf-8"))
     assert {
         "kind": "managed_config",
@@ -1423,7 +1170,7 @@ def test_experiment_switch_removes_only_stale_managed_config(
         profile=first_profile,
         docker=docker,
         experiment_id=EXPERIMENT_ID,
-        apparatus_source_sha256="a" * 64,
+        deployment_provenance=_package_provenance(EXPERIMENT_ID),
     )
     first.apply()
 
@@ -1440,7 +1187,7 @@ def test_experiment_switch_removes_only_stale_managed_config(
         profile=second_profile,
         docker=docker,
         experiment_id="second_experiment_v1",
-        apparatus_source_sha256="b" * 64,
+        deployment_provenance=_package_provenance("second_experiment_v1"),
     )
     second.apply()
 

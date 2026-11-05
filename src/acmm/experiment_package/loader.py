@@ -15,7 +15,6 @@ from acmm.experiment_api import EXPERIMENT_RUNTIME_API_VERSION
 from acmm.integration_api import EXPERIMENT_INTEGRATION_API_VERSION
 from acmm.experiment_package.model import (
     experiment_analysis_component,
-    experiment_apparatus_component,
     experiment_integration_component,
     experiment_package,
     experiment_runtime_component,
@@ -30,7 +29,6 @@ from acmm.experiment_package.source_tree import (
 
 
 _PACKAGE_MANIFEST_NAME = "experiment-package.yaml"
-_SUPPORTED_APPARATUS_SCHEMA_VERSION = "0.1"
 _EXPERIMENT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_]*$")
 _COMPONENT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
@@ -86,11 +84,6 @@ def load_experiment_package(
         )
 
     runtime = _load_runtime_component(root, manifest.get("runtime"))
-    apparatus = _load_apparatus_components(
-        root,
-        experiment_id,
-        manifest.get("apparatus"),
-    )
     integrations = _load_integration_components(
         root,
         manifest.get("integrations"),
@@ -106,7 +99,6 @@ def load_experiment_package(
         contract_sha256=_file_sha256(contract_path),
         package_sha256=package_tree_sha256(root),
         runtime=runtime,
-        apparatus=MappingProxyType(apparatus),
         integrations=integrations,
         analysis=analysis,
         contract_warnings=contract_validation.warnings,
@@ -233,66 +225,6 @@ def _load_runtime_component(
         entrypoint=entrypoint,
         sha256=component_tree_sha256(root),
     )
-
-
-def _load_apparatus_components(
-    package_root: Path,
-    experiment_id: str,
-    data: Any,
-) -> dict[str, experiment_apparatus_component]:
-    if data is None:
-        return {}
-    if not isinstance(data, dict):
-        raise experiment_package_error("apparatus must be a mapping.")
-
-    components: dict[str, experiment_apparatus_component] = {}
-    for infrastructure_subject, path_value in data.items():
-        if _COMPONENT_ID_PATTERN.fullmatch(infrastructure_subject) is None:
-            raise experiment_package_error(
-                f"Invalid apparatus infrastructure subject '{infrastructure_subject}'."
-            )
-
-        field = f"apparatus.{infrastructure_subject}"
-        root = _resolve_directory(package_root, path_value, field)
-        _validate_apparatus_identity(root, experiment_id, field)
-        components[infrastructure_subject] = experiment_apparatus_component(
-            infrastructure_subject=infrastructure_subject,
-            root=root,
-            sha256=component_tree_sha256(root),
-        )
-
-    return components
-
-
-def _validate_apparatus_identity(
-    apparatus_root: Path,
-    experiment_id: str,
-    field: str,
-) -> None:
-    path = apparatus_root / "apparatus.yaml"
-    try:
-        with path.open("r", encoding="utf-8") as file:
-            data = yaml.safe_load(file)
-    except OSError as exc:
-        raise experiment_package_error(
-            f"{field} must contain a readable apparatus.yaml: {exc}"
-        ) from exc
-    except yaml.YAMLError as exc:
-        raise experiment_package_error(
-            f"Could not parse {field} apparatus.yaml as YAML: {exc}"
-        ) from exc
-
-    if not isinstance(data, dict):
-        raise experiment_package_error(f"{field} apparatus.yaml must be a mapping.")
-    if data.get("schema_version") != _SUPPORTED_APPARATUS_SCHEMA_VERSION:
-        raise experiment_package_error(
-            f"{field} apparatus schema_version must be '{_SUPPORTED_APPARATUS_SCHEMA_VERSION}'."
-        )
-    if data.get("experiment_id") != experiment_id:
-        raise experiment_package_error(
-            f"{field} apparatus experiment_id must be '{experiment_id}'."
-        )
-
 
 
 def _load_integration_components(

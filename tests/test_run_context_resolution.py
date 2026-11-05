@@ -12,7 +12,6 @@ from acmm.live_preflight import (
     subject_live_readiness,
 )
 from acmm.subjects.catalog import lookup_subject_execution_binding
-from acmm_infra.deployment import write_experiment_apparatus_state
 from experiment_package.support import (
     CONTRACT_SCHEMA,
     PACKAGE_SMOKE_CONTRACT,
@@ -72,7 +71,7 @@ def test_run_preview_accepts_digest_qualified_selector(
     assert args.handler(args) == 0
     captured = capsys.readouterr()
     assert selector in captured.out
-    assert "context:           ready" in captured.out
+    assert "context:         ready" in captured.out
     assert captured.err == ""
 
 
@@ -132,17 +131,13 @@ def test_run_does_not_infer_experiment_from_deployment_context(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    runtime_root = tmp_path / "runtime"
-    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(runtime_root))
-    binding = lookup_subject_execution_binding(SUBJECT_ID)
-    assert binding is not None
-    write_experiment_apparatus_state(
-        runtime_root / binding.infrastructure_subject,
-        experiment_id=EXPERIMENT_ID,
-        source_sha256="0" * 64,
-        application_scope="experiment",
-        resources=[],
+    package, runtime_root = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
     )
+    write_package_context(package, runtime_root, SUBJECT_ID)
 
     parser = _build_parser()
     with pytest.raises(SystemExit):
@@ -160,15 +155,12 @@ def test_explicit_run_selector_is_not_replaced_by_deployment_experiment(
         contract_path=CONTRACT,
         runtime_source=SMOKE_RUNTIME_SOURCE,
     )
-    binding = lookup_subject_execution_binding(SUBJECT_ID)
-    assert binding is not None
-    write_experiment_apparatus_state(
-        runtime_root / binding.infrastructure_subject,
-        experiment_id="different_experiment_v1",
-        source_sha256=None,
-        application_scope="experiment",
-        resources=[],
-    )
+    write_package_context(package, runtime_root, SUBJECT_ID)
+    marker = runtime_root / "hermes" / ".acmm-experiment-package.json"
+    import json
+    state = json.loads(marker.read_text(encoding="utf-8"))
+    state["experiment_id"] = "different_experiment_v1"
+    marker.write_text(json.dumps(state), encoding="utf-8")
 
     parser = _build_parser()
     args = parser.parse_args(["run", EXPERIMENT_ID, "--subject", SUBJECT_ID, "--preview"])
@@ -223,7 +215,7 @@ def test_run_preview_reports_strict_failure_for_diverged_context(
 
     assert args.handler(args) == 0
     captured = capsys.readouterr()
-    assert "context:           not-ready" in captured.out
+    assert "context:         not-ready" in captured.out
     assert "reconciliation is not permitted" in captured.err
     assert "Execution would fail in strict mode" in captured.err
     assert "--apply-if-needed" not in captured.out
@@ -255,7 +247,7 @@ def test_run_preview_reports_permitted_reconciliation_without_mutation(
 
     assert args.handler(args) == 0
     captured = capsys.readouterr()
-    assert "context:           not-ready" in captured.out
+    assert "context:         not-ready" in captured.out
     assert "reconciliation is permitted by --apply-if-needed" in captured.out
     assert "followed by a second strict deployment preflight" in captured.out
     assert "reconciliation is not permitted" not in captured.err
@@ -359,6 +351,6 @@ def test_run_apply_if_needed_requires_successful_second_preflight(
     assert args.handler(args) == 2
     captured = capsys.readouterr()
     assert "Deployment context preflight after reconciliation:" in captured.out
-    assert "context:           ready" in captured.out
+    assert "context:         ready" in captured.out
     assert "Deployment context preflight failed" not in captured.err
     assert "Live readiness preflight failed" in captured.err

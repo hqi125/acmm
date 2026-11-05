@@ -17,30 +17,17 @@ from acmm.adapters.open_webui import open_webui_adapter
 from acmm.adapters.open_webui_api import open_webui_runtime_api_client
 from acmm.runtime.interfaces import adapter_execution_result, subject_adapter
 from acmm_infra.cohort import inspect_cohort, resolve_deployed_cohort
-from acmm_infra.agent_zero import agent_zero_manager
 from acmm_infra.common import infrastructure_error
-from acmm_infra.docker import docker_client
-from acmm_infra.hermes import hermes_manager
-from acmm_infra.open_webui import open_webui_manager
 from acmm_infra.profiles.common import default_repo_root, default_runtime_root
-from acmm_infra.profiles.agent_zero import load_agent_zero_profile
-from acmm_infra.profiles.experiments import (
-    apparatus_tree_sha256,
-    with_agent_zero_apparatus,
-    with_hermes_apparatus,
-    with_open_webui_apparatus,
-)
-from acmm_infra.profiles.hermes import load_hermes_profile
 from acmm_infra.profiles.llm import load_llm_baseline
-from acmm_infra.profiles.open_webui import load_open_webui_profile
-from acmm_infra.subject_managers import build_subject_manager
+from acmm_infra.subjects.factory import build_subject_manager
 
 
 _TOOLS_ROOT = Path(__file__).resolve().parent
 if str(_TOOLS_ROOT) not in sys.path:
     sys.path.insert(0, str(_TOOLS_ROOT))
 
-from controlled_tool_smoke import (
+from llm_behavioral_smoke import (
     assess_result,
     build_environment,
     build_scenario,
@@ -48,8 +35,6 @@ from controlled_tool_smoke import (
 )
 
 
-_SMOKE_APPARATUS_ID = "llm_behavioral_tool_smoke_v1"
-_SMOKE_APPARATUS_ROOT = _TOOLS_ROOT / "fixtures" / "llm_behavioral_tool_smoke"
 _INFRASTRUCTURE_ORDER = ("hermes", "open-webui", "agent-zero")
 _AGENT_NAMES = {
     "hermes": "Hermes Agent",
@@ -131,11 +116,6 @@ def _save_result(
         "duration_seconds": duration_seconds,
         "passed": assessment.passed,
         "detail": assessment.detail,
-        "smoke_summary": (
-            asdict(assessment.summary)
-            if assessment.summary is not None
-            else None
-        ),
         "failure": (
             asdict(result.failure)
             if result.failure is not None
@@ -152,11 +132,11 @@ def _require_clean_deployed_baseline(repo_root: Path, runtime_root: Path):
     except infrastructure_error as exc:
         raise llm_behavioral_qualification_error(
             "Could not resolve a clean deployed LLM baseline. The deployment may "
-            "contain stale or inconsistent experiment apparatus from an interrupted "
-            "qualification or earlier experiment. Run 'acmm env set-llm <llm-id>' "
-            "to reconcile the intended LLM, then retry qualification. Original detail: "
-            f"{exc}"
+            "contain stale or inconsistent experiment-package state. Run "
+            "'acmm env set-llm <llm-id>' to reconcile the intended LLM, then retry "
+            f"qualification. Original detail: {exc}"
         ) from exc
+
     if len(cohort.subjects) != 3:
         raise llm_behavioral_qualification_error(
             "LLM behavioral qualification requires all three deployed subjects."
@@ -175,16 +155,14 @@ def _require_clean_deployed_baseline(repo_root: Path, runtime_root: Path):
     running = [item.subject_id for item in statuses if item.running]
     if running:
         raise llm_behavioral_qualification_error(
-            "Behavioral qualification requires stopped runtimes so temporary Tool "
-            "apparatus can be installed safely. Stop: " + ", ".join(running)
+            "Behavioral qualification requires stopped runtimes. Stop: "
+            + ", ".join(running)
         )
 
     contaminated = [
         item.subject_id
         for item in statuses
-        if item.experiment_id is not None
-        or item.application_scope is not None
-        or item.apparatus_state != "none"
+        if item.experiment_id is not None or item.package_state != "none"
     ]
     if contaminated:
         raise llm_behavioral_qualification_error(
@@ -217,161 +195,6 @@ def _require_clean_deployed_baseline(repo_root: Path, runtime_root: Path):
     return baseline_id, by_infrastructure
 
 
-def _build_smoke_manager(
-    repo_root: Path,
-    runtime_root: Path,
-    infrastructure_subject: str,
-    baseline_id: str,
-):
-    apparatus_root = _SMOKE_APPARATUS_ROOT / infrastructure_subject
-    source_sha256 = apparatus_tree_sha256(apparatus_root)
-
-    if infrastructure_subject == "hermes":
-        profile = with_hermes_apparatus(
-            apparatus_root,
-            load_hermes_profile(repo_root, baseline_id),
-            _SMOKE_APPARATUS_ID,
-        )
-        return hermes_manager(
-            repo_root,
-            runtime_root,
-            profile,
-            docker_client(repo_root, runtime_root, profile),
-            experiment_id=_SMOKE_APPARATUS_ID,
-            apparatus_source_sha256=source_sha256,
-        )
-    if infrastructure_subject == "open-webui":
-        profile = with_open_webui_apparatus(
-            apparatus_root,
-            load_open_webui_profile(repo_root, baseline_id),
-            _SMOKE_APPARATUS_ID,
-        )
-        return open_webui_manager(
-            repo_root,
-            runtime_root,
-            profile,
-            docker_client(repo_root, runtime_root, profile),
-            experiment_id=_SMOKE_APPARATUS_ID,
-            apparatus_source_sha256=source_sha256,
-        )
-    if infrastructure_subject == "agent-zero":
-        profile = with_agent_zero_apparatus(
-            apparatus_root,
-            load_agent_zero_profile(repo_root, baseline_id),
-            _SMOKE_APPARATUS_ID,
-        )
-        return agent_zero_manager(
-            repo_root,
-            runtime_root,
-            profile,
-            docker_client(repo_root, runtime_root, profile),
-            experiment_id=_SMOKE_APPARATUS_ID,
-            apparatus_source_sha256=source_sha256,
-        )
-    raise llm_behavioral_qualification_error(
-        f"Unsupported infrastructure subject '{infrastructure_subject}'."
-    )
-
-
-def _apply_smoke_tools(
-    repo_root: Path,
-    runtime_root: Path,
-    infrastructure_subject: str,
-    baseline_id: str,
-    *,
-    timeout_seconds: float,
-):
-    manager = _build_smoke_manager(
-        repo_root,
-        runtime_root,
-        infrastructure_subject,
-        baseline_id,
-    )
-
-    try:
-        if infrastructure_subject == "open-webui":
-            manager.up(timeout_seconds=timeout_seconds)
-            manager.apply_tools(
-                _SMOKE_APPARATUS_ID,
-                timeout_seconds=timeout_seconds,
-            )
-            return manager, True
-
-        manager.apply_tools(
-            _SMOKE_APPARATUS_ID,
-            timeout_seconds=timeout_seconds,
-        )
-        manager.up(timeout_seconds=timeout_seconds)
-        return manager, True
-    except Exception:
-        try:
-            _restore_baseline_tools(
-                repo_root,
-                runtime_root,
-                infrastructure_subject,
-                baseline_id,
-                manager,
-                timeout_seconds=timeout_seconds,
-            )
-        except Exception:
-            pass
-        raise
-
-
-def _restore_baseline_tools(
-    repo_root: Path,
-    runtime_root: Path,
-    infrastructure_subject: str,
-    baseline_id: str,
-    active_manager: Any,
-    *,
-    timeout_seconds: float,
-) -> None:
-    if active_manager.docker.container_running():
-        if infrastructure_subject == "open-webui":
-            baseline_context = build_subject_manager(
-                repo_root,
-                runtime_root,
-                infrastructure_subject,
-                baseline_id,
-            )
-            baseline_context.manager.apply_tools(
-                None,
-                timeout_seconds=timeout_seconds,
-            )
-            active_manager.down()
-            return
-        active_manager.down()
-
-    baseline_context = build_subject_manager(
-        repo_root,
-        runtime_root,
-        infrastructure_subject,
-        baseline_id,
-    )
-    baseline_manager = baseline_context.manager
-
-    if infrastructure_subject == "open-webui":
-        started_for_cleanup = False
-        try:
-            if not baseline_manager.docker.container_running():
-                baseline_manager.up(timeout_seconds=timeout_seconds)
-                started_for_cleanup = True
-            baseline_manager.apply_tools(
-                None,
-                timeout_seconds=timeout_seconds,
-            )
-        finally:
-            if started_for_cleanup and baseline_manager.docker.container_running():
-                baseline_manager.down()
-        return
-
-    baseline_manager.apply_tools(
-        None,
-        timeout_seconds=timeout_seconds,
-    )
-
-
 def run_qualification(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).expanduser().resolve()
     runtime_root = Path(args.runtime_root).expanduser().resolve()
@@ -382,9 +205,7 @@ def run_qualification(args: argparse.Namespace) -> int:
         results_root = results_root.resolve()
 
     if args.iterations < 1:
-        raise llm_behavioral_qualification_error(
-            "--iterations must be at least 1."
-        )
+        raise llm_behavioral_qualification_error("--iterations must be at least 1.")
     if args.startup_timeout_seconds <= 0:
         raise llm_behavioral_qualification_error(
             "--startup-timeout-seconds must be greater than zero."
@@ -394,10 +215,7 @@ def run_qualification(args: argparse.Namespace) -> int:
             "--run-timeout-seconds must be greater than zero."
         )
 
-    baseline_id, subjects = _require_clean_deployed_baseline(
-        repo_root,
-        runtime_root,
-    )
+    baseline_id, subjects = _require_clean_deployed_baseline(repo_root, runtime_root)
     baseline = load_llm_baseline(repo_root, baseline_id)
 
     qualification_id = str(uuid.uuid4())
@@ -407,24 +225,22 @@ def run_qualification(args: argparse.Namespace) -> int:
         / f"qualification_{qualification_id}"
     )
     summary_path = output_dir / "qualification_summary.json"
-    started_utc = _utc_now()
     summary: dict[str, Any] = {
         "schema_version": "1",
         "qualification": {
             "id": qualification_id,
             "kind": (
-                "llm_cold_start_tool_smoke"
+                "llm_cold_start_behavioral_smoke"
                 if args.cold_start
-                else "llm_behavioral_tool_smoke"
+                else "llm_behavioral_smoke"
             ),
-            "started_utc": started_utc,
+            "started_utc": _utc_now(),
             "ended_utc": None,
             "llm_baseline_id": baseline_id,
             "model": baseline.model_name,
             "provider": baseline.logical_provider,
             "iterations_per_subject": args.iterations,
             "cold_start_per_iteration": args.cold_start,
-            "smoke_apparatus_source": str(_SMOKE_APPARATUS_ROOT.relative_to(repo_root)),
             "repo_root": str(repo_root),
             "runtime_root": str(runtime_root),
         },
@@ -454,14 +270,16 @@ def run_qualification(args: argparse.Namespace) -> int:
     ):
         cohort_subject = subjects[infrastructure_subject]
         print()
-        print(
-            f"[{subject_index}/{len(_INFRASTRUCTURE_ORDER)}] "
-            f"{cohort_subject.subject_id}"
-        )
+        print(f"[{subject_index}/{len(_INFRASTRUCTURE_ORDER)}] {cohort_subject.subject_id}")
         print(f"  infrastructure: {infrastructure_subject}")
-        print("  apparatus:       installing controlled Tool smoke fixture...")
 
-        manager = None
+        context = build_subject_manager(
+            repo_root,
+            runtime_root,
+            infrastructure_subject,
+            baseline_id,
+        )
+        manager = context.manager
         subject_record: dict[str, Any] = {
             "subject_id": cohort_subject.subject_id,
             "infrastructure_subject": infrastructure_subject,
@@ -473,17 +291,8 @@ def run_qualification(args: argparse.Namespace) -> int:
         _write_json(summary_path, summary)
 
         try:
-            manager, _ = _apply_smoke_tools(
-                repo_root,
-                runtime_root,
-                infrastructure_subject,
-                baseline_id,
-                timeout_seconds=args.startup_timeout_seconds,
-            )
-            if args.cold_start:
-                manager.down()
-                print("  runtime:         Tool fixture prepared; stopped for cold-start cycles")
-            else:
+            if not args.cold_start:
+                manager.up(timeout_seconds=args.startup_timeout_seconds)
                 print("  runtime:         started")
 
             adapter = _build_adapter(infrastructure_subject)
@@ -495,9 +304,7 @@ def run_qualification(args: argparse.Namespace) -> int:
                 repo_root=repo_root,
                 llm_baseline_id=baseline_id,
             )
-            scenario = build_scenario(
-                scenario_id="llm_rebasing_controlled_tool_smoke"
-            )
+            scenario = build_scenario(scenario_id="llm_rebasing_behavioral_smoke")
             environment = build_environment()
             termination = {"timeout_seconds": args.run_timeout_seconds}
 
@@ -513,12 +320,7 @@ def run_qualification(args: argparse.Namespace) -> int:
                 print(f"  run {iteration}/{args.iterations}: ", end="", flush=True)
                 started = time.monotonic()
                 try:
-                    result = adapter.execute(
-                        subject,
-                        scenario,
-                        environment,
-                        termination,
-                    )
+                    result = adapter.execute(subject, scenario, environment, termination)
                     duration = time.monotonic() - started
                     assessment = assess_result(result)
                     run_dir = (
@@ -540,32 +342,18 @@ def run_qualification(args: argparse.Namespace) -> int:
                         "detail": assessment.detail,
                         "termination": result.termination,
                         "duration_seconds": duration,
-                        "controlled_tool_calls": (
-                            assessment.summary.tool_call_count
-                            if assessment.summary is not None
-                            else None
-                        ),
-                        "redundant_tool_calls": (
-                            assessment.summary.redundant_tool_call_count
-                            if assessment.summary is not None
-                            else None
-                        ),
                         "artifact_directory": str(run_dir),
                     }
                     subject_record["iterations"].append(record)
                     _write_json(summary_path, summary)
 
                     if assessment.passed:
-                        redundant = record["redundant_tool_calls"]
                         startup_text = (
                             f", startup={startup_duration:.2f}s"
                             if startup_duration is not None
                             else ""
                         )
-                        print(
-                            f"PASS ({duration:.2f}s{startup_text}, "
-                            f"redundant tools={redundant})"
-                        )
+                        print(f"PASS ({duration:.2f}s{startup_text})")
                     else:
                         subject_pass = False
                         overall_pass = False
@@ -580,28 +368,8 @@ def run_qualification(args: argparse.Namespace) -> int:
             subject_record["error"] = str(exc) or exc.__class__.__name__
             print(f"  ERROR: {subject_record['error']}")
         finally:
-            if manager is not None:
-                print("  cleanup:         restoring experiment-independent Tool policy...")
-                try:
-                    _restore_baseline_tools(
-                        repo_root,
-                        runtime_root,
-                        infrastructure_subject,
-                        baseline_id,
-                        manager,
-                        timeout_seconds=args.startup_timeout_seconds,
-                    )
-                    print("  cleanup:         restored")
-                except Exception as cleanup_error:
-                    overall_pass = False
-                    detail = str(cleanup_error) or cleanup_error.__class__.__name__
-                    prior = subject_record.get("error")
-                    subject_record["error"] = (
-                        f"{prior}; cleanup failed: {detail}"
-                        if prior
-                        else f"cleanup failed: {detail}"
-                    )
-                    print(f"  cleanup:         FAILED: {detail}")
+            if manager.docker.container_running():
+                manager.down()
             _write_json(summary_path, summary)
 
     summary["qualification"]["ended_utc"] = _utc_now()
@@ -628,22 +396,22 @@ def run_qualification(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Run engineering-only repeated controlled Tool qualification against "
-            "the LLM baseline currently deployed across the ACMM cohort."
+            "Run engineering-only repeated behavioral qualification against the "
+            "LLM baseline currently deployed across the ACMM cohort."
         )
     )
     parser.add_argument(
         "--iterations",
         type=int,
         default=5,
-        help="Controlled Tool runs per subject. Default: 5.",
+        help="Behavioral smoke runs per subject. Default: 5.",
     )
     parser.add_argument(
         "--cold-start",
         action="store_true",
         help=(
-            "Stop after Tool-fixture preparation, then independently start and stop "
-            "the subject around every controlled Tool run."
+            "Independently start and stop the subject around every behavioral "
+            "smoke run."
         ),
     )
     parser.add_argument(
@@ -665,7 +433,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--startup-timeout-seconds",
         type=float,
         default=120.0,
-        help="Maximum startup/provisioning wait per subject. Default: 120.",
+        help="Maximum startup wait per subject. Default: 120.",
     )
     parser.add_argument(
         "--run-timeout-seconds",

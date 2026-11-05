@@ -43,9 +43,6 @@ experiment_isolation:
   external_tool_servers_enabled: false
   terminal_servers_enabled: false
 
-tools:
-  managed: []
-
 reset_scopes:
   configuration:
     - webui.db

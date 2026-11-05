@@ -16,13 +16,6 @@ class experiment_runtime_component:
 
 
 @dataclass(frozen=True)
-class experiment_apparatus_component:
-    infrastructure_subject: str
-    root: Path
-    sha256: str
-
-
-@dataclass(frozen=True)
 class experiment_integration_component:
     integration_id: str
     api_version: str
@@ -50,7 +43,6 @@ class experiment_package:
     contract_sha256: str
     package_sha256: str
     runtime: experiment_runtime_component | None
-    apparatus: Mapping[str, experiment_apparatus_component]
     integrations: tuple[experiment_integration_component, ...]
     analysis: tuple[experiment_analysis_component, ...]
     contract_warnings: tuple[validation_issue, ...]

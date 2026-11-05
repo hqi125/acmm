@@ -315,7 +315,7 @@ preview then states whether strict mode would fail or `--apply-if-needed` would 
 Preview never mutates deployment state. Omit both selector types to execute the entire Contract plan.
 
 A real execution first checks that every selected subject deployment records the exact selected
-Experiment Package identity and expected package apparatus identity, if any. Plain `acmm run` is
+Experiment Package identity and declared integration provenance. Plain `acmm run` is
 strict and aborts on deployment divergence. With `--apply-if-needed`, ACMM may apply the selected
 package to only the subjects required by the selected run set. After that workflow returns, ACMM
 re-reads persisted deployment state and runs the same strict deployment preflight again. The apply

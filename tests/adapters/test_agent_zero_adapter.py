@@ -21,25 +21,16 @@ SUBJECT = {
 }
 
 SCENARIO = {
-    "id": "magic_plus_13",
+    "id": "lookup_and_sum",
     "task": {
         "prompt": (
-            "Obtain the laboratory magic number using get_magic_number, then "
-            "use add_numbers to add 13."
+            "Look up the controlled record value, then add 13 using the "
+            "available native tools."
         )
     },
 }
 
-TOOL_CONFIG = {
-    "magic_number": 87,
-    "retrieval_mode": "success",
-    "addition_mode": "success",
-}
-
-ENVIRONMENT = {
-    "ACMM_TOOL_CONFIG_JSON": json.dumps(TOOL_CONFIG),
-    "ACMM_TOOL_BASELINE_JSON": json.dumps(TOOL_CONFIG),
-}
+ENVIRONMENT = {}
 
 TERMINATION = {
     "max_steps": 32,
@@ -49,7 +40,6 @@ TERMINATION = {
 
 class fake_agent_zero_client:
     def __init__(self) -> None:
-        self.plugin_configs = []
         self.created_contexts = []
         self.message_calls = []
         self.terminated = []
@@ -78,10 +68,6 @@ class fake_agent_zero_client:
             },
         }
 
-    def update_plugin_config(self, plugin_name, settings):
-        assert plugin_name == "acmm_tools"
-        self.plugin_configs.append(dict(settings))
-        return {"ok": True}
 
     def create_context(self, context_id):
         self.created_contexts.append(context_id)
@@ -131,12 +117,12 @@ class fake_agent_zero_client:
                         "no": 1,
                         "id": "call-1",
                         "type": "tool",
-                        "heading": "Using get_magic_number",
+                        "heading": "Using lookup_record",
                         "content": json.dumps(
-                            {"ok": True, "magic_number": 87}
+                            {"ok": True, "value": 87}
                         ),
                         "kvps": {
-                            "_tool_name": "plugin:acmm_tools:get_magic_number",
+                            "_tool_name": "plugin:example_tools:lookup_record",
                         },
                         "timestamp": 2.0,
                     },
@@ -149,7 +135,7 @@ class fake_agent_zero_client:
                         "kvps": {
                             "a": 87,
                             "b": 13,
-                            "_tool_name": "plugin:acmm_tools:add_numbers",
+                            "_tool_name": "plugin:example_tools:add_numbers",
                         },
                         "timestamp": 3.0,
                     },
@@ -174,18 +160,6 @@ def test_agent_zero_adapter_runs_isolated_context_and_captures_evidence() -> Non
 
     assert result.failure is None
     assert result.termination == "agent_completed"
-    assert client.plugin_configs == [
-        {
-            "magic_number": 87,
-            "retrieval_mode": "success",
-            "addition_mode": "success",
-        },
-        {
-            "magic_number": 87,
-            "retrieval_mode": "success",
-            "addition_mode": "success",
-        },
-    ]
     assert len(client.created_contexts) == 1
     assert client.terminated == client.created_contexts
     call = client.message_calls[0]
@@ -201,13 +175,13 @@ def test_agent_zero_adapter_runs_isolated_context_and_captures_evidence() -> Non
     ]
     tool_calls = json.loads(result.evidence[1].content)
     assert [(item["name"], item["input"]) for item in tool_calls] == [
-        ("get_magic_number", {}),
-        ("add_numbers", {"a": 87, "b": 13}),
+        ("plugin:example_tools:lookup_record", {}),
+        ("plugin:example_tools:add_numbers", {"a": 87, "b": 13}),
     ]
     tool_results = json.loads(result.evidence[2].content)
     assert [item["name"] for item in tool_results] == [
-        "get_magic_number",
-        "add_numbers",
+        "plugin:example_tools:lookup_record",
+        "plugin:example_tools:add_numbers",
     ]
     assert all(item["is_error"] is False for item in tool_results)
     assert result.evidence[3].content == b"The result is 100."
@@ -302,7 +276,7 @@ def test_agent_zero_adapter_marks_controlled_tool_failure() -> None:
                         "content": json.dumps(
                             {"ok": False, "error": "controlled retrieval failure"}
                         ),
-                        "kvps": {"_tool_name": "get_magic_number"},
+                        "kvps": {"_tool_name": "lookup_record"},
                         "timestamp": 2.0,
                     }
                 ]
@@ -311,10 +285,6 @@ def test_agent_zero_adapter_marks_controlled_tool_failure() -> None:
 
     client.get_logs = failed_logs
     environment = {
-        "ACMM_TOOL_CONFIG_JSON": json.dumps(
-            {**TOOL_CONFIG, "retrieval_mode": "failure"}
-        ),
-        "ACMM_TOOL_BASELINE_JSON": json.dumps(TOOL_CONFIG),
     }
     result = agent_zero_adapter(client).execute(
         SUBJECT,
@@ -326,8 +296,6 @@ def test_agent_zero_adapter_marks_controlled_tool_failure() -> None:
     assert result.failure is None
     tool_results = json.loads(result.evidence[2].content)
     assert tool_results[0]["is_error"] is True
-    assert client.plugin_configs[0]["retrieval_mode"] == "failure"
-    assert client.plugin_configs[-1]["retrieval_mode"] == "success"
 
 
 
@@ -350,10 +318,10 @@ def test_agent_zero_timeout_captures_partial_evidence_before_cleanup() -> None:
                         "id": "call-1",
                         "type": "tool",
                         "content": json.dumps(
-                            {"ok": True, "magic_number": 87}
+                            {"ok": True, "value": 87}
                         ),
                         "kvps": {
-                            "_tool_name": "plugin:acmm_tools:get_magic_number",
+                            "_tool_name": "plugin:example_tools:lookup_record",
                         },
                         "timestamp": 2.0,
                     }
@@ -381,15 +349,10 @@ def test_agent_zero_timeout_captures_partial_evidence_before_cleanup() -> None:
     ]
     tool_calls = json.loads(result.evidence[1].content)
     assert [(item["name"], item["input"]) for item in tool_calls] == [
-        ("get_magic_number", {}),
+        ("plugin:example_tools:lookup_record", {}),
     ]
     assert result.evidence[3].content == b""
     assert client.terminated == client.created_contexts
-    assert client.plugin_configs[-1] == {
-        "magic_number": 87,
-        "retrieval_mode": "success",
-        "addition_mode": "success",
-    }
 
 
 def test_agent_zero_timeout_with_unreadable_log_is_harness_error() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from acmm.adapters.open_webui import open_webui_adapter
 from acmm.adapters.open_webui_api import open_webui_runtime_api_client
-from controlled_tool_smoke import (
+from llm_behavioral_smoke import (
     build_environment,
     build_scenario,
     build_subject,

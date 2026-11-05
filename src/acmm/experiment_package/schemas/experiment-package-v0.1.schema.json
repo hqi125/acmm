@@ -44,14 +44,6 @@
         }
       }
     },
-    "apparatus": {
-      "type": "object",
-      "minProperties": 1,
-      "additionalProperties": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
     "analysis": {
       "type": "object",
       "additionalProperties": false,

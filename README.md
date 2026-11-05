@@ -290,11 +290,9 @@ The current baseline test suite should pass completely.
 
 ### 9. Validate, install, and preview an experiment
 
-Experiment Packages are the researcher-facing experiment unit. EP-6 has now externalized the
-historical `controlled_authoritative_state_interference_v1` study into a sibling experiments
-workspace as the first proof that an experiment no longer needs a Contract, runtime module, or
-apparatus tree inside this repository. Validate package source without installing or executing
-runtime code:
+Experiment Packages are the researcher-facing experiment unit. Research Contracts, runtime code,
+and package-local capability integrations live in the sibling experiments workspace rather than
+inside Core. Validate package source without installing or executing runtime code:
 
 ```text
 acmm package validate <package-directory>
@@ -665,7 +663,7 @@ See `docs/analysis/boundary.md`, `docs/analysis/export.md`, `docs/analysis/avail
 ## Experiment Package workflow
 
 Research experiments are external Experiment Packages. Core does not contain a built-in experiment
-catalog, experiment Contracts, pilot runtime modules, or per-agent experiment apparatus trees.
+catalog, experiment Contracts, pilot runtime modules, or concrete research-tool integrations.
 A typical two-repository workspace is:
 
 ```text
@@ -734,7 +732,7 @@ acmm env doctor --start-if-needed
 acmm env stop
 ```
 
-`set-llm` reconciles qualified subjects to a registered LLM and removes active package apparatus.
+`set-llm` reconciles qualified subjects to a registered LLM and returns them to experiment-independent capability state.
 The internal `acmm-infra <subject> ...` commands remain detailed baseline/lifecycle escape hatches;
 they do not select research experiments.
 
@@ -765,7 +763,7 @@ acmm run <experiment-id> --subject <subject-id> --subject-run-index 0-9 --previe
 acmm run <experiment-id> --scenario <scenario-id> --repetition 1 --preview
 ```
 
-Every real execution verifies exact package, Contract, runtime, and per-subject apparatus provenance
+Every real execution verifies exact package, Contract, runtime, and declared integration provenance
 before acquisition. Package runtime code is activated only from the verified immutable staged
 snapshot and is composed with Core-owned adapters. Completed executions persist the Contract
 snapshot, Run Records, evidence, execution summary, package provenance, and optional diagnostics.
@@ -786,9 +784,9 @@ and `docs/security/secrets.md`.
 ## Infrastructure and adapter boundaries
 
 Core owns the qualified Hermes, Open WebUI, and Agent Zero baselines, their lifecycle managers, and
-runtime adapters. Experiment Packages may provide subject-specific apparatus, but Core receives that
-apparatus only from the installed staged package and never reconstructs it from a repository-local
-`experiments/<id>` directory.
+runtime adapters. Experiment Packages may provide generic integration components; Core loads those
+components only from the installed staged package and never hard-codes the concrete external tool or
+transport into its scientific model.
 
 The internal baseline workflow remains available for diagnostics and integration work:
 
@@ -801,9 +799,9 @@ acmm-infra <subject> doctor
 acmm-infra <subject> down
 ```
 
-`apply-tools` remains an engineering/baseline tool-policy operation where supported; it is not an
-experiment selector. Research apparatus is applied through `acmm package apply` or permissioned
-`acmm run --apply-if-needed`.
+Research capability integrations are applied through `acmm package apply` or permissioned
+`acmm run --apply-if-needed`; the internal subject CLI has no separate research-tool application
+path.
 
 See `infrastructure/README.md`, `docs/integration/agent_integration.md`, and the adapter documents under
 `docs/runtime/`.

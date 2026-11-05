@@ -7,8 +7,8 @@ from acmm.subjects.catalog import (
     registered_subject_ids,
 )
 from acmm_infra.deployment import write_llm_baseline_state
-from acmm_infra.profiles.agent_zero import load_agent_zero_profile
-from acmm_infra.profiles.hermes import load_hermes_profile
+from acmm_infra.subjects.agent_zero.profile import load_agent_zero_profile
+from acmm_infra.subjects.hermes.profile import load_hermes_profile
 from acmm_infra.profiles.llm import (
     current_llm_baseline_id,
     load_llm_baseline,
@@ -16,7 +16,7 @@ from acmm_infra.profiles.llm import (
     registered_llm_baseline_ids,
     runtime_provenance_configuration,
 )
-from acmm_infra.profiles.open_webui import load_open_webui_profile
+from acmm_infra.subjects.open_webui.profile import load_open_webui_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -188,7 +188,7 @@ def test_baseline_manager_resolution_honors_explicit_llm_selection(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    import acmm_infra.subject_managers as managers
+    import acmm_infra.subjects.factory as managers
 
     captured: dict[str, str | None] = {}
 

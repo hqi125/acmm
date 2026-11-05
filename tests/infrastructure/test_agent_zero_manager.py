@@ -1,57 +1,13 @@
 import json
 from dataclasses import replace
-import shutil
 from pathlib import Path
 
-from acmm.experiment_package.provenance import (
-    experiment_deployment_provenance,
-    experiment_package_provenance,
-)
-from acmm_infra.agent_zero import agent_zero_manager
+from acmm_infra.subjects.agent_zero.manager import agent_zero_manager
 from acmm_infra.process import command_result
-from acmm_infra.profiles.agent_zero import load_agent_zero_profile
-from acmm_infra.profiles.experiments import (
-    apparatus_tree_sha256,
-    with_agent_zero_apparatus,
-)
+from acmm_infra.subjects.agent_zero.profile import load_agent_zero_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXPERIMENT_ID = "manager_apparatus_fixture_v1"
-
-EXTERNAL_PACKAGE_EXPERIMENT_ID = "external_package_doctor_v1"
-
-
-def _apparatus_root(tmp_path: Path, experiment_id: str = EXPERIMENT_ID) -> Path:
-    source = ROOT / "tools" / "fixtures" / "llm_behavioral_tool_smoke" / "agent-zero"
-    target = tmp_path / "apparatus-source" / "agent-zero" / experiment_id
-    if target.exists():
-        shutil.rmtree(target)
-    shutil.copytree(source, target)
-    manifest = target / "apparatus.yaml"
-    text = manifest.read_text(encoding="utf-8")
-    text = text.replace("llm_behavioral_tool_smoke_v1", experiment_id)
-    manifest.write_text(text, encoding="utf-8")
-    return target
-
-
-def _package_provenance(
-    infrastructure_subject: str,
-    apparatus_sha256: str,
-) -> experiment_deployment_provenance:
-    return experiment_deployment_provenance(
-        package=experiment_package_provenance(
-            experiment_id=EXTERNAL_PACKAGE_EXPERIMENT_ID,
-            package_schema_version="0.1",
-            package_sha256="1" * 64,
-            contract_sha256="2" * 64,
-            runtime_sha256="3" * 64,
-        ),
-        infrastructure_subject=infrastructure_subject,
-        apparatus_sha256=apparatus_sha256,
-    )
-
-
 class fake_docker:
     def __init__(self) -> None:
         self.running = False
@@ -100,8 +56,7 @@ class fake_docker:
         assert root.startswith(prefix)
         target = self.host_data_root / root[len(prefix):]
         if target.exists():
-            import shutil
-            shutil.rmtree(target)
+                        shutil.rmtree(target)
         for relative, payload in files.items():
             path = target / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -212,46 +167,14 @@ class fake_api:
         }
 
 
-def _manager(tmp_path: Path, *, experiment: bool = False):
+def _manager(tmp_path: Path):
     profile = load_agent_zero_profile(ROOT)
-    if experiment:
-        profile = with_agent_zero_apparatus(_apparatus_root(tmp_path), profile, EXPERIMENT_ID)
     docker = fake_docker()
     api = fake_api(profile)
-    manager = agent_zero_manager(
-        ROOT,
-        tmp_path,
-        profile,
-        docker,
-        api=api,
-        experiment_id=EXPERIMENT_ID if experiment else None,
-        apparatus_source_sha256=(
-            apparatus_tree_sha256(_apparatus_root(tmp_path)) if experiment else None
-        ),
-    )
+    manager = agent_zero_manager(ROOT, tmp_path, profile, docker, api=api)
     docker.host_data_root = manager.data_root
     manager._probe_ready = lambda: (True, "HTTP 200")
     return manager, docker, api
-
-
-def _experiment_manager(
-    tmp_path: Path,
-    docker: fake_docker,
-    api: fake_api,
-) -> agent_zero_manager:
-    profile = with_agent_zero_apparatus(_apparatus_root(tmp_path), load_agent_zero_profile(ROOT), EXPERIMENT_ID)
-    manager = agent_zero_manager(
-        ROOT,
-        tmp_path,
-        profile,
-        docker,
-        api=api,
-        experiment_id=EXPERIMENT_ID,
-        apparatus_source_sha256=apparatus_tree_sha256(_apparatus_root(tmp_path)),
-    )
-    docker.host_data_root = manager.data_root
-    manager._probe_ready = lambda: (True, "HTTP 200")
-    return manager
 
 
 def test_initialize_deployment_installs_agent_zero_defaults(tmp_path: Path) -> None:
@@ -265,23 +188,6 @@ def test_initialize_deployment_installs_agent_zero_defaults(tmp_path: Path) -> N
     assert (manager.deployment_root / ".env").is_file()
 
 
-def test_apply_with_experiment_reconciles_one_composed_state(
-    tmp_path: Path,
-) -> None:
-    manager, docker, _ = _manager(tmp_path, experiment=True)
-
-    result = manager.apply(timeout_seconds=1.0)
-
-    assert result["experiment_id"] == EXPERIMENT_ID
-    assert result["application_scope"] == "experiment"
-    assert result["plugins_synchronized"] == ("acmm_tools",)
-    assert docker.up_count == 1
-    assert docker.down_count == 1
-
-    marker_path = manager.deployment_root / ".acmm-experiment-apparatus.json"
-    state = json.loads(marker_path.read_text(encoding="utf-8"))
-    assert state["experiment_id"] == EXPERIMENT_ID
-    assert state["application_scope"] == "experiment"
 
 
 def test_apply_reconciles_full_baseline_in_one_container_lifetime(tmp_path: Path) -> None:
@@ -300,16 +206,12 @@ def test_apply_reconciles_full_baseline_in_one_container_lifetime(tmp_path: Path
     assert "AGENT_ZERO_CHAT_MODEL_NAME" not in text
     assert "AGENT_ZERO_AGENT_PROFILE=acmm" in text
     assert "AGENT_ZERO_MCP_SERVER_ENABLED=false" in text
-    assert result["plugins_synchronized"] == ()
     assert result["persistent_settings"] == "created"
     assert result["provisioning_service"] == "stopped after apply"
     assert docker.up_count == 1
     assert docker.down_count == 1
     assert docker.running is False
     assert api.settings_updates == 1
-
-    destination = manager.data_root / "plugins" / "acmm_tools"
-    assert not destination.exists()
 
     assert (manager.data_root / "agents" / "acmm" / "agent.yaml").is_file()
     assert (
@@ -324,21 +226,6 @@ def test_apply_reconciles_full_baseline_in_one_container_lifetime(tmp_path: Path
     assert api.configured_preset == manager.profile.model_preset
 
 
-def test_apply_experiment_repairs_plugin_drift(tmp_path: Path) -> None:
-    baseline, docker, api = _manager(tmp_path)
-    baseline.apply(timeout_seconds=1.0)
-    manager = _experiment_manager(tmp_path, docker, api)
-    manager.apply_experiment(EXPERIMENT_ID)
-    destination = manager.data_root / "plugins" / "acmm_tools" / "plugin.yaml"
-    destination.write_text("name: drifted\n", encoding="utf-8")
-
-    result = manager.apply_experiment(EXPERIMENT_ID)
-
-    assert result["plugins_synchronized"] == ("acmm_tools",)
-    plugin = manager.profile.plugins[0]
-    assert plugin.source_root is not None
-    source = plugin.source_root / plugin.source
-    assert destination.read_bytes() == (source / "plugin.yaml").read_bytes()
 
 
 def test_apply_reconciles_acmm_owned_compose_baseline(tmp_path: Path) -> None:
@@ -404,106 +291,12 @@ def test_apply_writes_restricted_acmm_profile_files(tmp_path: Path) -> None:
 
 
 
-def test_apply_experiment_installs_tool_policy_and_plugin(tmp_path: Path) -> None:
-    baseline, docker, api = _manager(tmp_path)
-    baseline.apply(timeout_seconds=1.0)
-    manager = _experiment_manager(tmp_path, docker, api)
-
-    result = manager.apply_experiment(EXPERIMENT_ID)
-
-    assert result["experiment_id"] == EXPERIMENT_ID
-    assert result["application_scope"] == "experiment"
-    assert result["plugins_synchronized"] == ("acmm_tools",)
-    plugin = manager.data_root / "plugins" / "acmm_tools" / "plugin.yaml"
-    assert plugin.is_file()
-    policy = (
-        manager.data_root
-        / "agents"
-        / "acmm"
-        / "plugins"
-        / "_tool_access"
-        / "config.json"
-    )
-    tool_policy = json.loads(policy.read_text(encoding="utf-8"))
-    assert tool_policy["allowed"] == [
-        "plugin:acmm_tools:get_magic_number",
-        "plugin:acmm_tools:add_numbers",
-    ]
 
 
-def test_apply_tools_records_tool_only_experiment_scope(tmp_path: Path) -> None:
-    baseline, docker, api = _manager(tmp_path)
-    baseline.apply(timeout_seconds=1.0)
-    manager = _experiment_manager(tmp_path, docker, api)
-
-    prompt = (
-        manager.data_root
-        / "agents"
-        / "acmm"
-        / "prompts"
-        / "agent.system.main.communication.md"
-    )
-    prompt.write_text("operator-local drift\n", encoding="utf-8")
-
-    result = manager.apply_tools(EXPERIMENT_ID, timeout_seconds=1.0)
-
-    assert result["application_scope"] == "tools"
-    assert prompt.read_text(encoding="utf-8") == "operator-local drift\n"
-    marker = json.loads(
-        (manager.deployment_root / ".acmm-experiment-apparatus.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert marker["application_scope"] == "tools"
 
 
-def test_apply_tools_without_experiment_restores_baseline_tool_policy(
-    tmp_path: Path,
-) -> None:
-    baseline, docker, api = _manager(tmp_path)
-    baseline.apply(timeout_seconds=1.0)
-    experiment = _experiment_manager(tmp_path, docker, api)
-    experiment.apply_tools(EXPERIMENT_ID, timeout_seconds=1.0)
-
-    baseline.apply_tools(None, timeout_seconds=1.0)
-
-    plugin_root = baseline.data_root / "plugins" / "acmm_tools"
-    assert not plugin_root.exists()
-    policy = (
-        baseline.data_root
-        / "agents"
-        / "acmm"
-        / "plugins"
-        / "_tool_access"
-        / "config.json"
-    )
-    assert json.loads(policy.read_text(encoding="utf-8"))["allowed"] == []
-    assert not (
-        baseline.deployment_root / ".acmm-experiment-apparatus.json"
-    ).exists()
 
 
-def test_baseline_apply_removes_active_experiment_apparatus(tmp_path: Path) -> None:
-    baseline, docker, api = _manager(tmp_path)
-    baseline.apply(timeout_seconds=1.0)
-    experiment = _experiment_manager(tmp_path, docker, api)
-    experiment.apply_experiment(EXPERIMENT_ID)
-    plugin_root = experiment.data_root / "plugins" / "acmm_tools"
-    assert plugin_root.is_dir()
-
-    baseline.apply(timeout_seconds=1.0)
-
-    assert not plugin_root.exists()
-    policy = (
-        baseline.data_root
-        / "agents"
-        / "acmm"
-        / "plugins"
-        / "_tool_access"
-        / "config.json"
-    )
-    assert json.loads(policy.read_text(encoding="utf-8"))["allowed"] == []
-    assert not (baseline.deployment_root / ".acmm-experiment-apparatus.json").exists()
 
 def test_up_waits_for_web_backend(tmp_path: Path) -> None:
     manager, docker, _ = _manager(tmp_path)
@@ -542,66 +335,10 @@ def test_doctor_is_ready_for_matching_running_stage2_baseline(tmp_path: Path) ->
     assert "provider_model_available" in names
 
 
-def test_doctor_detects_managed_plugin_drift(tmp_path: Path) -> None:
-    baseline, docker, api = _manager(tmp_path)
-    baseline.apply(timeout_seconds=1.0)
-    manager = _experiment_manager(tmp_path, docker, api)
-    manager.apply_experiment(EXPERIMENT_ID)
-    docker.running = True
-    plugin = manager.data_root / "plugins" / "acmm_tools" / "plugin.yaml"
-    plugin.write_text("name: drifted\n", encoding="utf-8")
-
-    report = manager.doctor()
-
-    assert not report.is_ready
-    check = next(
-        item for item in report.checks if item.name == "managed_plugin:acmm_tools"
-    )
-    assert not check.ok
 
 
-def test_doctor_ignores_agent_zero_runtime_plugin_state(tmp_path: Path) -> None:
-    baseline, docker, api = _manager(tmp_path)
-    baseline.apply(timeout_seconds=1.0)
-    manager = _experiment_manager(tmp_path, docker, api)
-    manager.apply_experiment(EXPERIMENT_ID)
-    docker.running = True
-
-    plugin_root = manager.data_root / "plugins" / "acmm_tools"
-    (plugin_root / "config.json").write_text(
-        '{"runtime": "managed by Agent Zero"}\n',
-        encoding="utf-8",
-    )
-    (plugin_root / ".toggle-1").write_text("", encoding="utf-8")
-    runtime_data = plugin_root / "data"
-    runtime_data.mkdir()
-    (runtime_data / "state.json").write_text("{}\n", encoding="utf-8")
-
-    report = manager.doctor()
-
-    check = next(
-        item for item in report.checks if item.name == "managed_plugin:acmm_tools"
-    )
-    assert check.ok
-    assert report.is_ready
 
 
-def test_doctor_detects_managed_plugin_default_config_drift(tmp_path: Path) -> None:
-    baseline, docker, api = _manager(tmp_path)
-    baseline.apply(timeout_seconds=1.0)
-    manager = _experiment_manager(tmp_path, docker, api)
-    manager.apply_experiment(EXPERIMENT_ID)
-    docker.running = True
-    config = manager.data_root / "plugins" / "acmm_tools" / "default_config.yaml"
-    config.write_text("magic_number: 999\n", encoding="utf-8")
-
-    report = manager.doctor()
-
-    check = next(
-        item for item in report.checks if item.name == "managed_plugin:acmm_tools"
-    )
-    assert not check.ok
-    assert not report.is_ready
 
 
 def test_doctor_detects_application_file_drift(tmp_path: Path) -> None:
@@ -719,33 +456,6 @@ def test_doctor_detects_agent_zero_image_drift(tmp_path: Path) -> None:
     assert not check.ok
 
 
-def test_package_backed_doctor_uses_package_apparatus_identity(
-    tmp_path: Path,
-) -> None:
-    profile = with_agent_zero_apparatus(_apparatus_root(tmp_path), load_agent_zero_profile(ROOT), EXPERIMENT_ID)
-    apparatus_sha256 = apparatus_tree_sha256(_apparatus_root(tmp_path))
-    docker = fake_docker()
-    api = fake_api(profile)
-    manager = agent_zero_manager(
-        ROOT,
-        tmp_path,
-        profile,
-        docker,
-        api=api,
-        experiment_id=EXTERNAL_PACKAGE_EXPERIMENT_ID,
-        deployment_provenance=_package_provenance(
-            "agent-zero",
-            apparatus_sha256,
-        ),
-    )
-    docker.host_data_root = manager.data_root
-    manager._probe_ready = lambda: (True, "HTTP 200")
-    manager.apply(timeout_seconds=1.0)
-    docker.running = True
-
-    report = manager.doctor()
-
-    assert report.is_ready
 
 
 def test_managed_host_overrides_compose_after_baseline(tmp_path: Path) -> None:

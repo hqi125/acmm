@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import acmm_infra.runtime_lifecycle as lifecycle_module
-from acmm_infra.subject_managers import subject_manager_context
+from acmm_infra.subjects.factory import subject_manager_context
 
 
 class _fake_docker:

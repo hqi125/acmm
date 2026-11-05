@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from acmm_infra.profiles.open_webui import load_open_webui_profile
+from acmm_infra.subjects.open_webui.profile import load_open_webui_profile
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,4 +25,3 @@ def test_open_webui_profile_loads_repository_baseline() -> None:
     assert profile.telemetry_enabled is False
     assert profile.deployment_directory == Path("open-webui")
     assert profile.data_directory == Path("data")
-    assert profile.tools == ()

@@ -210,8 +210,6 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
         raise experiment_runtime_error("Runtime evaluator capabilities must be a frozenset.")
     if not isinstance(runtime.capabilities.fixtures, frozenset):
         raise experiment_runtime_error("Runtime fixture capabilities must be a frozenset.")
-    if not isinstance(runtime.capabilities.tools, frozenset):
-        raise experiment_runtime_error("Runtime tool capabilities must be a frozenset.")
     if not isinstance(runtime.capabilities.evidence_channels, frozenset):
         raise experiment_runtime_error(
             "Runtime evidence-channel capabilities must be a frozenset."
@@ -220,7 +218,6 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
     for label, values in (
         ("evaluator", runtime.capabilities.evaluators),
         ("fixture", runtime.capabilities.fixtures),
-        ("tool", runtime.capabilities.tools),
         ("evidence channel", runtime.capabilities.evidence_channels),
     ):
         _validate_capability_identifiers(label, values)

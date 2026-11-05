@@ -208,7 +208,7 @@ def test_hermes_adapter_builds_structured_evidence_from_session_export() -> None
     assert "-Q" in chat_command
     assert "--format" not in chat_command
     assert "--model" not in chat_command
-    assert chat_command[chat_command.index("--toolsets") + 1] == "acmm"
+    assert "--toolsets" not in chat_command
     assert chat_command[chat_command.index("--max-turns") + 1] == "32"
     assert chat_command[chat_command.index("--run-budget") + 1] == "120"
     assert chat_command[chat_command.index("--provider") + 1] == (

@@ -21,13 +21,6 @@ class open_webui_adapter_client(Protocol):
     def authenticate_no_auth_admin(self) -> dict[str, Any]:
         ...
 
-    def update_tool_valves(
-        self,
-        token: str,
-        tool_id: str,
-        valves: dict[str, Any],
-    ) -> dict[str, Any]:
-        ...
 
     def create_chat(
         self,
@@ -54,7 +47,6 @@ class open_webui_adapter_client(Protocol):
 
 @dataclass(frozen=True)
 class open_webui_adapter_config:
-    tool_id: str = "acmm_tools"
     delete_chat_after_run: bool = True
 
 
@@ -81,17 +73,9 @@ class open_webui_adapter:
         assistant_message_id: str | None = None
 
         try:
-            use_experiment_tools = _scenario_uses_experiment_tools(scenario)
             session = self._client.authenticate_no_auth_admin()
             token = _required_string(session.get("token"), "authentication token")
 
-            if use_experiment_tools:
-                valves = _runtime_valves(environment)
-                self._client.update_tool_valves(
-                    token,
-                    self._config.tool_id,
-                    valves,
-                )
 
             prompt = _required_string(
                 scenario.get("task", {}).get("prompt"),
@@ -128,7 +112,6 @@ class open_webui_adapter:
                     user_message_id=user_message_id,
                     assistant_message_id=assistant_message_id,
                     timestamp=timestamp,
-                    tool_id=(self._config.tool_id if use_experiment_tools else None),
                 ),
                 timeout_seconds=timeout_seconds,
             )
@@ -273,7 +256,6 @@ def _completion_payload(
     user_message_id: str,
     assistant_message_id: str,
     timestamp: int,
-    tool_id: str | None,
 ) -> dict[str, Any]:
     return {
         "model": model,
@@ -300,7 +282,6 @@ def _completion_payload(
             "function_calling": "native",
             "tool_approval_mode": "full",
         },
-        "tool_ids": [tool_id] if tool_id is not None else [],
         "features": {
             "web_search": False,
             "code_interpreter": False,
@@ -563,35 +544,6 @@ def _function_output_text(value: Any) -> str:
 
     return str(value)
 
-
-def _scenario_uses_experiment_tools(scenario: dict[str, Any]) -> bool:
-    capabilities = scenario.get("capabilities")
-    if capabilities is None:
-        return True
-    if not isinstance(capabilities, dict):
-        return True
-
-    tools = capabilities.get("tools")
-    if tools is None:
-        return True
-    return isinstance(tools, list) and bool(tools)
-
-
-def _runtime_valves(environment: Any) -> dict[str, Any]:
-    if not isinstance(environment, dict):
-        raise open_webui_adapter_error(
-            "Open WebUI Tool execution requires a fixture environment mapping."
-        )
-
-    if "ACMM_TOOL_CONFIG_JSON" not in environment:
-        raise open_webui_adapter_error(
-            "Open WebUI fixture environment is missing ACMM_TOOL_CONFIG_JSON."
-        )
-
-    return _json_object_configuration(
-        environment["ACMM_TOOL_CONFIG_JSON"],
-        "ACMM_TOOL_CONFIG_JSON",
-    )
 
 def _json_object_configuration(value: Any, name: str) -> dict[str, Any]:
     if not isinstance(value, str):
