@@ -35,6 +35,7 @@ An Experiment Package owns:
 - study README/protocol documentation;
 - runtime fixtures/evaluators and other study-specific Python code;
 - optional per-subject apparatus;
+- optional package-local capability integrations through the generic integration API;
 - experiment-specific analysis configuration/code where supported; and
 - static package assets.
 
@@ -77,6 +78,11 @@ The initial package shape is:
             apparatus.yaml
             ...
 
+    integrations/
+        <integration-id>/
+            __init__.py
+            ...
+
     analysis/
         ...
 
@@ -98,15 +104,18 @@ an experiment identity.
 scientific/run Contract. Keeping these responsibilities separate prevents software-packaging details
 from polluting the Contract.
 
-The package manifest schema is owned by Core as a standalone versioned JSON Schema:
+The package manifest schema is owned by Core as standalone versioned JSON Schemas:
 
 ```text
 src/acmm/experiment_package/schemas/experiment-package-v0.1.schema.json
+src/acmm/experiment_package/schemas/experiment-package-v0.2.schema.json
 ```
 
-Packages reference the supported schema version; they do not ship their own schema copies.
+Packages reference the supported schema version; they do not ship their own schema copies. Package
+schema v0.2 adds ordered generic `integrations` components while preserving the v0.1 runtime,
+apparatus, and analysis model. Existing v0.1 packages remain valid and unchanged.
 
-The manifest binds the package to its Contract and optional runtime/apparatus/analysis components.
+The manifest binds the package to its Contract and optional runtime/apparatus/integration/analysis components.
 Declared paths are package-relative and must remain valid when the source directory is moved.
 
 ## Package filesystem rules
@@ -158,7 +167,7 @@ A plain ID is accepted only when it resolves unambiguously.
 ## Digests and provenance
 
 ACMM computes an exact package SHA-256 plus component digests for the Contract, runtime, each declared
-apparatus component, and analysis configuration where present. Executions and deployments carry the
+apparatus component, each declared integration component, and analysis configuration where present. Executions and deployments carry the
 exact installed package identity rather than the original source path.
 
 A package-backed deployment marker records enough information to reopen and verify the staged
@@ -231,6 +240,54 @@ package portability.
 Subject `doctor()` uses the same package-aware apparatus identity during live readiness. This was
 verified in EP-6 field testing after an early leak was found where live doctor checks still attempted
 to hash a removed main-repository experiment directory.
+
+## Generic capability integration boundary
+
+Package schema v0.2 introduces ordered integration components for capabilities whose setup cannot be
+expressed cleanly as the original static per-subject apparatus format. The Core abstraction is intentionally
+tool- and transport-agnostic: Core understands that an integration component is staged, hashed, activated,
+and composed into one or more subject profiles. It does not understand GitHub, MCP, databases, browsers,
+or any other concrete tool technology.
+
+An integration component declares:
+
+```yaml
+integrations:
+  - id: example-capability
+    api_version: "0.1"
+    root: integrations/example-capability
+    entrypoint: build_integration
+    preset: controlled_v1
+    configuration: {}
+```
+
+`preset` and `configuration` are opaque to Core. They are passed to trusted staged integration code through
+the public `acmm.integration_api`. Raw credentials must not be embedded in the package; use the ACMM
+secret-handling boundary for secret material.
+
+The v0.1 integration API currently exposes a deliberately narrow reconciliation hook: an integration may
+provide a subject-specific `compose_profile()` implementation. Composition occurs after any legacy
+apparatus overlay and before the normal subject manager is constructed. Manifest declaration order is the
+composition order. The integration must preserve the subject profile type, so normal manager validation,
+apply, status, doctor, and teardown behavior remains authoritative.
+
+This boundary follows three ownership rules:
+
+- **Core owns lifecycle and provenance.** It loads only immutable staged integration code, verifies component
+  identity, controls deterministic composition order, and invokes the existing subject managers.
+- **The integration owns mechanics.** Concrete connection mechanisms, host-specific profile changes, and
+  external capability setup belong to integration code, not tool-specific branches in Core.
+- **The experiment owns scientific meaning.** Tool surface, scenario state, requirements, prompts, and
+  adjudication remain package concerns.
+
+The first implementation is package-local by design. If a concrete integration becomes reusable across
+experiments, the same public interface can later be satisfied by a shared integration distribution/repository
+without changing the package-to-Core lifecycle contract. Shared integration discovery is intentionally
+deferred until actual reuse establishes the necessary dependency and versioning semantics.
+
+The integration API is not synonymous with MCP. MCP may be implemented by one integration provider, just
+as a future integration may use an HTTP API, local service, database driver, or another mechanism. Core must
+not add mechanism-specific branches merely because one experiment happens to use that mechanism.
 
 ## LLM and subject boundary
 

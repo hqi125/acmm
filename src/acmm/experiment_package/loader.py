@@ -12,9 +12,11 @@ import yaml
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import load_schema_for_contract, validate_contract
 from acmm.experiment_api import EXPERIMENT_RUNTIME_API_VERSION
+from acmm.integration_api import EXPERIMENT_INTEGRATION_API_VERSION
 from acmm.experiment_package.model import (
     experiment_analysis_component,
     experiment_apparatus_component,
+    experiment_integration_component,
     experiment_package,
     experiment_runtime_component,
 )
@@ -89,6 +91,10 @@ def load_experiment_package(
         experiment_id,
         manifest.get("apparatus"),
     )
+    integrations = _load_integration_components(
+        root,
+        manifest.get("integrations"),
+    )
     analysis = _load_analysis_components(root, manifest.get("analysis"))
 
     return experiment_package(
@@ -101,6 +107,7 @@ def load_experiment_package(
         package_sha256=package_tree_sha256(root),
         runtime=runtime,
         apparatus=MappingProxyType(apparatus),
+        integrations=integrations,
         analysis=analysis,
         contract_warnings=contract_validation.warnings,
     )
@@ -287,6 +294,78 @@ def _validate_apparatus_identity(
         )
 
 
+
+def _load_integration_components(
+    package_root: Path,
+    data: Any,
+) -> tuple[experiment_integration_component, ...]:
+    if data is None:
+        return ()
+    if not isinstance(data, list):
+        raise experiment_package_error("integrations must be a sequence.")
+
+    components: list[experiment_integration_component] = []
+    seen_ids: set[str] = set()
+
+    for index, item in enumerate(data):
+        field = f"integrations[{index}]"
+        if not isinstance(item, dict):
+            raise experiment_package_error(f"{field} must be a mapping.")
+
+        integration_id = str(item["id"])
+        if _COMPONENT_ID_PATTERN.fullmatch(integration_id) is None:
+            raise experiment_package_error(
+                f"Invalid integration id '{integration_id}'."
+            )
+        if integration_id in seen_ids:
+            raise experiment_package_error(
+                f"Duplicate integration id '{integration_id}'."
+            )
+        seen_ids.add(integration_id)
+
+        api_version = str(item["api_version"])
+        if api_version != EXPERIMENT_INTEGRATION_API_VERSION:
+            raise experiment_package_error(
+                f"Unsupported {field}.api_version '{api_version}'."
+            )
+
+        root = _resolve_directory(package_root, item["root"], f"{field}.root")
+        if not (root / "__init__.py").is_file():
+            raise experiment_package_error(
+                f"{field}.root '{root}' must contain '__init__.py'."
+            )
+
+        entrypoint = str(item["entrypoint"])
+        if not entrypoint.isidentifier():
+            raise experiment_package_error(
+                f"{field}.entrypoint must be a valid Python identifier."
+            )
+
+        preset_value = item.get("preset")
+        preset = None if preset_value is None else str(preset_value)
+        if preset is not None and not preset.strip():
+            raise experiment_package_error(f"{field}.preset must not be empty.")
+
+        configuration_value = item.get("configuration", {})
+        if not isinstance(configuration_value, dict):
+            raise experiment_package_error(
+                f"{field}.configuration must be a mapping."
+            )
+
+        components.append(
+            experiment_integration_component(
+                integration_id=integration_id,
+                api_version=api_version,
+                root=root,
+                entrypoint=entrypoint,
+                preset=preset,
+                configuration=_freeze_mapping(configuration_value),
+                sha256=component_tree_sha256(root),
+            )
+        )
+
+    return tuple(components)
+
 def _load_analysis_components(
     package_root: Path,
     data: Any,
@@ -361,6 +440,20 @@ def _resolve_package_path(package_root: Path, value: Any, field: str) -> Path:
 def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
+
+
+def _freeze_mapping(value: dict[str, Any]) -> Mapping[str, Any]:
+    return MappingProxyType(
+        {key: _freeze_value(item) for key, item in value.items()}
+    )
+
+
+def _freeze_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return _freeze_mapping(value)
+    if isinstance(value, list):
+        return tuple(_freeze_value(item) for item in value)
+    return value
 
 def _format_path(path: Any) -> str:
     components: list[str] = []

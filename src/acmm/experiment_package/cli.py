@@ -441,6 +441,17 @@ def _print_package_summary(package: experiment_package, *, installed: bool) -> N
     else:
         print("  apparatus:        none")
 
+    if package.integrations:
+        print("  integrations:")
+        for component in package.integrations:
+            preset = component.preset or "none"
+            print(
+                f"    {component.integration_id}: {component.sha256} "
+                f"(api={component.api_version}, preset={preset})"
+            )
+    else:
+        print("  integrations:     none")
+
     if package.analysis:
         print("  supplementary analysis:")
         for component in package.analysis:

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from acmm.experiment_package import (
+    compose_staged_experiment_integrations,
     deployment_provenance,
     experiment_package,
     load_staged_experiment_apparatus,
@@ -105,6 +106,12 @@ def build_package_subject_manager(
                 profile,
                 package.experiment_id,
             )
+        profile = compose_staged_experiment_integrations(
+            package,
+            infrastructure_subject,
+            baseline_id,
+            profile,
+        )
         manager = hermes_manager(
             repo,
             runtime,
@@ -125,6 +132,12 @@ def build_package_subject_manager(
                 profile,
                 package.experiment_id,
             )
+        profile = compose_staged_experiment_integrations(
+            package,
+            infrastructure_subject,
+            baseline_id,
+            profile,
+        )
         manager = open_webui_manager(
             repo,
             runtime,
@@ -145,6 +158,12 @@ def build_package_subject_manager(
                 profile,
                 package.experiment_id,
             )
+        profile = compose_staged_experiment_integrations(
+            package,
+            infrastructure_subject,
+            baseline_id,
+            profile,
+        )
         manager = agent_zero_manager(
             repo,
             runtime,

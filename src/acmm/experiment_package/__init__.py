@@ -2,6 +2,12 @@ from acmm.experiment_package.apparatus import (
     experiment_apparatus_error,
     load_staged_experiment_apparatus,
 )
+from acmm.experiment_package.integration import (
+    compose_staged_experiment_integrations,
+    experiment_integration_error,
+    load_staged_experiment_integration,
+    loaded_experiment_integration,
+)
 from acmm.experiment_package.loader import (
     experiment_package_error,
     load_experiment_package,
@@ -9,6 +15,7 @@ from acmm.experiment_package.loader import (
 from acmm.experiment_package.model import (
     experiment_analysis_component,
     experiment_apparatus_component,
+    experiment_integration_component,
     experiment_package,
     experiment_runtime_component,
 )
@@ -53,9 +60,12 @@ __all__ = [
     "acquire_experiment_package",
     "install_experiment_package",
     "compose_execution_registry",
+    "compose_staged_experiment_integrations",
     "experiment_analysis_component",
     "experiment_apparatus_component",
     "experiment_apparatus_error",
+    "experiment_integration_component",
+    "experiment_integration_error",
     "experiment_package",
     "experiment_package_error",
     "experiment_package_store_error",
@@ -66,6 +76,8 @@ __all__ = [
     "experiment_runtime_error",
     "load_experiment_package",
     "load_staged_experiment_apparatus",
+    "load_staged_experiment_integration",
+    "loaded_experiment_integration",
     "load_staged_experiment_runtime",
     "loaded_experiment_runtime",
     "open_staged_experiment_package",
