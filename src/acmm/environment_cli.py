@@ -410,9 +410,10 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         state = item.deployment_state
         print(f"    {subject.subject_id}:")
         print(f"      infrastructure:    {subject.infrastructure_subject}")
-        print(f"      LLM:               {subject.llm_baseline_id}")
         if item.llm is not None:
             _print_llm_observation(item.llm, indent=6, running=True)
+        else:
+            print(f"      LLM:               {subject.llm_baseline_id}")
         print(f"      readiness:         {'READY' if item.is_ready else 'NOT READY'}")
         print(f"      experiment:        {result.experiment_id or 'none'}")
         if item.initially_running is not None:
@@ -428,6 +429,15 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         if result.error is not None:
             print(f"      error:             {result.error}")
         elif result.report is not None:
+            integration_successes = tuple(
+                check
+                for check in result.report.checks
+                if check.ok and check.name.startswith("integration:")
+            )
+            if integration_successes:
+                print("      integration checks:")
+                for check in integration_successes:
+                    print(f"        {check.name}: READY - {check.detail}")
             failures = tuple(check for check in result.report.checks if not check.ok)
             if failures:
                 print("      failed checks:")

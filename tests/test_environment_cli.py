@@ -403,7 +403,16 @@ def test_environment_doctor_reports_subject_progress(
                 doctor=deployed_subject_doctor_result(
                     infrastructure_subject="hermes",
                     experiment_id=EXPERIMENT,
-                    report=doctor_report((doctor_check("ready", True, "ready"),)),
+                    report=doctor_report(
+                        (
+                            doctor_check("ready", True, "ready"),
+                            doctor_check(
+                                "integration:example_discovery",
+                                True,
+                                "discovered expected tools",
+                            ),
+                        )
+                    ),
                     error=None,
                 ),
                 deployment_state={
@@ -450,6 +459,12 @@ def test_environment_doctor_reports_subject_progress(
     assert "doctor:         running checks..." in output
     assert "cleanup:        restoring stopped state..." in output
     assert "context observed:   64000" in output
+    assert output.count("LLM:                gpt_oss_120b_cloud_v1") == 1
+    assert "integration checks:" in output
+    assert (
+        "integration:example_discovery: READY - discovered expected tools"
+        in output
+    )
     assert "configured/effective: hermes_nemotron30b=64000" in output
     assert "result:         READY" in output
 
