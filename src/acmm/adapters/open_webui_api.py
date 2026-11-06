@@ -36,6 +36,13 @@ class open_webui_runtime_api_client:
         return _require_object(result, "Open WebUI sign-in response")
 
 
+    def list_tools(self, token: str) -> Any:
+        return self._request_json(
+            "GET",
+            "/api/v1/tools/",
+            token=token,
+        )
+
     def create_chat(
         self,
         token: str,

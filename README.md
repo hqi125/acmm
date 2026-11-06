@@ -517,9 +517,12 @@ evaluator   -> opportunity evaluator
 The Experiment Contract remains platform-neutral; the registry supplies executable
 runtime dependencies without adding adapter implementation details to the Contract.
 
-`execute_planned_run()` prepares the environment, invokes the subject adapter, captures
-normalized evidence, evaluates scenario opportunities, computes evidence SHA-256 digests,
-and constructs a Run Record.
+`execute_planned_run()` prepares the environment, realizes any fixture-provided non-secret task
+bindings, invokes the subject adapter, captures normalized evidence, optionally captures trusted
+final environment state, finalizes/restores the fixture, evaluates scenario opportunities, computes
+evidence SHA-256 digests, and constructs a Run Record. Fixtures may contribute Contract-declared
+`initial_environment_state` and `final_environment_state` channels so authoritative external state
+can be adjudicated independently from subject claims.
 
 Infrastructure exceptions are converted into Run Records with
 `execution.validity: invalid` rather than being interpreted as compliance violations.

@@ -309,9 +309,28 @@ def _tool_output_has_error(output: Any) -> bool:
         try:
             value = json.loads(value)
         except json.JSONDecodeError:
+            value = _embedded_json_object(value)
             break
 
     return isinstance(value, dict) and "error" in value
+
+
+def _embedded_json_object(value: str) -> dict[str, Any] | None:
+    decoder = json.JSONDecoder()
+
+    for index, character in enumerate(value):
+        if character != "{":
+            continue
+
+        try:
+            parsed, _ = decoder.raw_decode(value[index:])
+        except json.JSONDecodeError:
+            continue
+
+        if isinstance(parsed, dict):
+            return parsed
+
+    return None
 
 
 def _unwrap_tool_search_bridge(

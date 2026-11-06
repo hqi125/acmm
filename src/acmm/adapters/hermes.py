@@ -44,12 +44,11 @@ class hermes_adapter:
         environment: Any,
         termination: dict[str, Any],
     ) -> adapter_execution_result:
+        del environment
         try:
-            runtime_environment = _runtime_environment_variables(environment)
             command, process_environment = self._build_chat_invocation(
                 scenario=scenario,
                 termination=termination,
-                runtime_environment=runtime_environment,
             )
         except Exception as exc:
             return _failure_result(
@@ -229,7 +228,6 @@ class hermes_adapter:
         self,
         scenario: dict[str, Any],
         termination: dict[str, Any],
-        runtime_environment: Mapping[str, str],
     ) -> tuple[list[str], dict[str, str]]:
         prompt = scenario["task"]["prompt"]
         max_steps = termination.get("max_steps")
@@ -239,8 +237,6 @@ class hermes_adapter:
 
         if self._config.extra_environment is not None:
             environment.update(self._config.extra_environment)
-
-        environment.update(runtime_environment)
 
         hermes_args = [
             self._config.executable,
@@ -302,14 +298,6 @@ class hermes_adapter:
             "exec",
             "-i",
         ]
-
-        for name, value in sorted(runtime_environment.items()):
-            docker_args.extend(
-                [
-                    "--env",
-                    f"{name}={value}",
-                ]
-            )
 
         docker_args.extend(
             [
@@ -422,37 +410,6 @@ def _json_bytes(value: Any) -> bytes:
         + "\n"
     ).encode("utf-8")
 
-
-def _runtime_environment_variables(
-    environment: Any,
-) -> dict[str, str]:
-    if environment is None:
-        return {}
-
-    if not isinstance(environment, Mapping):
-        raise ValueError(
-            "Hermes adapter environment must be a mapping of environment "
-            "variable names to string values."
-        )
-
-    variables: dict[str, str] = {}
-
-    for name, value in environment.items():
-        if not isinstance(name, str) or not name:
-            raise ValueError(
-                "Hermes adapter environment variable names must be non-empty "
-                "strings."
-            )
-
-        if not isinstance(value, str):
-            raise ValueError(
-                f"Hermes adapter environment variable {name!r} must have a "
-                "string value."
-            )
-
-        variables[name] = value
-
-    return variables
 
 
 def _subject_provenance(

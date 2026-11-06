@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 
 from acmm.contract.loader import load_contract
@@ -16,6 +17,7 @@ from acmm.runtime.interfaces import (
     evaluation_context,
     execution_failure,
     judgment_result,
+    observed_environment,
     prepared_environment,
 )
 from acmm.runtime.planner import build_experiment_plan
@@ -125,6 +127,57 @@ class fake_adapter:
             },
             failure=self.failure,
         )
+
+
+class observed_fixture:
+    def __init__(self) -> None:
+        self.finalized = False
+
+    def prepare(self, scenario: dict, reset: dict) -> prepared_environment:
+        del reset
+        assert "{{fixture_value}}" in scenario["task"]["prompt"]
+        return prepared_environment(
+            handle={"fixture_value": 87},
+            provenance={"fixture": "observed_fixture"},
+            evidence=(
+                captured_evidence(
+                    id="initial_environment_state",
+                    channel="initial_environment_state",
+                    artifact="evidence/initial_environment_state.json",
+                    content=b'{"value":87,"phase":"pre"}',
+                ),
+            ),
+            task_bindings={"fixture_value": "87"},
+        )
+
+    def observe(self, scenario: dict, handle: object) -> observed_environment:
+        assert "{{fixture_value}}" not in scenario["task"]["prompt"]
+        assert "87" in scenario["task"]["prompt"]
+        assert handle == {"fixture_value": 87}
+        return observed_environment(
+            evidence=(
+                captured_evidence(
+                    id="final_environment_state",
+                    channel="final_environment_state",
+                    artifact="evidence/final_environment_state.json",
+                    content=b'{"value":100,"phase":"post"}',
+                ),
+            ),
+        )
+
+    def finalize(self, scenario: dict, handle: object, reset: dict) -> dict:
+        del scenario
+        del handle
+        del reset
+        self.finalized = True
+        return {"restored": True}
+
+
+class binding_adapter(fake_adapter):
+    def execute(self, subject, scenario, environment, termination):
+        assert "{{fixture_value}}" not in scenario["task"]["prompt"]
+        assert "87" in scenario["task"]["prompt"]
+        return super().execute(subject, scenario, environment, termination)
 
 
 class retrieval_evaluator:
@@ -385,4 +438,76 @@ def test_evaluator_failure_preserves_observed_termination() -> None:
     assert len(result.record["evidence"]) == 4
     assert result.record["judgments"] == []
 
+    _validate_result(contract, result)
+
+
+def test_environment_observation_task_binding_and_finalization() -> None:
+    contract = load_contract(CONTRACT_PATH)
+    contract = json.loads(json.dumps(contract))
+    contract["scenarios"][0]["task"]["prompt"] += " Fixture={{fixture_value}}."
+    contract["evidence_policy"]["capture"].extend(
+        ["initial_environment_state", "final_environment_state"]
+    )
+    planned = build_experiment_plan(contract).runs[0]
+    fixture = observed_fixture()
+
+    result = execute_planned_run(
+        contract=contract,
+        planned=planned,
+        contract_sha256="0" * 64,
+        registry=_registry(adapter=binding_adapter(), fixture=fixture),
+        harness_version="0.1.0",
+        now=_clock(),
+        run_id_factory=lambda: RUN_ID,
+    )
+
+    assert result.record["execution"]["validity"] == "valid"
+    assert fixture.finalized is True
+    assert [item.id for item in result.artifacts][:1] == ["initial_environment_state"]
+    assert result.artifacts[-1].id == "final_environment_state"
+    environment = result.record["provenance"]["environment"]
+    assert environment == {
+        "fixture": "observed_fixture",
+        "configuration": {},
+    }
+
+    schema = load_run_record_schema(RECORD_SCHEMA_PATH)
+    validation = validate_run_record(
+        result.record,
+        schema,
+        contract,
+        expected_contract_sha256="0" * 64,
+    )
+    assert validation.is_valid, validation.errors
+
+
+def test_environment_fixture_rejects_non_record_provenance_fields() -> None:
+    contract = load_contract(CONTRACT_PATH)
+    planned = build_experiment_plan(contract).runs[0]
+
+    class extra_provenance_fixture(fake_fixture):
+        def prepare(self, scenario, reset):
+            base = super().prepare(scenario, reset)
+            return prepared_environment(
+                handle=base.handle,
+                provenance={
+                    "fixture": "synthetic_environment_v1",
+                    "configuration": {},
+                    "unexpected": True,
+                },
+            )
+
+    result = execute_planned_run(
+        contract=contract,
+        planned=planned,
+        contract_sha256=sha256_file(CONTRACT_PATH),
+        registry=_registry(fixture=extra_provenance_fixture()),
+        harness_version="0.1.0",
+        now=_clock(),
+        run_id_factory=lambda: RUN_ID,
+    )
+
+    assert result.record["execution"]["validity"] == "invalid"
+    assert result.record["execution"]["failure"]["kind"] == "orchestration_error"
+    assert "unexpected field(s): unexpected" in result.record["execution"]["failure"]["message"]
     _validate_result(contract, result)

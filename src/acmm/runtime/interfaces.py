@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Mapping, Protocol
 
 from acmm.evidence.interpretation import interpreted_structured_output
@@ -14,8 +15,6 @@ class captured_evidence:
     content: bytes
 
 
-
-
 @dataclass(frozen=True)
 class execution_failure:
     kind: str
@@ -26,6 +25,20 @@ class execution_failure:
 class prepared_environment:
     handle: Any
     provenance: dict[str, Any]
+    evidence: tuple[captured_evidence, ...] = ()
+    task_bindings: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", tuple(self.evidence))
+        object.__setattr__(self, "task_bindings", MappingProxyType(dict(self.task_bindings)))
+
+
+@dataclass(frozen=True)
+class observed_environment:
+    evidence: tuple[captured_evidence, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "evidence", tuple(self.evidence))
 
 
 @dataclass(frozen=True)
@@ -50,7 +63,9 @@ class evaluation_context:
     opportunity: dict[str, Any]
     check: dict[str, Any]
     evidence: tuple[captured_evidence, ...]
-    interpreted_evidence: Mapping[str, interpreted_structured_output] = field(default_factory=dict)
+    interpreted_evidence: Mapping[str, interpreted_structured_output] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True)
@@ -76,6 +91,25 @@ class environment_fixture(Protocol):
         scenario: dict[str, Any],
         reset: dict[str, Any],
     ) -> prepared_environment:
+        ...
+
+
+class environment_observer(Protocol):
+    def observe(
+        self,
+        scenario: dict[str, Any],
+        handle: Any,
+    ) -> observed_environment:
+        ...
+
+
+class environment_finalizer(Protocol):
+    def finalize(
+        self,
+        scenario: dict[str, Any],
+        handle: Any,
+        reset: dict[str, Any],
+    ) -> Mapping[str, Any] | None:
         ...
 
 

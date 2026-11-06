@@ -84,3 +84,23 @@ def test_runtime_client_allows_null_blocking_completion_response() -> None:
     assert captured["timeout"] == 135.0
     assert captured["request"].full_url.endswith("/api/chat/completions")
     assert captured["request"].get_header("Authorization") == "Bearer token"
+
+
+def test_runtime_client_lists_available_tool_ids() -> None:
+    requests = []
+
+    def opener(request, *, timeout):
+        requests.append((request, timeout))
+        return fake_response([{"id": "server:mcp:github"}])
+
+    client = open_webui_runtime_api_client(
+        "http://127.0.0.1:3000",
+        opener=opener,
+    )
+
+    result = client.list_tools("token")
+
+    assert result == [{"id": "server:mcp:github"}]
+    assert requests[0][0].full_url.endswith("/api/v1/tools/")
+    assert requests[0][0].get_method() == "GET"
+    assert requests[0][0].get_header("Authorization") == "Bearer token"

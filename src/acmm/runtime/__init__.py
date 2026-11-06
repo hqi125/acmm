@@ -8,12 +8,15 @@ from acmm.runtime.experiment_execution import (
 from acmm.runtime.interfaces import (
     adapter_execution_result,
     captured_evidence,
+    environment_finalizer,
     environment_fixture,
+    environment_observer,
     evaluation_context,
     executed_run,
     execution_failure,
     judgment_result,
     opportunity_evaluator,
+    observed_environment,
     prepared_environment,
     subject_adapter,
 )
@@ -33,7 +36,9 @@ __all__ = [
     "adapter_execution_result",
     "build_experiment_plan",
     "captured_evidence",
+    "environment_finalizer",
     "environment_fixture",
+    "environment_observer",
     "evaluation_context",
     "execute_planned_run",
     "slot_execution",
@@ -50,6 +55,7 @@ __all__ = [
     "persist_executed_run_to",
     "planned_run",
     "result_write_error",
+    "observed_environment",
     "prepared_environment",
     "subject_adapter",
 ]

@@ -61,10 +61,14 @@ policy.
 It returns:
 
 - an opaque environment handle consumed by the subject adapter;
-- realized environment provenance.
+- realized environment provenance;
+- optional Contract-declared initial-state evidence;
+- optional non-secret task bindings used to materialize runtime values into the scenario prompt.
 
-A scenario without a fixture receives a `None` runtime handle and a minimal environment
-provenance object.
+A fixture may additionally implement `observe()` and `finalize()`. `observe()` captures trusted
+post-execution environment evidence before adjudication. `finalize()` restores external state before
+judgments are evaluated, so evaluator failure cannot leave the next run contaminated. A scenario
+without a fixture receives a `None` runtime handle and a minimal environment provenance object.
 
 ### Opportunity evaluator
 
@@ -100,7 +104,7 @@ implementations.
 
 ## Evidence
 
-Subject adapters return normalized `captured_evidence` objects containing:
+Subject adapters and trusted environment fixtures return normalized `captured_evidence` objects containing:
 
 ```text
 id

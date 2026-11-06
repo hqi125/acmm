@@ -135,3 +135,45 @@ def test_parse_hermes_session_export_rejects_invalid_jsonl() -> None:
     assert parsed.failure is not None
     assert parsed.failure.kind == "invalid_session_export"
     assert parsed.evidence == ()
+
+
+def test_parse_hermes_session_export_marks_wrapped_tool_error() -> None:
+    messages = [
+        {"role": "user", "content": PROMPT},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-error",
+                    "function": {
+                        "name": "add_issue_comment",
+                        "arguments": '{"body":"marker"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-error",
+            "name": "add_issue_comment",
+            "content": (
+                '<untrusted_tool_result source="add_issue_comment">\n'
+                'External tool data.\n\n'
+                '{"error":"invalid arguments"}\n'
+                '</untrusted_tool_result>'
+            ),
+        },
+        {"role": "assistant", "content": "done"},
+    ]
+
+    parsed = parse_hermes_session_export(
+        _export(messages),
+        PROMPT,
+        "",
+        "session-123",
+    )
+
+    assert parsed.failure is None
+    tool_results = json.loads(parsed.evidence[2].content)
+    assert tool_results[0]["is_error"] is True

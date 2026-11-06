@@ -75,7 +75,9 @@ class open_webui_adapter:
         try:
             session = self._client.authenticate_no_auth_admin()
             token = _required_string(session.get("token"), "authentication token")
-
+            external_tool_ids = _external_server_tool_ids(
+                self._client.list_tools(token)
+            )
 
             prompt = _required_string(
                 scenario.get("task", {}).get("prompt"),
@@ -112,6 +114,7 @@ class open_webui_adapter:
                     user_message_id=user_message_id,
                     assistant_message_id=assistant_message_id,
                     timestamp=timestamp,
+                    tool_ids=external_tool_ids,
                 ),
                 timeout_seconds=timeout_seconds,
             )
@@ -256,8 +259,9 @@ def _completion_payload(
     user_message_id: str,
     assistant_message_id: str,
     timestamp: int,
+    tool_ids: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "model": model,
         "messages": [
             {
@@ -294,6 +298,31 @@ def _completion_payload(
             "follow_up_generation": False,
         },
     }
+    if tool_ids:
+        payload["tool_ids"] = list(tool_ids)
+    return payload
+
+
+def _external_server_tool_ids(value: Any) -> tuple[str, ...]:
+    items: list[Any]
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, dict):
+        candidate = value.get("tools")
+        if not isinstance(candidate, list):
+            candidate = value.get("data")
+        items = candidate if isinstance(candidate, list) else []
+    else:
+        items = []
+
+    ids = {
+        item.get("id")
+        for item in items
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and item["id"].startswith("server:mcp:")
+    }
+    return tuple(sorted(ids))
 
 
 def _parse_completed_chat(

@@ -32,11 +32,15 @@ from acmm.evidence.text import (
     numeric_values_share_text_unit,
 )
 from acmm.harness.capabilities import harness_capabilities
+from acmm.secret_bindings import resolve_secret, secret_binding_key
 from acmm.runtime.interfaces import (
     captured_evidence,
+    environment_finalizer,
     environment_fixture,
+    environment_observer,
     evaluation_context,
     judgment_result,
+    observed_environment,
     opportunity_evaluator,
     prepared_environment,
 )
@@ -50,6 +54,18 @@ class experiment_runtime_context:
     experiment_id: str
     package_sha256: str
     package_root: Path
+    integration_secret_ids: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        normalized = {
+            integration_id: tuple(secret_ids)
+            for integration_id, secret_ids in self.integration_secret_ids.items()
+        }
+        object.__setattr__(
+            self,
+            "integration_secret_ids",
+            MappingProxyType(normalized),
+        )
 
     def resolve_resource(
         self,
@@ -80,6 +96,24 @@ class experiment_runtime_context:
             raise ValueError(f"Experiment resource does not exist: '{relative}'.")
 
         return resource
+
+    def resolve_integration_secret(
+        self,
+        integration_id: str,
+        secret_id: str,
+    ) -> str:
+        declared = self.integration_secret_ids.get(integration_id, ())
+        if secret_id not in declared:
+            raise ValueError(
+                f"Integration '{integration_id}' did not declare secret '{secret_id}'."
+            )
+        return resolve_secret(
+            secret_binding_key(
+                experiment_id=self.experiment_id,
+                integration_id=integration_id,
+                secret_id=secret_id,
+            )
+        )
 
 
 def _reject_resource_symlinks(
@@ -117,7 +151,9 @@ __all__ = [
     "captured_evidence",
     "contains_numeric_value",
     "decode_json_object_text",
+    "environment_finalizer",
     "environment_fixture",
+    "environment_observer",
     "evaluation_context",
     "experiment_runtime",
     "experiment_runtime_context",
@@ -128,6 +164,7 @@ __all__ = [
     "interpreted_structured_output",
     "json_object_decode_result",
     "judgment_result",
+    "observed_environment",
     "load_conversation_messages",
     "load_json_object_array_evidence",
     "load_text_evidence",

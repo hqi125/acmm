@@ -227,7 +227,7 @@ def test_hermes_adapter_builds_structured_evidence_from_session_export() -> None
         "jsonl",
     ]
 
-    assert chat_kwargs["env"]["ACMM_MAGIC_NUMBER"] == "87"
+    assert "ACMM_MAGIC_NUMBER" not in chat_kwargs["env"]
     assert chat_kwargs["timeout"] == 135.0
     assert export_kwargs["timeout"] == 135.0
 
@@ -325,58 +325,9 @@ def test_live_command_relies_on_qualified_model_route() -> None:
     assert "--reasoning" not in chat_command
 
 
-def test_docker_mode_injects_runtime_environment_and_exports_same_session() -> None:
+def test_docker_mode_keeps_fixture_handle_private_and_exports_same_session() -> None:
     calls: list[tuple[list[str], dict]] = []
 
-    adapter = hermes_adapter(
-        hermes_adapter_config(
-            docker_container="hermes-agent",
-            executable="/opt/hermes/bin/hermes",
-        ),
-        runner=_successful_runner(calls),
-    )
-
-    result = adapter.execute(
-        SUBJECT,
-        SCENARIO,
-        ENVIRONMENT,
-        TERMINATION,
-    )
-
-    assert result.failure is None
-
-    chat_command = calls[0][0]
-    assert chat_command[:7] == [
-        "docker",
-        "exec",
-        "-i",
-        "--env",
-        "ACMM_MAGIC_NUMBER=87",
-        "hermes-agent",
-        "/opt/hermes/bin/hermes",
-    ]
-
-    export_command = calls[1][0]
-    assert export_command[:5] == [
-        "docker",
-        "exec",
-        "-i",
-        "hermes-agent",
-        "/opt/hermes/bin/hermes",
-    ]
-    assert export_command[-6:] == [
-        "sessions",
-        "export",
-        "-",
-        "--session-id",
-        "session-123",
-        "--format",
-        "jsonl",
-    ][-6:]
-
-
-def test_docker_runtime_environment_is_generic_and_deterministic() -> None:
-    calls: list[tuple[list[str], dict]] = []
     adapter = hermes_adapter(
         hermes_adapter_config(
             docker_container="hermes-agent",
@@ -389,41 +340,34 @@ def test_docker_runtime_environment_is_generic_and_deterministic() -> None:
         SUBJECT,
         SCENARIO,
         {
-            "ZETA_SETTING": "last",
-            "ALPHA_SETTING": "first",
+            "opaque_number": 87,
+            "opaque_nested": {"value": "private"},
         },
         TERMINATION,
     )
 
     assert result.failure is None
+
     chat_command = calls[0][0]
-    assert chat_command[:9] == [
+    assert chat_command[:5] == [
         "docker",
         "exec",
         "-i",
-        "--env",
-        "ALPHA_SETTING=first",
-        "--env",
-        "ZETA_SETTING=last",
         "hermes-agent",
         "/opt/hermes/bin/hermes",
     ]
-    assert calls[0][1]["env"]["ALPHA_SETTING"] == "first"
-    assert calls[0][1]["env"]["ZETA_SETTING"] == "last"
+    assert "--env" not in chat_command
+    assert "opaque_number" not in calls[0][1]["env"]
+    assert "opaque_nested" not in calls[0][1]["env"]
 
-
-def test_non_string_runtime_environment_value_is_configuration_failure() -> None:
-    result = hermes_adapter().execute(
-        SUBJECT,
-        SCENARIO,
-        {"ACMM_VALUE": 87},
-        TERMINATION,
-    )
-
-    assert result.termination == "harness_error"
-    assert result.failure is not None
-    assert result.failure.kind == "adapter_configuration_error"
-    assert "must have a string value" in result.failure.message
+    export_command = calls[1][0]
+    assert export_command[:5] == [
+        "docker",
+        "exec",
+        "-i",
+        "hermes-agent",
+        "/opt/hermes/bin/hermes",
+    ]
 
 
 def test_run_budget_exhaustion_is_valid_agent_timeout() -> None:

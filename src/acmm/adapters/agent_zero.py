@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import re
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -343,28 +344,22 @@ def _normalize_log_items(
     tool_results: list[dict[str, Any]] = []
 
     for item in items:
-        if not isinstance(item, dict) or item.get("type") != "tool":
+        if not isinstance(item, dict):
             continue
 
         kvps = item.get("kvps")
         if not isinstance(kvps, dict):
             kvps = {}
 
-        raw_name = kvps.get("_tool_name")
-        if not isinstance(raw_name, str) or not raw_name:
+        name = _native_tool_log_name(item, kvps)
+        if name is None:
             continue
-
-        name = raw_name
 
         call_id = item.get("id")
         if not isinstance(call_id, str) or not call_id:
             call_id = f"agent-zero-tool-{item.get('no', len(tool_calls))}"
 
-        arguments = {
-            str(key): value
-            for key, value in kvps.items()
-            if isinstance(key, str) and not key.startswith("_")
-        }
+        arguments = _native_tool_log_arguments(kvps)
         content = item.get("content")
         if not isinstance(content, str):
             content = "" if content is None else str(content)
@@ -428,6 +423,69 @@ def _normalize_log_items(
         }
     )
     return conversation, tool_calls, tool_results
+
+
+def _native_tool_log_name(
+    item: dict[str, Any],
+    kvps: dict[str, Any],
+) -> str | None:
+    for source in (kvps, item):
+        for key in ("_tool_name", "tool_name", "qualified_name"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    server = kvps.get("server") or kvps.get("server_id")
+    tool = kvps.get("tool") or kvps.get("name")
+    item_type = str(item.get("type") or "").lower()
+    if (
+        "mcp" in item_type
+        and isinstance(server, str)
+        and server.strip()
+        and isinstance(tool, str)
+        and tool.strip()
+    ):
+        return f"mcp:{server.strip()}:{tool.strip()}"
+
+    heading = item.get("heading")
+    if not isinstance(heading, str):
+        return None
+
+    for pattern in (
+        r"\b(mcp:[A-Za-z0-9_-]+:[A-Za-z0-9_.-]+)\b",
+        r"\b(mcp__[A-Za-z0-9_]+__[A-Za-z0-9_]+)\b",
+        r"\bUsing(?:\s+MCP)?\s+tool\s+['\"]([^'\"]+)['\"]",
+    ):
+        match = re.search(pattern, heading, flags=re.IGNORECASE)
+        if match is not None:
+            return match.group(1)
+
+    return None
+
+
+def _native_tool_log_arguments(kvps: dict[str, Any]) -> dict[str, Any]:
+    for key in ("tool_args", "arguments", "args", "input"):
+        value = kvps.get(key)
+        if isinstance(value, dict):
+            return {str(name): item for name, item in value.items()}
+
+    metadata = {
+        "tool_name",
+        "qualified_name",
+        "server",
+        "server_id",
+        "tool",
+        "name",
+        "result",
+        "output",
+    }
+    return {
+        str(key): value
+        for key, value in kvps.items()
+        if isinstance(key, str)
+        and not key.startswith("_")
+        and key not in metadata
+    }
 
 
 def _json_object_configuration(value: Any, name: str) -> dict[str, Any]:

@@ -22,13 +22,16 @@ from acmm.preflight.deployment import (
     inspect_package_deployment_contexts,
 )
 from acmm.experiment_package import (
+    acquire_staged_integration_resources,
     compose_execution_registry,
+    doctor_staged_integration_resources,
     experiment_package,
     experiment_package_error,
     experiment_package_store_error,
     experiment_runtime_error,
     load_staged_experiment_runtime,
     package_provenance,
+    restore_staged_integration_resources,
     resolve_installed_experiment_package,
 )
 from acmm.experiment_package.cli import register_experiment_package_commands
@@ -803,7 +806,79 @@ def _run_experiment(args: argparse.Namespace) -> int:
         return 2
 
     runtime_leases: dict[str, subject_runtime_lease] = {}
+    integration_resource_leases = ()
     ready_subject_ids: set[str] = set()
+
+    def cleanup_runtime_resources() -> tuple[str, ...]:
+        errors = list(_release_runtime_leases(runtime_leases))
+        if integration_resource_leases:
+            restore_errors = restore_staged_integration_resources(
+                package,
+                runtime_root,
+                integration_resource_leases,
+            )
+            errors.extend(
+                f"integration {integration_id}: {detail}"
+                for integration_id, detail in restore_errors
+            )
+        return tuple(errors)
+
+    try:
+        integration_resource_leases = acquire_staged_integration_resources(
+            package,
+            runtime_root,
+            start_if_needed=bool(args.start_if_needed),
+            timeout_seconds=args.startup_timeout_seconds,
+            progress=_run_integration_resource_progress,
+        )
+    except (experiment_package_error, OSError, ValueError) as exc:
+        print(
+            f"ERROR: Could not acquire integration resources: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+
+    stopped_resources = [
+        lease.integration_id
+        for lease in integration_resource_leases
+        if not lease.initially_running and not lease.started_by_acmm
+    ]
+    if stopped_resources:
+        print(
+            "ERROR: Integration resource(s) are stopped: "
+            + ", ".join(stopped_resources)
+            + "; rerun with --start-if-needed.",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        resource_reports = doctor_staged_integration_resources(package, runtime_root)
+    except (experiment_package_error, OSError, ValueError) as exc:
+        cleanup_errors = cleanup_runtime_resources()
+        print(
+            f"ERROR: Could not verify integration resources: {exc}",
+            file=sys.stderr,
+        )
+        for error in cleanup_errors:
+            print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
+        return 2
+
+    failed_resources = [
+        integration_id
+        for integration_id, report in resource_reports
+        if not report.is_ready
+    ]
+    if failed_resources:
+        cleanup_errors = cleanup_runtime_resources()
+        print(
+            "ERROR: Integration resource readiness failed: "
+            + ", ".join(failed_resources),
+            file=sys.stderr,
+        )
+        for error in cleanup_errors:
+            print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
+        return 2
 
     if args.start_if_needed:
         try:
@@ -813,7 +888,10 @@ def _run_experiment(args: argparse.Namespace) -> int:
                 subject_bindings=subject_bindings,
             )
         except (infrastructure_error, profile_error, docker_error, OSError, ValueError) as exc:
+            cleanup_errors = cleanup_runtime_resources()
             print(f"ERROR: Could not inspect selected subject runtimes: {exc}", file=sys.stderr)
+            for error in cleanup_errors:
+                print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
             return 2
 
         running_bindings = {
@@ -829,11 +907,14 @@ def _run_experiment(args: argparse.Namespace) -> int:
         _print_start_if_needed_preflight(runtime_leases, live_readiness)
 
         if not live_readiness.is_ready:
+            cleanup_errors = cleanup_runtime_resources()
             print(
                 "ERROR: Live readiness preflight failed for an already-running "
                 "subject; no execution session was created.",
                 file=sys.stderr,
             )
+            for error in cleanup_errors:
+                print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
             return 2
         ready_subject_ids.update(
             item.subject_id for item in live_readiness.subjects if item.is_ready
@@ -847,11 +928,14 @@ def _run_experiment(args: argparse.Namespace) -> int:
         _print_live_readiness_preflight(live_readiness)
 
         if not live_readiness.is_ready:
+            cleanup_errors = cleanup_runtime_resources()
             print(
                 "ERROR: Live readiness preflight failed; no execution session was "
                 "created.",
                 file=sys.stderr,
             )
+            for error in cleanup_errors:
+                print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
             return 2
 
     if args.capture_runtime_logs and not args.start_if_needed:
@@ -983,7 +1067,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
             OSError,
             ValueError,
         ) as exc:
-            cleanup_errors = _release_runtime_leases(runtime_leases)
+            cleanup_errors = cleanup_runtime_resources()
             for error in cleanup_errors:
                 print(
                     f"WARNING: Runtime cleanup failed: {error}",
@@ -1007,7 +1091,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
         try:
             prepare_subject_runtime(selected_runs[0].subject_id)
         except (infrastructure_error, profile_error, docker_error, OSError, ValueError) as exc:
-            cleanup_errors = _release_runtime_leases(runtime_leases)
+            cleanup_errors = cleanup_runtime_resources()
             for error in cleanup_errors:
                 print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
             print(
@@ -1052,7 +1136,10 @@ def _run_experiment(args: argparse.Namespace) -> int:
         try:
             ollama_api_key = _read_ollama_api_key_file(args.ollama_api_key_file)
         except ValueError as exc:
+            cleanup_errors = cleanup_runtime_resources()
             print(f"ERROR: {exc}", file=sys.stderr)
+            for error in cleanup_errors:
+                print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
             return 2
 
     expected_ollama_request_count = sum(
@@ -1131,7 +1218,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
         )
     except experiment_execution_interrupted as exc:
         capture_runtime_log(active_subject_id[0])
-        cleanup_errors = _release_runtime_leases(runtime_leases)
+        cleanup_errors = cleanup_runtime_resources()
         result = exc.result
         _validate_persisted_execution(result, contract)
 
@@ -1156,14 +1243,14 @@ def _run_experiment(args: argparse.Namespace) -> int:
         ValueError,
     ) as exc:
         capture_runtime_log(active_subject_id[0])
-        cleanup_errors = _release_runtime_leases(runtime_leases)
+        cleanup_errors = cleanup_runtime_resources()
         print(f"ERROR: Experiment execution failed: {exc}", file=sys.stderr)
         for error in cleanup_errors:
             print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
         return 2
 
     capture_runtime_log(active_subject_id[0])
-    cleanup_errors = _release_runtime_leases(runtime_leases)
+    cleanup_errors = cleanup_runtime_resources()
 
     validation_status = _validate_persisted_execution(
         result,
@@ -1199,6 +1286,21 @@ def _run_experiment(args: argparse.Namespace) -> int:
         return 1
 
     return 0
+
+
+
+def _run_integration_resource_progress(
+    integration_id: str,
+    state: str,
+) -> None:
+    messages = {
+        "runtime-running": "already running",
+        "runtime-stopped": "stopped",
+        "starting": "starting for experiment execution",
+        "started": "ready for experiment execution",
+    }
+    detail = messages.get(state, state)
+    print(f"Integration resource: {integration_id}: {detail}", flush=True)
 
 
 def _validate_persisted_execution(

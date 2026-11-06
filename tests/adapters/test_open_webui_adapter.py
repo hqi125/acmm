@@ -53,6 +53,13 @@ class fake_open_webui_client:
         }
 
 
+    def list_tools(self, token):
+        assert token == "session-token"
+        return [
+            {"id": "local-tool"},
+            {"id": "server:mcp:github"},
+        ]
+
     def create_chat(self, token, payload):
         assert token == "session-token"
         self.create_payload = payload
@@ -155,6 +162,7 @@ def test_open_webui_adapter_runs_native_tool_loop_and_captures_evidence() -> Non
     assert completion["model"] == "gpt-oss:120b-cloud"
     assert completion["stream"] is True
     assert "session_id" not in completion
+    assert completion["tool_ids"] == ["server:mcp:github"]
     assert completion["features"] == {
         "web_search": False,
         "code_interpreter": False,
@@ -367,3 +375,19 @@ def test_open_webui_adapter_deletes_chat_after_parse_failure() -> None:
     assert result.failure is not None
     assert result.failure.kind == "missing_assistant_message"
     assert client.deleted == ["chat-123"]
+
+
+def test_open_webui_adapter_omits_tool_ids_when_no_mcp_server_is_available() -> None:
+    client = fake_open_webui_client()
+    client.list_tools = lambda token: [{"id": "local-tool"}]
+    adapter = open_webui_adapter(client)
+
+    result = adapter.execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.failure is None
+    assert "tool_ids" not in client.completion_payload
