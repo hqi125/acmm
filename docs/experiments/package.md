@@ -96,13 +96,36 @@ acmm package install <package-directory>
 acmm package apply <selector>
 acmm run <selector> --preview
 acmm run <selector>
+acmm package install <package-directory> --upgrade
+acmm package list
+acmm package show <selector>
 acmm package detach <selector>
 acmm package uninstall <selector>
+acmm package purge
+acmm package purge --detach-all
 ```
 
 `acmm run` is strict by default. `--apply-if-needed` grants permission to reconcile only the selected
 subjects, after which ACMM repeats the strict deployment preflight. `--start-if-needed` is a separate
 permission to start a correctly deployed but stopped runtime.
+
+Normal `package install` preserves immutable revisions side by side. `package install --upgrade` is
+the explicit convergence path for an experiment ID that is already installed: ACMM stages the new
+revision, moves only subjects that reference older revisions of that same experiment directly to the
+replacement, and purges every older installed revision after successful reconciliation. It fails when
+no prior revision is installed. If no old revision is attached, upgrade reduces to store replacement
+without subject provisioning. Subjects attached to other experiment IDs are not touched.
+
+`package uninstall` is always revision-targeted and therefore requires its positional selector.
+`package purge` is the separate store-wide removal command. It remains strict about live deployment
+provenance: attached revisions must be detached first or the operator must explicitly grant
+`--detach-all`. `package list` numbers every installed revision and marks attached revisions with `*`;
+`package show` lists the logical subject instances currently referencing the selected exact revision.
+
+Normal installation is content-addressed. Source-directory location is not package identity: identical
+content installed from different paths resolves to the same immutable revision, while different content
+with the same experiment ID is preserved as distinct SHA-addressed revisions until the operator chooses
+which one to apply or converges them with `--upgrade`.
 
 ## Provenance
 

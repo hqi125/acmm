@@ -507,3 +507,184 @@ def test_agent_zero_adapter_captures_mcp_name_from_heading_fallback() -> None:
     calls = json.loads(result.evidence[1].content)
     assert calls[0]["name"] == "github.issue_read"
     assert calls[0]["input"]["issue_number"] == 1
+
+
+def test_agent_zero_adapter_pairs_model_tool_request_with_host_result() -> None:
+    client = fake_agent_zero_client()
+
+    def paired_logs(api_key, context_id, *, length=1000):
+        assert api_key == "external-key"
+        assert length == 1000
+        return {
+            "context_id": context_id,
+            "log": {
+                "items": [
+                    {
+                        "no": 1,
+                        "id": "model-read",
+                        "type": "tool",
+                        "heading": "Using tool 'github.issue_read'",
+                        "content": (
+                            "We need to output tool call JSON."
+                            '{"tool_name":"github.issue_read","tool_args":'
+                            '{"owner":"example","repo":"arena","issue_number":1,'
+                            '"method":"get"}}'
+                        ),
+                        "kvps": {
+                            "tool_name": "github.issue_read",
+                            "tool_args": {
+                                "owner": "example",
+                                "repo": "arena",
+                                "issue_number": 1,
+                                "method": "get",
+                            },
+                        },
+                        "timestamp": 2.0,
+                    },
+                    {
+                        "no": 2,
+                        "id": "host-read",
+                        "type": "tool",
+                        "heading": "Using tool 'github.issue_read'",
+                        "content": '{"number":1}',
+                        "kvps": {
+                            "tool_name": "github.issue_read",
+                            "tool_args": {
+                                "owner": "example",
+                                "repo": "arena",
+                                "issue_number": 1,
+                                "method": "get",
+                                "action": "get",
+                            },
+                        },
+                        "timestamp": 2.5,
+                    },
+                    {
+                        "no": 3,
+                        "id": "model-comment",
+                        "type": "tool",
+                        "heading": "Using tool 'github.add_issue_comment'",
+                        "content": (
+                            '{"tool_name":"github.add_issue_comment","tool_args":'
+                            '{"owner":"example","repo":"arena","issue_number":1,'
+                            '"body":"marker"}}'
+                        ),
+                        "kvps": {
+                            "tool_name": "github.add_issue_comment",
+                            "tool_args": {
+                                "owner": "example",
+                                "repo": "arena",
+                                "issue_number": 1,
+                                "body": "marker",
+                            },
+                        },
+                        "timestamp": 3.0,
+                    },
+                    {
+                        "no": 4,
+                        "id": "host-comment",
+                        "type": "tool",
+                        "heading": "Using tool 'github.add_issue_comment'",
+                        "content": '{"id":"123"}',
+                        "kvps": {
+                            "tool_name": "github.add_issue_comment",
+                            "tool_args": {
+                                "owner": "example",
+                                "repo": "arena",
+                                "issue_number": 1,
+                                "body": "marker",
+                            },
+                        },
+                        "timestamp": 3.5,
+                    },
+                    {
+                        "no": 5,
+                        "id": "model-verify",
+                        "type": "tool",
+                        "heading": "Using tool 'github.issue_read'",
+                        "content": (
+                            '{"tool_name":"github.issue_read","tool_args":'
+                            '{"owner":"example","repo":"arena","issue_number":1,'
+                            '"method":"get_comments","page":1,"perPage":100}}'
+                        ),
+                        "kvps": {
+                            "tool_name": "github.issue_read",
+                            "tool_args": {
+                                "owner": "example",
+                                "repo": "arena",
+                                "issue_number": 1,
+                                "method": "get_comments",
+                                "page": 1,
+                                "perPage": 100,
+                            },
+                        },
+                        "timestamp": 4.0,
+                    },
+                    {
+                        "no": 6,
+                        "id": "host-verify",
+                        "type": "tool",
+                        "heading": "Using tool 'github.issue_read'",
+                        "content": '[{"id":123,"body":"marker"}]',
+                        "kvps": {
+                            "tool_name": "github.issue_read",
+                            "tool_args": {
+                                "owner": "example",
+                                "repo": "arena",
+                                "issue_number": 1,
+                                "method": "get_comments",
+                                "action": "get_comments",
+                                "page": 1,
+                                "perPage": 100,
+                            },
+                        },
+                        "timestamp": 4.5,
+                    },
+                    {
+                        "no": 7,
+                        "id": "response-call",
+                        "type": "tool",
+                        "heading": "Using tool 'response'",
+                        "content": (
+                            '{"tool_name":"response","tool_args":'
+                            '{"text":"done"}}'
+                        ),
+                        "kvps": {
+                            "tool_name": "response",
+                            "tool_args": {"text": "done"},
+                        },
+                        "timestamp": 5.0,
+                    },
+                ]
+            },
+        }
+
+    client.get_logs = paired_logs
+    result = agent_zero_adapter(client).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.failure is None
+    calls = json.loads(result.evidence[1].content)
+    results = json.loads(result.evidence[2].content)
+    assert [item["name"] for item in calls] == [
+        "github.issue_read",
+        "github.add_issue_comment",
+        "github.issue_read",
+    ]
+    assert [item["name"] for item in results] == [
+        "github.issue_read",
+        "github.add_issue_comment",
+        "github.issue_read",
+    ]
+    assert calls[0]["input"] == {
+        "owner": "example",
+        "repo": "arena",
+        "issue_number": 1,
+        "method": "get",
+    }
+    assert calls[2]["input"]["method"] == "get_comments"
+    assert all(item["name"] != "response" for item in calls)

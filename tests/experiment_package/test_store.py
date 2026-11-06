@@ -146,3 +146,59 @@ def test_store_rejects_symlinked_revision(tmp_path: Path) -> None:
 
     with pytest.raises(experiment_package_store_error, match="unsafe package revision"):
         list_installed_experiment_packages(runtime_root)
+
+
+def test_same_experiment_from_different_paths_preserves_distinct_revisions(
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime-root"
+    first_source = tmp_path / "first-source"
+    second_source = tmp_path / "second-source"
+    _write_package(first_source, readme="First source revision.\n")
+    _write_package(second_source, readme="Second source revision.\n")
+
+    first = acquire_experiment_package(
+        first_source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+    second = acquire_experiment_package(
+        second_source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+
+    assert first.package_sha256 != second.package_sha256
+    assert first.root.is_dir()
+    assert second.root.is_dir()
+    installed = list_installed_experiment_packages(runtime_root)
+    assert {item.package_sha256 for item in installed} == {
+        first.package_sha256,
+        second.package_sha256,
+    }
+
+
+def test_same_content_from_different_paths_reuses_immutable_revision(
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime-root"
+    first_source = tmp_path / "first-source"
+    second_source = tmp_path / "second-source"
+    _write_package(first_source, readme="Identical source.\n")
+    _write_package(second_source, readme="Identical source.\n")
+
+    first = acquire_experiment_package(
+        first_source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+    second = acquire_experiment_package(
+        second_source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+
+    assert first.package_sha256 == second.package_sha256
+    assert first.root == second.root
+    installed = list_installed_experiment_packages(runtime_root)
+    assert len(installed) == 1

@@ -6,6 +6,7 @@ import re
 from typing import Any, Protocol
 from uuid import uuid4
 
+from acmm.evidence.structured import decode_json_object_text
 from acmm.runtime.interfaces import (
     adapter_execution_result,
     captured_evidence,
@@ -342,44 +343,20 @@ def _normalize_log_items(
     ]
     tool_calls: list[dict[str, Any]] = []
     tool_results: list[dict[str, Any]] = []
+    pending_request: dict[str, Any] | None = None
 
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-
-        kvps = item.get("kvps")
-        if not isinstance(kvps, dict):
-            kvps = {}
-
-        name = _native_tool_log_name(item, kvps)
-        if name is None:
-            continue
-
-        call_id = item.get("id")
-        if not isinstance(call_id, str) or not call_id:
-            call_id = f"agent-zero-tool-{item.get('no', len(tool_calls))}"
-
-        arguments = _native_tool_log_arguments(kvps)
-        content = item.get("content")
-        if not isinstance(content, str):
-            content = "" if content is None else str(content)
-        timestamp = item.get("timestamp")
-        is_error = _tool_output_has_error(content)
-
+    def append_call(
+        *,
+        call_id: str,
+        name: str,
+        arguments: dict[str, Any],
+        timestamp: Any,
+    ) -> None:
         tool_calls.append(
             {
                 "id": call_id,
                 "name": name,
                 "input": arguments,
-                "timestamp": timestamp,
-            }
-        )
-        tool_results.append(
-            {
-                "id": call_id,
-                "name": name,
-                "output": content,
-                "is_error": is_error,
                 "timestamp": timestamp,
             }
         )
@@ -404,6 +381,24 @@ def _normalize_log_items(
                 ],
             }
         )
+
+    def append_result(
+        *,
+        call_id: str,
+        name: str,
+        content: str,
+        timestamp: Any,
+    ) -> None:
+        is_error = _tool_output_has_error(content)
+        tool_results.append(
+            {
+                "id": call_id,
+                "name": name,
+                "output": content,
+                "is_error": is_error,
+                "timestamp": timestamp,
+            }
+        )
         conversation.append(
             {
                 "role": "tool",
@@ -416,6 +411,86 @@ def _normalize_log_items(
             }
         )
 
+    def flush_pending_call() -> None:
+        nonlocal pending_request
+        if pending_request is None:
+            return
+        append_call(
+            call_id=pending_request["id"],
+            name=pending_request["name"],
+            arguments=pending_request["arguments"],
+            timestamp=pending_request["timestamp"],
+        )
+        pending_request = None
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        kvps = item.get("kvps")
+        if not isinstance(kvps, dict):
+            kvps = {}
+
+        name = _native_tool_log_name(item, kvps)
+        if name is None or name == "response":
+            continue
+
+        call_id = item.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            call_id = f"agent-zero-tool-{item.get('no', len(tool_calls))}"
+
+        arguments = _native_tool_log_arguments(kvps)
+        content = item.get("content")
+        if not isinstance(content, str):
+            content = "" if content is None else str(content)
+        timestamp = item.get("timestamp")
+
+        embedded_request = _embedded_native_tool_request(content)
+        if embedded_request is not None:
+            embedded_name = embedded_request["tool_name"]
+            if embedded_name == name:
+                flush_pending_call()
+                pending_request = {
+                    "id": call_id,
+                    "name": name,
+                    "arguments": embedded_request["tool_args"],
+                    "timestamp": timestamp,
+                }
+                continue
+
+        if pending_request is not None:
+            if pending_request["name"] == name:
+                pending = pending_request
+                pending_request = None
+                append_call(
+                    call_id=pending["id"],
+                    name=pending["name"],
+                    arguments=pending["arguments"],
+                    timestamp=pending["timestamp"],
+                )
+                append_result(
+                    call_id=pending["id"],
+                    name=name,
+                    content=content,
+                    timestamp=timestamp,
+                )
+                continue
+            flush_pending_call()
+
+        append_call(
+            call_id=call_id,
+            name=name,
+            arguments=arguments,
+            timestamp=timestamp,
+        )
+        append_result(
+            call_id=call_id,
+            name=name,
+            content=content,
+            timestamp=timestamp,
+        )
+
+    flush_pending_call()
     conversation.append(
         {
             "role": "assistant",
@@ -424,6 +499,26 @@ def _normalize_log_items(
     )
     return conversation, tool_calls, tool_results
 
+
+def _embedded_native_tool_request(content: str) -> dict[str, Any] | None:
+    decoded = decode_json_object_text(
+        content,
+        required_keys=("tool_name", "tool_args"),
+    )
+    if decoded is None:
+        return None
+    tool_name = decoded.value.get("tool_name")
+    tool_args = decoded.value.get("tool_args")
+    if (
+        not isinstance(tool_name, str)
+        or not tool_name.strip()
+        or not isinstance(tool_args, dict)
+    ):
+        return None
+    return {
+        "tool_name": tool_name.strip(),
+        "tool_args": {str(key): value for key, value in tool_args.items()},
+    }
 
 def _native_tool_log_name(
     item: dict[str, Any],

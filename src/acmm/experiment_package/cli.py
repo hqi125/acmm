@@ -11,6 +11,7 @@ from acmm.experiment_package.staging import install_experiment_package
 from acmm.experiment_package.resources import (
     apply_staged_integration_resources,
     remove_staged_integration_resources,
+    remove_superseded_staged_integration_resources,
     validate_staged_integration_secrets,
 )
 from acmm.experiment_package.store import (
@@ -58,6 +59,21 @@ def register_experiment_package_commands(
         help="Validate, hash, and install an Experiment Package revision.",
     )
     install_parser.add_argument("source", help="Path to an Experiment Package directory.")
+    install_parser.add_argument(
+        "--upgrade",
+        action="store_true",
+        help=(
+            "Converge an already-installed experiment ID onto this source revision: "
+            "move subjects using older revisions directly to the new revision and purge "
+            "all older installed revisions."
+        ),
+    )
+    install_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=120.0,
+        help="Maximum provisioning timeout used by --upgrade.",
+    )
     install_parser.set_defaults(handler=run_package_install)
 
     apply_parser = package_subparsers.add_parser(
@@ -121,6 +137,20 @@ def register_experiment_package_commands(
     )
     uninstall_parser.set_defaults(handler=run_package_uninstall)
 
+    purge_parser = package_subparsers.add_parser(
+        "purge",
+        help="Remove every installed Experiment Package revision.",
+    )
+    purge_parser.add_argument(
+        "--detach-all",
+        action="store_true",
+        help=(
+            "Detach every attached package revision from subjects before purging "
+            "the installed package store."
+        ),
+    )
+    purge_parser.set_defaults(handler=run_package_purge)
+
     list_parser = package_subparsers.add_parser(
         "list",
         help="List installed Experiment Package revisions.",
@@ -157,6 +187,9 @@ def run_package_validate(args: argparse.Namespace) -> int:
 
 
 def run_package_install(args: argparse.Namespace) -> int:
+    if args.upgrade:
+        return _run_package_upgrade(args)
+
     try:
         package = install_experiment_package(
             Path(args.source),
@@ -171,6 +204,175 @@ def run_package_install(args: argparse.Namespace) -> int:
     _print_package_summary(package, installed=True)
     print(f"  selector:         {package.experiment_id}@{package.package_sha256[:12]}")
     return 0
+
+
+def _run_package_upgrade(args: argparse.Namespace) -> int:
+    repo_root = default_repo_root().expanduser().resolve()
+    runtime_root = default_runtime_root().expanduser().resolve()
+    try:
+        source_package = load_experiment_package(
+            Path(args.source),
+            contract_schema_path=None,
+        )
+        installed_before = tuple(
+            item
+            for item in list_installed_experiment_packages(runtime_root)
+            if item.experiment_id == source_package.experiment_id
+        )
+        if not installed_before:
+            raise experiment_package_store_error(
+                "Cannot upgrade Experiment Package "
+                f"'{source_package.experiment_id}' because no installed revision exists. "
+                "Use 'acmm package install' without '--upgrade' for first installation."
+            )
+
+        old_packages: list[experiment_package] = []
+        attached_by_revision: list[tuple[experiment_package, tuple[str, ...]]] = []
+        for item in installed_before:
+            package = resolve_installed_experiment_package(
+                runtime_root,
+                f"{item.experiment_id}@{item.package_sha256}",
+                contract_schema_path=None,
+            )
+            if package.package_sha256 == source_package.package_sha256:
+                continue
+            old_packages.append(package)
+            attached_subjects = _resolve_package_attachment_instances(
+                repo_root,
+                runtime_root,
+                package,
+            )
+            attached_subject_ids = tuple(subject.subject_id for subject in attached_subjects)
+            attached_by_revision.append((package, attached_subject_ids))
+
+        target = install_experiment_package(
+            Path(args.source),
+            runtime_root,
+            contract_schema_path=None,
+        )
+        subject_ids = tuple(
+            dict.fromkeys(
+                subject_id
+                for _, attached in attached_by_revision
+                for subject_id in attached
+            )
+        )
+        target_cohort = (
+            resolve_package_cohort(repo_root, target, subject_ids)
+            if subject_ids
+            else None
+        )
+        if subject_ids:
+            validate_staged_integration_secrets(target)
+    except (
+        experiment_package_store_error,
+        experiment_package_error,
+        profile_error,
+        infrastructure_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    print("Experiment Package upgrade:")
+    print(f"  experiment:       {target.experiment_id}")
+    print(f"  target SHA-256:   {target.package_sha256}")
+    print(f"  prior revisions:  {len(installed_before)}")
+    print(f"  subjects to move: {len(subject_ids)}")
+    for subject_id in subject_ids:
+        print(f"    {subject_id}")
+
+    def resource_progress(integration_id, message) -> None:
+        print(f"[integration:{integration_id}] {message}", flush=True)
+
+    moved: tuple[str, ...] = ()
+    if target_cohort is not None:
+        try:
+            apply_staged_integration_resources(
+                target,
+                runtime_root,
+                timeout_seconds=args.timeout_seconds,
+                progress=resource_progress,
+            )
+            results = apply_cohort(
+                repo_root,
+                runtime_root,
+                target_cohort,
+                timeout_seconds=args.timeout_seconds,
+                progress=_package_upgrade_progress,
+            )
+            moved = tuple(item.subject_id for item in results)
+        except (
+            experiment_package_error,
+            profile_error,
+            infrastructure_error,
+            docker_error,
+            OSError,
+            ValueError,
+        ) as exc:
+            print(f"ERROR: Upgrade apply failed: {exc}", file=sys.stderr)
+            return 2
+
+    try:
+        for package in old_packages:
+            references = package_deployment_references(
+                repo_root,
+                runtime_root,
+                package.package_sha256,
+            )
+            if references:
+                raise experiment_package_store_error(
+                    "Upgrade did not converge: old revision "
+                    f"{package.package_sha256[:12]} is still attached to "
+                    + ", ".join(references)
+                    + "."
+                )
+
+        removed: list[str] = []
+        for package in old_packages:
+            remove_superseded_staged_integration_resources(
+                package,
+                target,
+                runtime_root,
+            )
+            uninstall_experiment_package(
+                runtime_root,
+                f"{package.experiment_id}@{package.package_sha256}",
+                contract_schema_path=None,
+            )
+            removed.append(package.package_sha256)
+    except (
+        experiment_package_store_error,
+        experiment_package_error,
+        infrastructure_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+
+    print("Experiment Package upgrade complete:")
+    print(f"  experiment:       {target.experiment_id}")
+    print(f"  active revision:  {target.package_sha256}")
+    print(f"  subjects moved:   {len(moved)}")
+    print(f"  revisions purged: {len(removed)}")
+    for sha256 in removed:
+        print(f"    {sha256}")
+    if not removed:
+        print("  store already converged on the requested revision")
+    return 0
+
+
+def _package_upgrade_progress(index, total, subject, payload) -> None:
+    if index is not None:
+        print()
+        print(f"[upgrade {index}/{total}] {subject.subject_id}")
+        print(f"  infrastructure: {subject.infrastructure_subject}")
+        print("  provisioning:")
+        return
+    print(f"    {payload}", flush=True)
 
 
 def run_package_apply(args: argparse.Namespace) -> int:
@@ -344,6 +546,8 @@ def run_package_detach(args: argparse.Namespace) -> int:
 
 def run_package_uninstall(args: argparse.Namespace) -> int:
     runtime_root = default_runtime_root().expanduser().resolve()
+    repo_root = default_repo_root().expanduser().resolve()
+
     try:
         package = resolve_installed_experiment_package(
             runtime_root,
@@ -351,7 +555,7 @@ def run_package_uninstall(args: argparse.Namespace) -> int:
             contract_schema_path=None,
         )
         references = package_deployment_references(
-            default_repo_root(),
+            repo_root,
             runtime_root,
             package.package_sha256,
         )
@@ -362,7 +566,7 @@ def run_package_uninstall(args: argparse.Namespace) -> int:
                 for subject_id in detached:
                     print(f"  {subject_id}")
             references = package_deployment_references(
-                default_repo_root(),
+                repo_root,
                 runtime_root,
                 package.package_sha256,
             )
@@ -397,39 +601,206 @@ def run_package_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_package_list(args: argparse.Namespace) -> int:
+def run_package_purge(args: argparse.Namespace) -> int:
+    runtime_root = default_runtime_root().expanduser().resolve()
+    repo_root = default_repo_root().expanduser().resolve()
     try:
-        installed = list_installed_experiment_packages(
-            default_runtime_root().expanduser().resolve()
-        )
-    except (experiment_package_store_error, OSError, ValueError) as exc:
+        installed = list_installed_experiment_packages(runtime_root)
+        if not installed:
+            print("Experiment Package store is already empty.")
+            return 0
+
+        references_by_selector = {
+            item.selector: package_deployment_references(
+                repo_root,
+                runtime_root,
+                item.package_sha256,
+            )
+            for item in installed
+        }
+        attached = {
+            selector: references
+            for selector, references in references_by_selector.items()
+            if references
+        }
+        if attached and not args.detach_all:
+            details = "; ".join(
+                f"{selector} -> {', '.join(references)}"
+                for selector, references in attached.items()
+            )
+            raise experiment_package_store_error(
+                "Cannot purge the Experiment Package store while revisions are "
+                "attached: " + details + ". Detach them explicitly or grant "
+                "'--detach-all'."
+            )
+
+        if attached:
+            for item in installed:
+                if item.selector not in attached:
+                    continue
+                package = resolve_installed_experiment_package(
+                    runtime_root,
+                    f"{item.experiment_id}@{item.package_sha256}",
+                    contract_schema_path=None,
+                )
+                detached = _detach_installed_package(package)
+                if detached:
+                    print(f"Experiment Package detached before purge: {item.selector}")
+                    for subject_id in detached:
+                        print(f"  {subject_id}")
+
+        for item in installed:
+            references = package_deployment_references(
+                repo_root,
+                runtime_root,
+                item.package_sha256,
+            )
+            if references:
+                raise experiment_package_store_error(
+                    f"Cannot purge {item.selector}; it remains attached to "
+                    + ", ".join(references)
+                    + "."
+                )
+
+        removed = []
+        for item in installed:
+            package = resolve_installed_experiment_package(
+                runtime_root,
+                f"{item.experiment_id}@{item.package_sha256}",
+                contract_schema_path=None,
+            )
+            remove_staged_integration_resources(package, runtime_root)
+            removed.append(
+                uninstall_experiment_package(
+                    runtime_root,
+                    f"{item.experiment_id}@{item.package_sha256}",
+                    contract_schema_path=None,
+                )
+            )
+    except (
+        experiment_package_store_error,
+        experiment_package_error,
+        profile_error,
+        infrastructure_error,
+        docker_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    print("Experiment Package store purged:")
+    print(f"  revisions removed: {len(removed)}")
+    for item in removed:
+        print(f"  {item.selector}")
+    return 0
+
+
+def run_package_list(args: argparse.Namespace) -> int:
+    runtime_root = default_runtime_root().expanduser().resolve()
+    repo_root = default_repo_root().expanduser().resolve()
+    try:
+        installed = list_installed_experiment_packages(runtime_root)
+        attachments = {
+            item.package_sha256: package_deployment_references(
+                repo_root,
+                runtime_root,
+                item.package_sha256,
+            )
+            for item in installed
+        }
+    except (
+        experiment_package_store_error,
+        infrastructure_error,
+        OSError,
+        ValueError,
+    ) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
     print("Installed Experiment Packages:")
     print(f"  count: {len(installed)}")
-    for item in installed:
-        print(f"  {item.selector}")
-        print(f"    package SHA-256: {item.package_sha256}")
-        print(f"    root:            {item.root}")
+    if installed:
+        print("  legend: * attached to one or more subject instances")
+    for index, item in enumerate(installed, start=1):
+        attached = attachments[item.package_sha256]
+        marker = "*" if attached else " "
+        print(f"  [{index}] {marker} {item.selector}")
+        print(f"      package SHA-256: {item.package_sha256}")
+        print(f"      root:            {item.root}")
+        print(f"      attached:        {', '.join(attached) if attached else 'none'}")
     return 0
 
 
 def run_package_show(args: argparse.Namespace) -> int:
+    runtime_root = default_runtime_root().expanduser().resolve()
+    repo_root = default_repo_root().expanduser().resolve()
     try:
         package = resolve_installed_experiment_package(
-            default_runtime_root().expanduser().resolve(),
+            runtime_root,
             args.selector,
             contract_schema_path=None,
         )
-    except (experiment_package_store_error, OSError, ValueError) as exc:
+        attached_subjects = _resolve_package_attachment_instances(
+            repo_root,
+            runtime_root,
+            package,
+        )
+    except (
+        experiment_package_store_error,
+        experiment_package_error,
+        profile_error,
+        infrastructure_error,
+        OSError,
+        ValueError,
+    ) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
     print("Installed Experiment Package:")
     _print_package_summary(package, installed=True)
     print(f"  selector:         {package.experiment_id}@{package.package_sha256[:12]}")
+    print(f"  attached instances: {len(attached_subjects)}")
+    for subject in attached_subjects:
+        print(f"    {subject.subject_id} ({subject.infrastructure_subject})")
+    if not attached_subjects:
+        print("    none")
     return 0
+
+
+def _resolve_package_attachment_instances(
+    repo_root: Path,
+    runtime_root: Path,
+    package: experiment_package,
+):
+    cohort = resolve_attached_package_cohort(
+        repo_root,
+        runtime_root,
+        package,
+    )
+    raw_references = set(
+        package_deployment_references(
+            repo_root,
+            runtime_root,
+            package.package_sha256,
+        )
+    )
+    mapped_references = {
+        subject.infrastructure_subject for subject in cohort.subjects
+    }
+    if raw_references != mapped_references:
+        missing = sorted(raw_references - mapped_references)
+        unexpected = sorted(mapped_references - raw_references)
+        detail: list[str] = []
+        if missing:
+            detail.append("unmapped deployment references: " + ", ".join(missing))
+        if unexpected:
+            detail.append("unexpected mapped references: " + ", ".join(unexpected))
+        raise experiment_package_store_error(
+            "Installed package attachment state cannot be mapped exactly to Contract "
+            "subjects" + (": " + "; ".join(detail) if detail else ".")
+        )
+    return cohort.subjects
 
 
 def _add_subject_arguments(parser: argparse.ArgumentParser) -> None:

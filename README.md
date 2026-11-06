@@ -188,7 +188,7 @@ When the separate Experiment Package repository is also checked out on Windows, 
 WSL-side name as well:
 
 ```text
-ln -s /mnt/c/path/to/acmm-experiments ~/acmm-experiments
+ln -s /mnt/c/path/to/acmm-experiments ~/acmm_experiments
 ```
 
 Then:
@@ -671,15 +671,15 @@ A typical two-repository workspace is:
 
 ```text
 ~/acmm_repo/          ACMM Core, infrastructure, adapters, analysis, and CLI
-~/acmm-experiments/   independently versioned Experiment Packages
+~/acmm_experiments/   independently versioned Experiment Packages
 ~/acmm_runtime/       mutable deployments and installed package snapshots
 ```
 
 A package is validated and installed before ACMM can execute it:
 
 ```text
-acmm package validate ~/acmm-experiments/<experiment-id>
-acmm package install ~/acmm-experiments/<experiment-id>
+acmm package validate ~/acmm_experiments/<experiment-id>
+acmm package install ~/acmm_experiments/<experiment-id>
 acmm package list
 acmm package show <experiment-id>
 ```
@@ -715,11 +715,14 @@ Package detachment and removal are explicit:
 acmm package detach <experiment-id>
 acmm package uninstall <experiment-id>
 acmm package uninstall <experiment-id> --detach-if-applied
+acmm package purge
+acmm package purge --detach-all
 ```
 
 `detach` restores only subjects carrying that exact package revision to the LLM bindings declared by
-the package. Uninstall is strict by default and refuses to remove a revision still referenced by
-subject deployment provenance.
+the package. `uninstall` is strict, requires an explicit package selector, and refuses to remove a
+revision still referenced by subject deployment provenance. `purge` is the intentionally global
+store-cleanup command; `--detach-all` grants it permission to detach every attached revision first.
 
 See `docs/experiments/package.md` for the package architecture and lifecycle.
 

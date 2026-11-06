@@ -18,6 +18,7 @@ from acmm.experiment_package import (
     load_staged_experiment_integration,
     load_staged_experiment_integrations,
     restore_staged_integration_resources,
+    remove_superseded_staged_integration_resources,
 )
 from acmm_infra.subjects.hermes.profile import load_hermes_profile
 from acmm_infra.subjects.factory import build_package_subject_manager
@@ -106,6 +107,45 @@ class resource:
         marker = context.state_root / "applied.txt"
         if marker.exists():
             marker.unlink()
+
+
+def build_integration(context):
+    del context
+    return experiment_integration(shared_resource=resource())
+'''
+
+
+RESOURCE_REMOVE_MARKER_SOURCE = r'''from acmm.integration_api import experiment_integration
+
+
+class resource:
+    def apply(self, context, *, timeout_seconds=120.0, progress=None):
+        del timeout_seconds, progress
+        context.state_root.mkdir(parents=True, exist_ok=True)
+        return {}
+
+    def status(self, context):
+        del context
+        return {}
+
+    def is_running(self, context):
+        del context
+        return False
+
+    def up(self, context, *, timeout_seconds=120.0, progress=None):
+        del context, timeout_seconds, progress
+
+    def doctor(self, context):
+        del context
+        raise RuntimeError("not used")
+
+    def down(self, context):
+        del context
+
+    def remove(self, context):
+        (context.runtime_root / "old-resource-removed.txt").write_text(
+            "removed", encoding="utf-8"
+        )
 
 
 def build_integration(context):
@@ -449,3 +489,79 @@ def test_shared_resource_lifecycle_uses_package_scoped_state(tmp_path: Path) -> 
     assert down_results[0].running_after is False
     assert down_results[0].value["running"] is False
     assert down_results[0].error is None
+
+
+def test_superseded_revision_keeps_replacement_owned_external_resource(
+    tmp_path: Path,
+) -> None:
+    source_code = RESOURCE_INTEGRATION_SOURCE.replace(
+        "    def remove(self, context):\n",
+        "    def remove(self, context):\n"
+        "        (context.runtime_root / 'external-remove-called.txt').write_text(\n"
+        "            'removed', encoding='utf-8'\n"
+        "        )\n",
+    )
+    source, old, runtime_root = _acquire(
+        tmp_path,
+        integration_source=source_code,
+    )
+    results = apply_staged_integration_resources(old, runtime_root)
+    old_state_root = Path(results[0].value["state_root"])
+    assert old_state_root.is_dir()
+
+    integration_file = source / "integrations" / "profile-test" / "__init__.py"
+    integration_file.write_text(
+        integration_file.read_text(encoding="utf-8") + "\n# replacement revision\n",
+        encoding="utf-8",
+    )
+    replacement = acquire_experiment_package(
+        source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+    assert replacement.package_sha256 != old.package_sha256
+
+    remove_superseded_staged_integration_resources(
+        old,
+        replacement,
+        runtime_root,
+    )
+
+    assert not old_state_root.exists()
+    assert not (runtime_root / "external-remove-called.txt").exists()
+
+
+def test_superseded_integration_removes_old_resource_when_replacement_has_none(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    runtime_root = tmp_path / "runtime-root"
+    _write_integration_package(
+        source,
+        integration_source=RESOURCE_REMOVE_MARKER_SOURCE,
+    )
+    old = acquire_experiment_package(
+        source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+
+    (source / "integrations" / "profile-test" / "__init__.py").write_text(
+        INTEGRATION_SOURCE,
+        encoding="utf-8",
+    )
+    replacement = acquire_experiment_package(
+        source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+
+    remove_superseded_staged_integration_resources(
+        old,
+        replacement,
+        runtime_root,
+    )
+
+    assert (runtime_root / "old-resource-removed.txt").read_text(
+        encoding="utf-8"
+    ) == "removed"

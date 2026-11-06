@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 from typing import Any, Mapping
 
 from acmm.experiment_package.integration import (
@@ -301,6 +302,50 @@ def remove_staged_integration_resources(
             resource.remove(_context(package, item.component.integration_id, runtime_root))
 
 
+
+def remove_superseded_staged_integration_resources(
+    package: experiment_package,
+    replacement: experiment_package,
+    runtime_root: str | Path,
+) -> None:
+    """Remove resources unique to an old revision and purge its local state.
+
+    Integrations with the same logical ID in the replacement are treated as
+    continuous ownership. Their external resource is left intact so the
+    replacement revision can own it without an upgrade-time teardown.
+    """
+
+    replacement_loaded = load_staged_experiment_integrations(replacement)
+    replacement_resource_ids = {
+        item.component.integration_id
+        for item in replacement_loaded
+        if item.integration.shared_resource is not None
+    }
+    loaded = load_staged_experiment_integrations(package)
+    for item in reversed(loaded):
+        integration_id = item.component.integration_id
+        context = _context(package, integration_id, runtime_root)
+        resource = item.integration.shared_resource
+        if resource is not None and integration_id not in replacement_resource_ids:
+            resource.remove(context)
+        if context.state_root.exists():
+            shutil.rmtree(context.state_root)
+
+    resource_root = (
+        Path(runtime_root).expanduser().resolve()
+        / _RESOURCE_DIRECTORY
+        / package.experiment_id
+    )
+    if resource_root.exists():
+        for integration_root in tuple(resource_root.iterdir()):
+            if integration_root.is_dir() and not any(integration_root.iterdir()):
+                integration_root.rmdir()
+        if not any(resource_root.iterdir()):
+            resource_root.rmdir()
+        parent = resource_root.parent
+        if parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+
 def _context(
     package: experiment_package,
     integration_id: str,
@@ -339,6 +384,7 @@ __all__ = [
     "integration_resource_lease",
     "integration_resource_result",
     "remove_staged_integration_resources",
+    "remove_superseded_staged_integration_resources",
     "restore_staged_integration_resources",
     "status_staged_integration_resources",
     "validate_staged_integration_secrets",
