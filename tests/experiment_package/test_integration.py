@@ -7,12 +7,17 @@ import pytest
 
 from acmm.experiment_package import (
     acquire_experiment_package,
+    acquire_staged_integration_resources,
+    apply_staged_integration_resources,
+    doctor_staged_integration_resources,
+    down_staged_integration_resources,
     compose_staged_experiment_profile_integrations,
     compose_staged_experiment_manager_integrations,
     experiment_integration_error,
     load_experiment_package,
     load_staged_experiment_integration,
     load_staged_experiment_integrations,
+    restore_staged_integration_resources,
 )
 from acmm_infra.subjects.hermes.profile import load_hermes_profile
 from acmm_infra.subjects.factory import build_package_subject_manager
@@ -48,6 +53,64 @@ def build_integration(context):
             )
         },
     )
+'''
+
+
+RESOURCE_INTEGRATION_SOURCE = r'''from acmm.integration_api import (
+    experiment_integration,
+    integration_check,
+    integration_report,
+)
+
+
+class resource:
+    def apply(self, context, *, timeout_seconds=120.0, progress=None):
+        del timeout_seconds
+        context.state_root.mkdir(parents=True, exist_ok=True)
+        (context.state_root / "applied.txt").write_text("ready", encoding="utf-8")
+        if progress is not None:
+            progress("reconciled")
+        return {"state_root": str(context.state_root), "running": self.is_running(context)}
+
+    def status(self, context):
+        return {
+            "ready": (context.state_root / "applied.txt").is_file(),
+            "running": self.is_running(context),
+        }
+
+    def is_running(self, context):
+        return (context.state_root / "running.txt").is_file()
+
+    def up(self, context, *, timeout_seconds=120.0, progress=None):
+        del timeout_seconds
+        (context.state_root / "running.txt").write_text("running", encoding="utf-8")
+        if progress is not None:
+            progress("started")
+
+    def doctor(self, context):
+        ready = (
+            (context.state_root / "applied.txt").is_file()
+            and self.is_running(context)
+        )
+        return integration_report(
+            checks=(integration_check("resource", ready, "ready" if ready else "missing"),)
+        )
+
+    def down(self, context):
+        marker = context.state_root / "running.txt"
+        if marker.exists():
+            marker.unlink()
+
+    def remove(self, context):
+        self.down(context)
+        marker = context.state_root / "applied.txt"
+        if marker.exists():
+            marker.unlink()
+
+
+def build_integration(context):
+    del context
+    return experiment_integration(shared_resource=resource())
 '''
 
 
@@ -342,3 +405,47 @@ def build_integration(context):
             "hermes",
             package,
         )
+
+
+def test_shared_resource_lifecycle_uses_package_scoped_state(tmp_path: Path) -> None:
+    _, package, runtime_root = _acquire(
+        tmp_path,
+        integration_source=RESOURCE_INTEGRATION_SOURCE,
+    )
+
+    progress = []
+    results = apply_staged_integration_resources(
+        package,
+        runtime_root,
+        progress=lambda integration_id, message: progress.append((integration_id, message)),
+    )
+    leases = acquire_staged_integration_resources(
+        package,
+        runtime_root,
+        start_if_needed=True,
+    )
+    reports = doctor_staged_integration_resources(package, runtime_root)
+
+    assert len(results) == 1
+    assert results[0].integration_id == "profile-test"
+    assert results[0].value["running"] is False
+    state_root = Path(results[0].value["state_root"])
+    assert state_root.is_relative_to(runtime_root.resolve())
+    assert (state_root / "applied.txt").read_text(encoding="utf-8") == "ready"
+    assert leases[0].initially_running is False
+    assert leases[0].started_by_acmm is True
+    assert reports[0][0] == "profile-test"
+    assert reports[0][1].is_ready is True
+    assert progress == [("profile-test", "reconciled")]
+
+    errors = restore_staged_integration_resources(package, runtime_root, leases)
+    assert errors == ()
+    assert not (state_root / "running.txt").exists()
+
+    down_results = down_staged_integration_resources(package, runtime_root)
+    assert len(down_results) == 1
+    assert down_results[0].integration_id == "profile-test"
+    assert down_results[0].initially_running is False
+    assert down_results[0].running_after is False
+    assert down_results[0].value["running"] is False
+    assert down_results[0].error is None

@@ -61,6 +61,7 @@ def load_staged_experiment_integration(
         configuration=component.configuration,
         package_sha256=package.package_sha256,
         package_root=package.root,
+        secret_ids=tuple(item.secret_id for item in component.secrets),
     )
     module_name = _integration_module_name(package, component)
     module = _load_integration_module(module_name, component.root)
@@ -231,6 +232,7 @@ def _subject_context(
         package_root=package.root,
         infrastructure_subject=infrastructure_subject,
         llm_baseline_id=llm_baseline_id,
+        secret_ids=tuple(item.secret_id for item in component.secrets),
     )
 
 
@@ -336,6 +338,14 @@ def _remove_failed_integration_modules(
 
 
 def _validate_integration(integration: experiment_integration) -> None:
+    resource = integration.shared_resource
+    if resource is not None:
+        for method in ("apply", "status", "doctor", "down", "remove"):
+            if not callable(getattr(resource, method, None)):
+                raise experiment_integration_error(
+                    f"Integration shared resource does not provide callable {method}()."
+                )
+
     for subject, binding in integration.subjects.items():
         if (
             not isinstance(subject, str)

@@ -115,7 +115,7 @@ def test_real_run_rejects_live_not_ready_before_adapter_construction(
 ) -> None:
     from dataclasses import replace
 
-    from acmm.live_preflight import (
+    from acmm.preflight.live import (
         live_readiness_preflight_result,
         subject_live_readiness,
     )
@@ -226,7 +226,7 @@ def test_run_start_if_needed_lazily_switches_and_releases_owned_runtimes(
     monkeypatch,
     capsys,
 ) -> None:
-    from acmm.live_preflight import (
+    from acmm.preflight.live import (
         live_readiness_preflight_result,
         subject_live_readiness,
     )
@@ -391,7 +391,7 @@ def test_runtime_acquisition_retries_with_progressive_cooldown(
     monkeypatch,
 ) -> None:
     from acmm.cli import _ensure_runtime_ready
-    from acmm.live_preflight import (
+    from acmm.preflight.live import (
         live_readiness_preflight_result,
         subject_live_readiness,
     )
@@ -468,7 +468,7 @@ def test_run_can_prestart_all_selected_subjects_before_execution_session(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    from acmm.live_preflight import (
+    from acmm.preflight.live import (
         live_readiness_preflight_result,
         subject_live_readiness,
     )

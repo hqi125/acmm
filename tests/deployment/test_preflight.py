@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from acmm.deployment_preflight import (
+from acmm.preflight.deployment import (
     discover_deployment_contexts,
     inspect_package_deployment_contexts,
 )

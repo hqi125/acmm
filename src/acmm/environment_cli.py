@@ -6,6 +6,14 @@ from functools import wraps
 import json
 import sys
 
+from acmm.experiment_package import (
+    acquire_staged_integration_resources,
+    doctor_staged_integration_resources,
+    down_staged_integration_resources,
+    open_staged_experiment_package,
+    restore_staged_integration_resources,
+    status_staged_integration_resources,
+)
 from acmm_infra.cohort import (
     apply_cohort,
     doctor_cohort,
@@ -29,7 +37,7 @@ def _safe_environment_handler(handler):
     def run(args: argparse.Namespace) -> int:
         try:
             return handler(args)
-        except (profile_error, infrastructure_error, docker_error, OSError) as exc:
+        except (profile_error, infrastructure_error, docker_error, OSError, ValueError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
 
@@ -162,11 +170,21 @@ def run_environment_status(args: argparse.Namespace) -> int:
     )
     statuses = inspect_cohort(repo_root, runtime_root, cohort.subjects)
     context = summarize_context(statuses)
+    resource_statuses = ()
+    if context.state == "converged" and context.experiment_id and context.package_sha256:
+        package = open_staged_experiment_package(
+            runtime_root, context.experiment_id, context.package_sha256
+        )
+        resource_statuses = status_staged_integration_resources(package, runtime_root)
 
     if args.json:
         payload = {
             "context": asdict(context),
             "subjects": [asdict(item) for item in statuses],
+            "integration_resources": [
+                {"integration_id": item.integration_id, "status": dict(item.value)}
+                for item in resource_statuses
+            ],
         }
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0
@@ -177,6 +195,10 @@ def run_environment_status(args: argparse.Namespace) -> int:
     print(f"    experiment: {context.experiment_id or 'none'}")
     if context.package_sha256 is not None:
         print(f"    package:    {context.package_sha256}")
+    if resource_statuses:
+        print("  integration resources:")
+        for item in resource_statuses:
+            print(f"    {item.integration_id}: {dict(item.value)}")
     print("  subjects:")
     for item in statuses:
         print(f"    {item.subject_id}:")
@@ -210,6 +232,50 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         include_running=False,
     )
     context = summarize_context(contexts)
+    package = None
+    resource_leases = ()
+    resource_reports = ()
+    resource_restore_errors = ()
+
+    def resource_progress(integration_id, event) -> None:
+        if args.json:
+            return
+        if event == "runtime-running":
+            print(f"[integration] {integration_id}")
+            print("  runtime:        already running")
+        elif event == "runtime-stopped":
+            print(f"[integration] {integration_id}")
+            print("  runtime:        stopped")
+        elif event == "starting":
+            print("  startup:        starting temporarily...", flush=True)
+        elif event == "started":
+            print("  startup:        ready")
+        elif event == "restoring":
+            print("  cleanup:        restoring stopped state...", flush=True)
+        elif event == "restored":
+            print("  cleanup:        restored")
+            print()
+        elif event == "restore-failed":
+            print("  cleanup:        failed")
+            print()
+        else:
+            print(f"  {event}")
+
+    if not args.json:
+        print("ACMM environment doctor progress:")
+
+    if context.state == "converged" and context.experiment_id and context.package_sha256:
+        package = open_staged_experiment_package(
+            runtime_root, context.experiment_id, context.package_sha256
+        )
+        resource_leases = acquire_staged_integration_resources(
+            package,
+            runtime_root,
+            start_if_needed=args.start_if_needed,
+            timeout_seconds=args.startup_timeout_seconds,
+            progress=resource_progress,
+        )
+
     def progress(index, total, subject, event) -> None:
         if event == "begin":
             print(f"[{index}/{total}] {subject.subject_id}")
@@ -237,17 +303,28 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
             print("  result:         NOT READY")
             print()
 
-    if not args.json:
-        print("ACMM environment doctor progress:")
-
-    doctor_results = doctor_cohort(
-        repo_root,
-        runtime_root,
-        cohort.subjects,
-        start_if_needed=args.start_if_needed,
-        startup_timeout_seconds=args.startup_timeout_seconds,
-        progress=None if args.json else progress,
-    )
+    try:
+        if package is not None:
+            resource_reports = doctor_staged_integration_resources(
+                package,
+                runtime_root,
+            )
+        doctor_results = doctor_cohort(
+            repo_root,
+            runtime_root,
+            cohort.subjects,
+            start_if_needed=args.start_if_needed,
+            startup_timeout_seconds=args.startup_timeout_seconds,
+            progress=None if args.json else progress,
+        )
+    finally:
+        if package is not None and resource_leases:
+            resource_restore_errors = restore_staged_integration_resources(
+                package,
+                runtime_root,
+                resource_leases,
+                progress=resource_progress,
+            )
 
     subject_ready = all(item.is_ready for item in doctor_results)
     if context.state == "baseline":
@@ -262,17 +339,32 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
             context.state == "converged"
             and all(item.package_state == "match" for item in contexts)
         )
-    ready = subject_ready and context_ready
+    resources_ready = (
+        all(report.is_ready for _, report in resource_reports)
+        and not resource_restore_errors
+    )
+    ready = subject_ready and context_ready and resources_ready
 
     if args.json:
         payload = {
             "ready": ready,
             "context": asdict(context),
             "subjects": [],
+            "integration_resources": [
+                {
+                    "integration_id": integration_id,
+                    "ready": report.is_ready,
+                    "checks": [asdict(check) for check in report.checks],
+                    "restore_error": next(
+                        (detail for iid, detail in resource_restore_errors if iid == integration_id),
+                        None,
+                    ),
+                }
+                for integration_id, report in resource_reports
+            ],
         }
         for item in doctor_results:
             result = item.doctor
-            state = item.deployment_state
             payload["subjects"].append(
                 {
                     "subject_id": item.subject.subject_id,
@@ -301,6 +393,16 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
     print(f"    experiment: {context.experiment_id or 'none'}")
     if context.package_sha256 is not None:
         print(f"    package:    {context.package_sha256}")
+    if resource_reports:
+        print("  integration resources:")
+        for integration_id, report in resource_reports:
+            print(f"    {integration_id}: {'READY' if report.is_ready else 'NOT READY'}")
+            for check in report.checks:
+                if not check.ok:
+                    print(f"      {check.name}: {check.detail}")
+            for iid, detail in resource_restore_errors:
+                if iid == integration_id:
+                    print(f"      cleanup error: {detail}")
     print("  subjects:")
     for item in doctor_results:
         subject = item.subject
@@ -310,11 +412,7 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         print(f"      infrastructure:    {subject.infrastructure_subject}")
         print(f"      LLM:               {subject.llm_baseline_id}")
         if item.llm is not None:
-            _print_llm_observation(
-                item.llm,
-                indent=6,
-                running=True,
-            )
+            _print_llm_observation(item.llm, indent=6, running=True)
         print(f"      readiness:         {'READY' if item.is_ready else 'NOT READY'}")
         print(f"      experiment:        {result.experiment_id or 'none'}")
         if item.initially_running is not None:
@@ -322,9 +420,9 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         if item.started_by_acmm:
             print("      temporary startup: started and restored")
         if isinstance(state, dict):
-            package = state.get("package")
-            if isinstance(package, dict):
-                package_sha256 = package.get("sha256")
+            package_state = state.get("package")
+            if isinstance(package_state, dict):
+                package_sha256 = package_state.get("sha256")
                 if isinstance(package_sha256, str):
                     print(f"      package SHA-256:   {package_sha256}")
         if result.error is not None:
@@ -365,11 +463,29 @@ def run_environment_stop(args: argparse.Namespace) -> int:
     )
     results = stop_cohort(repo_root, runtime_root, cohort.subjects)
     failed = any(item.error is not None for item in results)
+    resource_results = ()
+    resource_context_error = None
+    if not args.subjects:
+        statuses = inspect_cohort(repo_root, runtime_root, cohort.subjects, include_running=False)
+        context = summarize_context(statuses)
+        if context.state == "converged" and context.experiment_id and context.package_sha256:
+            try:
+                package = open_staged_experiment_package(
+                    runtime_root, context.experiment_id, context.package_sha256
+                )
+                resource_results = down_staged_integration_resources(package, runtime_root)
+                if any(item.error is not None for item in resource_results):
+                    failed = True
+            except Exception as exc:
+                resource_context_error = str(exc)
+                failed = True
 
     if args.json:
         payload = {
             "stopped": not failed,
             "subjects": [asdict(item) for item in results],
+            "integration_resources": [asdict(item) for item in resource_results],
+            "integration_resource_context_error": resource_context_error,
         }
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 1 if failed else 0
@@ -387,6 +503,35 @@ def run_environment_stop(args: argparse.Namespace) -> int:
             print("      result:         stopped")
         else:
             print("      result:         unchanged")
+    if resource_results or resource_context_error is not None:
+        print("  integration resources:")
+        for item in resource_results:
+            print(f"    {item.integration_id}:")
+            if item.initially_running is None:
+                print("      initial state:  unknown")
+            else:
+                print(
+                    "      initial state:  "
+                    + ("running" if item.initially_running else "stopped")
+                )
+            if item.error is not None:
+                print("      result:         failed")
+                print(f"      error:          {item.error}")
+            elif item.running_after:
+                print("      result:         still running")
+            elif item.initially_running:
+                print("      result:         stopped")
+            else:
+                print("      result:         unchanged")
+            if "container_present" in item.value:
+                print(
+                    "      container:      "
+                    + ("present" if item.value.get("container_present") else "absent")
+                )
+        if resource_context_error is not None:
+            print("    context:")
+            print("      result:         failed")
+            print(f"      error:          {resource_context_error}")
     return 1 if failed else 0
 
 

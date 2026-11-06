@@ -8,6 +8,11 @@ import sys
 from acmm.experiment_package.loader import experiment_package_error, load_experiment_package
 from acmm.experiment_package.model import experiment_package
 from acmm.experiment_package.staging import install_experiment_package
+from acmm.experiment_package.resources import (
+    apply_staged_integration_resources,
+    remove_staged_integration_resources,
+    validate_staged_integration_secrets,
+)
 from acmm.experiment_package.store import (
     experiment_package_store_error,
     list_installed_experiment_packages,
@@ -193,8 +198,27 @@ def run_package_apply(args: argparse.Namespace) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
+    def resource_progress(integration_id, message) -> None:
+        print(f"[integration:{integration_id}] {message}", flush=True)
+
+    try:
+        validate_staged_integration_secrets(package)
+        resource_results = apply_staged_integration_resources(
+            package,
+            runtime_root,
+            timeout_seconds=args.timeout_seconds,
+            progress=resource_progress,
+        )
+    except (experiment_package_error, infrastructure_error, OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
     print("Experiment Package apply:")
     _print_package_summary(package, installed=True)
+    if resource_results:
+        print("  integration resources:")
+        for item in resource_results:
+            print(f"    {item.integration_id}: {dict(item.value)}")
     print(f"  subjects:          {len(cohort.subjects)}")
     for subject in cohort.subjects:
         print(
@@ -276,6 +300,8 @@ def _detach_installed_package(
         timeout_seconds=timeout_seconds,
         progress=_package_detach_progress,
     )
+    if not package_deployment_references(repo_root, runtime_root, package.package_sha256):
+        remove_staged_integration_resources(package, runtime_root)
     return tuple(item.subject_id for item in results)
 
 
@@ -347,6 +373,7 @@ def run_package_uninstall(args: argparse.Namespace) -> int:
                 f"subject infrastructure: {joined}. Run 'acmm package detach "
                 f"{args.selector}' first, or grant '--detach-if-applied'."
             )
+        remove_staged_integration_resources(package, runtime_root)
         installed = uninstall_experiment_package(
             runtime_root,
             args.selector,
@@ -441,6 +468,12 @@ def _print_package_summary(package: experiment_package, *, installed: bool) -> N
                 f"    {component.integration_id}: {component.sha256} "
                 f"(api={component.api_version}, preset={preset})"
             )
+            if component.secrets:
+                rendered = ", ".join(
+                    item.secret_id + ("" if item.required else " (optional)")
+                    for item in component.secrets
+                )
+                print(f"      secret slots: {rendered}")
     else:
         print("  integrations:     none")
 

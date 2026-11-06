@@ -533,3 +533,91 @@ def test_environment_doctor_accepts_converged_baseline_context(
     assert "readiness:         READY" in output
     assert "experiment-independent state" not in output
     assert output.rstrip().endswith("READY")
+
+
+def test_environment_stop_reports_integration_resources(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    from acmm import environment_cli
+    from acmm.experiment_package import integration_resource_down_result
+    from acmm_infra.cohort import (
+        cohort_subject,
+        cohort_subject_status,
+        experiment_cohort,
+        cohort_stop_result,
+    )
+
+    subject = cohort_subject(
+        "hermes_gpt_oss120b",
+        "hermes",
+        "gpt_oss_120b_cloud_v1",
+    )
+    monkeypatch.setattr(environment_cli, "default_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(tmp_path / "runtime"))
+    monkeypatch.setattr(
+        environment_cli,
+        "resolve_deployed_cohort",
+        lambda *args, **kwargs: experiment_cohort(
+            "package_fixture_v1",
+            None,
+            (subject,),
+        ),
+    )
+    monkeypatch.setattr(
+        environment_cli,
+        "stop_cohort",
+        lambda *args, **kwargs: (
+            cohort_stop_result(
+                subject_id=subject.subject_id,
+                infrastructure_subject=subject.infrastructure_subject,
+                initial_running=False,
+                stopped=False,
+                error=None,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        environment_cli,
+        "inspect_cohort",
+        lambda *args, **kwargs: (
+            cohort_subject_status(
+                subject_id=subject.subject_id,
+                infrastructure_subject=subject.infrastructure_subject,
+                running=False,
+                experiment_id="package_fixture_v1",
+                package_sha256="abc123",
+                package_state="match",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        environment_cli,
+        "open_staged_experiment_package",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        environment_cli,
+        "down_staged_integration_resources",
+        lambda *args, **kwargs: (
+            integration_resource_down_result(
+                integration_id="github_mcp",
+                initially_running=True,
+                running_after=False,
+                value={"container_present": False},
+                error=None,
+            ),
+        ),
+    )
+
+    parser = build_acmm_parser()
+    args = parser.parse_args(["env", "stop"])
+    assert args.handler(args) == 0
+
+    output = capsys.readouterr().out
+    assert "integration resources:" in output
+    assert "github_mcp:" in output
+    assert "initial state:  running" in output
+    assert "result:         stopped" in output
+    assert "container:      absent" in output

@@ -16,6 +16,12 @@ class experiment_runtime_component:
 
 
 @dataclass(frozen=True)
+class experiment_integration_secret:
+    secret_id: str
+    required: bool = True
+
+
+@dataclass(frozen=True)
 class experiment_integration_component:
     integration_id: str
     api_version: str
@@ -23,6 +29,7 @@ class experiment_integration_component:
     entrypoint: str
     preset: str | None
     configuration: Mapping[str, Any]
+    secrets: tuple[experiment_integration_secret, ...]
     sha256: str
 
 

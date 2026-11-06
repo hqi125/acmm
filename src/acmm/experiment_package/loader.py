@@ -16,6 +16,7 @@ from acmm.integration_api import EXPERIMENT_INTEGRATION_API_VERSION
 from acmm.experiment_package.model import (
     experiment_analysis_component,
     experiment_integration_component,
+    experiment_integration_secret,
     experiment_package,
     experiment_runtime_component,
 )
@@ -284,6 +285,37 @@ def _load_integration_components(
                 f"{field}.configuration must be a mapping."
             )
 
+        secret_values = item.get("secrets", [])
+        if not isinstance(secret_values, list):
+            raise experiment_package_error(f"{field}.secrets must be a sequence.")
+        secrets: list[experiment_integration_secret] = []
+        seen_secret_ids: set[str] = set()
+        for secret_index, secret_item in enumerate(secret_values):
+            secret_field = f"{field}.secrets[{secret_index}]"
+            if not isinstance(secret_item, dict):
+                raise experiment_package_error(f"{secret_field} must be a mapping.")
+            secret_id = str(secret_item["id"])
+            if _COMPONENT_ID_PATTERN.fullmatch(secret_id) is None:
+                raise experiment_package_error(
+                    f"Invalid integration secret id '{secret_id}'."
+                )
+            if secret_id in seen_secret_ids:
+                raise experiment_package_error(
+                    f"Duplicate integration secret id '{secret_id}'."
+                )
+            seen_secret_ids.add(secret_id)
+            required = secret_item.get("required", True)
+            if not isinstance(required, bool):
+                raise experiment_package_error(
+                    f"{secret_field}.required must be a boolean."
+                )
+            secrets.append(
+                experiment_integration_secret(
+                    secret_id=secret_id,
+                    required=required,
+                )
+            )
+
         components.append(
             experiment_integration_component(
                 integration_id=integration_id,
@@ -292,6 +324,7 @@ def _load_integration_components(
                 entrypoint=entrypoint,
                 preset=preset,
                 configuration=_freeze_mapping(configuration_value),
+                secrets=tuple(secrets),
                 sha256=component_tree_sha256(root),
             )
         )

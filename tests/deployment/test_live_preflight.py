@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from acmm.live_preflight import inspect_live_readiness
+from acmm.preflight.live import inspect_live_readiness
 from acmm.subjects.catalog import lookup_subject_execution_binding
 from acmm_infra.common import doctor_check, doctor_report
 from acmm_infra.readiness import (
@@ -31,7 +31,7 @@ def test_live_preflight_reports_failed_doctor_checks(monkeypatch, tmp_path: Path
             error=None,
         )
 
-    monkeypatch.setattr("acmm.live_preflight.doctor_deployed_subject", fake_doctor)
+    monkeypatch.setattr("acmm.preflight.live.doctor_deployed_subject", fake_doctor)
 
     result = inspect_live_readiness(
         repo_root=tmp_path,
@@ -58,7 +58,7 @@ def test_live_preflight_checks_only_supplied_subjects(monkeypatch, tmp_path: Pat
             error=None,
         )
 
-    monkeypatch.setattr("acmm.live_preflight.doctor_deployed_subject", fake_doctor)
+    monkeypatch.setattr("acmm.preflight.live.doctor_deployed_subject", fake_doctor)
 
     result = inspect_live_readiness(
         repo_root=tmp_path,

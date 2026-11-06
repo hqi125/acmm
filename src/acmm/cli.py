@@ -17,7 +17,7 @@ from acmm.contract.validator import (
     load_schema_for_contract,
     validate_contract,
 )
-from acmm.deployment_preflight import (
+from acmm.preflight.deployment import (
     deployment_preflight_result,
     inspect_package_deployment_contexts,
 )
@@ -33,7 +33,8 @@ from acmm.experiment_package import (
 )
 from acmm.experiment_package.cli import register_experiment_package_commands
 from acmm.environment_cli import register_environment_commands
-from acmm.live_preflight import (
+from acmm.secret_bindings.cli import register_secret_commands
+from acmm.preflight.live import (
     inspect_live_readiness,
     live_readiness_preflight_result,
 )
@@ -1469,6 +1470,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     register_environment_commands(subparsers)
     register_experiment_package_commands(subparsers)
+    register_secret_commands(subparsers)
 
     run_parser = subparsers.add_parser(
         "run",

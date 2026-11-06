@@ -7,7 +7,7 @@ import pytest
 
 from acmm.cli import _build_parser
 from acmm.experiment_package import install_experiment_package
-from acmm.live_preflight import (
+from acmm.preflight.live import (
     live_readiness_preflight_result,
     subject_live_readiness,
 )

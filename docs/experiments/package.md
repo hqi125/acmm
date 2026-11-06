@@ -128,3 +128,32 @@ make cross-subject evidence analyzable, not to repair subject behavior.
 
 Future trusted pre/post-state observation can plug into the same generic package/runtime boundary
 without making Core aware of the concrete external service.
+
+## Integration secrets
+
+An integration may declare named secret slots in package schema v0.2. Secret declarations are part
+of immutable package identity; secret values and machine-local source paths are not.
+
+Local bindings are managed separately:
+
+```text
+acmm secret bind EXPERIMENT_ID INTEGRATION_ID SECRET_ID --file PATH
+acmm secret list
+acmm secret unbind EXPERIMENT_ID INTEGRATION_ID SECRET_ID
+```
+
+The default binding registry is `~/.config/acmm/secret-bindings.yaml`. A file-backed secret must be
+owner-only on POSIX systems. Integration code resolves only secret slots it explicitly declared.
+Core does not interpret what a secret means to a concrete tool.
+
+## Shared integration resources
+
+An integration may also provide one package-level shared resource lifecycle. Core can reconcile,
+inspect, diagnose, stop, and remove that resource once per package revision, independently of the
+three subject managers. The resource receives a package-scoped runtime state directory and the same
+opaque integration configuration/secret resolver as other integration hooks.
+
+This mechanism intentionally does not define Docker, MCP, databases, or network services. A concrete
+integration owns those mechanics. One integration may therefore run a shared local service while a
+future preset for the same capability uses a hosted service without changing the Core integration
+language.

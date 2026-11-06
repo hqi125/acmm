@@ -46,3 +46,20 @@ afterward does not remove an already committed secret.
 Experiment Packages may describe which external capability is required, but they must never embed
 live credentials needed to access it. Deployment/infrastructure code is responsible for obtaining
 runtime credentials from operator-controlled configuration or environment variables.
+
+## Experiment integration secret bindings
+
+Experiment Package integrations declare generic secret slots; the package never stores the secret
+value or a machine-specific source path. Bind a slot to a local file with `acmm secret bind`.
+The default registry is `~/.config/acmm/secret-bindings.yaml` and stores only binding metadata and
+source paths. Secret values are read only when an integration resolves its declared slot.
+
+On POSIX systems, file-backed secret sources must not grant group/other permissions. A typical setup
+is:
+
+```text
+chmod 600 ~/.config/acmm/github_mcp_access_token
+```
+
+Neither secret values nor secret digests belong in package provenance, deployment markers, status
+output, or execution manifests.
