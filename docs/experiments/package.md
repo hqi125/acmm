@@ -95,6 +95,7 @@ Typical workflow:
 acmm package validate <package-directory>
 acmm package install <package-directory>
 acmm package apply <selector>
+acmm package apparatus <selector> <action>
 acmm run <selector> --preview
 acmm run <selector>
 acmm package install <package-directory> --upgrade
@@ -105,6 +106,10 @@ acmm package uninstall <selector>
 acmm package purge
 acmm package purge --detach-all
 ```
+
+`package apparatus` dispatches an explicitly named trusted lifecycle action declared by the installed
+package runtime. Core does not infer or auto-run apparatus mutations during install/apply/doctor; packages
+without apparatus actions remain unchanged.
 
 `acmm run` is strict by default. `--apply-if-needed` grants permission to reconcile only the selected
 subjects, after which ACMM repeats the strict deployment preflight. `--start-if-needed` is a separate

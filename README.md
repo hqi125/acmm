@@ -689,6 +689,7 @@ default and requires an explicit installed-package selector:
 
 ```text
 acmm package apply <experiment-id>
+acmm package apparatus <experiment-id> <action>  # only when the package exposes trusted apparatus actions
 acmm run <experiment-id> --preview
 acmm run <experiment-id>
 ```
@@ -708,6 +709,14 @@ retried up to `--startup-max-attempts` with progressive cooldowns after transien
 `--prestart-selected-subjects` can be combined with `--start-if-needed` to acquire and readiness-check
 all selected runtimes before the execution session is created. Neither option weakens the final
 readiness checks.
+
+Package-owned trusted apparatus lifecycle actions are explicit and never run as a side effect of `apply`,
+`doctor`, or package installation. Core only dispatches the named action; the Experiment Package owns its
+semantics and safety checks. For example, a package may expose:
+
+```text
+acmm package apparatus <experiment-id> initialize
+```
 
 Package detachment and removal are explicit:
 

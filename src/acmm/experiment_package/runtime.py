@@ -12,6 +12,7 @@ from typing import Any, Mapping
 from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.experiment_api import (
     EXPERIMENT_RUNTIME_API_VERSION,
+    apparatus_action_result,
     experiment_runtime,
     experiment_runtime_context,
     runtime_diagnostic_check,
@@ -153,6 +154,34 @@ def doctor_staged_experiment_runtime(
     return tuple(reports)
 
 
+
+def run_staged_experiment_apparatus_action(
+    package: experiment_package,
+    action_id: str,
+) -> apparatus_action_result:
+    loaded = load_staged_experiment_runtime(package)
+    action = loaded.runtime.apparatus_actions.get(action_id)
+    if action is None:
+        available = ", ".join(sorted(loaded.runtime.apparatus_actions)) or "none"
+        raise experiment_runtime_error(
+            f"Experiment Package '{package.experiment_id}' does not provide apparatus "
+            f"action '{action_id}'. Available actions: {available}."
+        )
+
+    try:
+        result = action.run()
+    except Exception as exc:
+        raise experiment_runtime_error(
+            f"Experiment apparatus action '{action_id}' failed: {exc}"
+        ) from exc
+
+    if not isinstance(result, apparatus_action_result):
+        raise experiment_runtime_error(
+            f"Experiment apparatus action '{action_id}' must return "
+            "apparatus_action_result."
+        )
+    return result
+
 def compose_execution_registry(
     runtime: experiment_runtime,
     subject_adapters: Mapping[str, subject_adapter],
@@ -273,7 +302,9 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
     fixture_ids = frozenset(runtime.fixtures)
     evaluator_ids = frozenset(runtime.evaluators)
     diagnostic_ids = frozenset(runtime.diagnostics)
+    apparatus_action_ids = frozenset(runtime.apparatus_actions)
     _validate_capability_identifiers("diagnostic", diagnostic_ids)
+    _validate_capability_identifiers("apparatus action", apparatus_action_ids)
 
     if fixture_ids != runtime.capabilities.fixtures:
         raise experiment_runtime_error(
@@ -300,6 +331,12 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
         if not callable(getattr(diagnostic, "doctor", None)):
             raise experiment_runtime_error(
                 f"Runtime diagnostic '{diagnostic_id}' does not provide callable doctor()."
+            )
+
+    for action_id, action in runtime.apparatus_actions.items():
+        if not callable(getattr(action, "run", None)):
+            raise experiment_runtime_error(
+                f"Runtime apparatus action '{action_id}' does not provide callable run()."
             )
 
 

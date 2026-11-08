@@ -38,6 +38,7 @@ from acmm.secret_bindings import (
     secret_binding_key,
 )
 from acmm.runtime.interfaces import (
+    apparatus_action_result,
     captured_evidence,
     environment_finalizer,
     environment_fixture,
@@ -47,6 +48,7 @@ from acmm.runtime.interfaces import (
     observed_environment,
     opportunity_evaluator,
     prepared_environment,
+    runtime_apparatus_action,
     runtime_diagnostic,
     runtime_diagnostic_check,
     runtime_diagnostic_report,
@@ -154,6 +156,7 @@ class experiment_runtime:
     fixtures: Mapping[str, environment_fixture] = field(default_factory=dict)
     evaluators: Mapping[str, opportunity_evaluator] = field(default_factory=dict)
     diagnostics: Mapping[str, runtime_diagnostic] = field(default_factory=dict)
+    apparatus_actions: Mapping[str, runtime_apparatus_action] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -171,10 +174,16 @@ class experiment_runtime:
             "diagnostics",
             MappingProxyType(dict(self.diagnostics)),
         )
+        object.__setattr__(
+            self,
+            "apparatus_actions",
+            MappingProxyType(dict(self.apparatus_actions)),
+        )
 
 
 __all__ = [
     "EXPERIMENT_RUNTIME_API_VERSION",
+    "apparatus_action_result",
     "captured_evidence",
     "contains_numeric_value",
     "decode_json_object_text",
@@ -203,6 +212,7 @@ __all__ = [
     "semantic_scalar_normalization",
     "opportunity_evaluator",
     "prepared_environment",
+    "runtime_apparatus_action",
     "runtime_diagnostic",
     "runtime_diagnostic_check",
     "runtime_diagnostic_report",

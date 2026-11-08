@@ -97,6 +97,25 @@ class executed_run:
 
 
 
+@dataclass(frozen=True)
+class apparatus_action_result:
+    changed: bool
+    detail: str
+    observations: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "observations",
+            MappingProxyType(dict(self.observations)),
+        )
+
+
+class runtime_apparatus_action(Protocol):
+    def run(self) -> apparatus_action_result:
+        ...
+
+
 class runtime_diagnostic(Protocol):
     def doctor(self) -> runtime_diagnostic_report:
         ...

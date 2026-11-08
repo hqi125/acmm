@@ -21,6 +21,7 @@ EXPERIMENT_ID = "external_package_cli_v1"
 
 
 _RUNTIME_INIT = '''from acmm.experiment_api import (
+    apparatus_action_result,
     experiment_runtime,
     harness_capabilities,
     prepared_environment,
@@ -41,6 +42,15 @@ class evaluator:
         return judgment_result(outcome="compliant", evidence_ids=(), detail="ok")
 
 
+class initializer:
+    def run(self):
+        return apparatus_action_result(
+            changed=True,
+            detail="initialized test apparatus",
+            observations={"fixture_version": "test-v1"},
+        )
+
+
 def build_runtime(context):
     del context
     return experiment_runtime(
@@ -56,6 +66,7 @@ def build_runtime(context):
             "fixture_value_retrieval": evaluator(),
             "fixture_value_addition": evaluator(),
         },
+        apparatus_actions={"initialize": initializer()},
     )
 '''
 
@@ -129,6 +140,58 @@ def test_package_validate_install_query_and_uninstall_commands(
     uninstall_output = capsys.readouterr().out
     assert "Experiment Package uninstalled:" in uninstall_output
     assert not package_root.exists()
+
+
+def test_package_apparatus_runs_package_owned_action(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    source = tmp_path / "source"
+    runtime_root = tmp_path / "runtime-root"
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(runtime_root))
+    _write_package(source)
+    package = acquire_experiment_package(
+        source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+    parser = _build_parser()
+
+    args = parser.parse_args(
+        ["package", "apparatus", package.experiment_id, "initialize"]
+    )
+    assert args.handler(args) == 0
+
+    output = capsys.readouterr().out
+    assert "Experiment Package apparatus action complete:" in output
+    assert "action:     initialize" in output
+    assert "changed:    yes" in output
+    assert "detail:     initialized test apparatus" in output
+    assert "fixture_version: test-v1" in output
+
+
+def test_package_apparatus_rejects_unknown_action(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    source = tmp_path / "source"
+    runtime_root = tmp_path / "runtime-root"
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(runtime_root))
+    _write_package(source)
+    package = acquire_experiment_package(
+        source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+    parser = _build_parser()
+
+    args = parser.parse_args(
+        ["package", "apparatus", package.experiment_id, "missing"]
+    )
+    assert args.handler(args) == 2
+    assert "does not provide apparatus action 'missing'" in capsys.readouterr().err
 
 
 def test_package_uninstall_rejects_deployed_revision(
