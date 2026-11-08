@@ -38,6 +38,7 @@ from acmm.secret_bindings import (
     secret_binding_key,
 )
 from acmm.runtime.interfaces import (
+    apparatus_action_progress,
     apparatus_action_result,
     captured_evidence,
     environment_finalizer,
@@ -183,6 +184,7 @@ class experiment_runtime:
 
 __all__ = [
     "EXPERIMENT_RUNTIME_API_VERSION",
+    "apparatus_action_progress",
     "apparatus_action_result",
     "captured_evidence",
     "contains_numeric_value",

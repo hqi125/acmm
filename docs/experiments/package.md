@@ -109,7 +109,9 @@ acmm package purge --detach-all
 
 `package apparatus` dispatches an explicitly named trusted lifecycle action declared by the installed
 package runtime. Core does not infer or auto-run apparatus mutations during install/apply/doctor; packages
-without apparatus actions remain unchanged.
+without apparatus actions remain unchanged. Apparatus actions may optionally publish structured progress
+events; the CLI renders them immediately as `[step/total]` messages while preserving the package-owned
+action/result contract.
 
 `acmm run` is strict by default. `--apply-if-needed` grants permission to reconcile only the selected
 subjects, after which ACMM repeats the strict deployment preflight. `--start-if-needed` is a separate

@@ -405,7 +405,28 @@ def run_package_apparatus(args: argparse.Namespace) -> int:
             contract_schema_path=None,
         )
         validate_staged_package_secrets(package)
-        result = run_staged_experiment_apparatus_action(package, args.action)
+        progress_started = False
+
+        def report_progress(event) -> None:
+            nonlocal progress_started
+            if not progress_started:
+                print("Experiment Package apparatus progress:")
+                print(f"  experiment: {package.experiment_id}")
+                print(f"  action:     {args.action}")
+                progress_started = True
+            if event.step is not None and event.total is not None:
+                prefix = f"[{event.step}/{event.total}]"
+            elif event.step is not None:
+                prefix = f"[{event.step}]"
+            else:
+                prefix = "[-]"
+            print(f"  {prefix} {event.message}", flush=True)
+
+        result = run_staged_experiment_apparatus_action(
+            package,
+            args.action,
+            progress=report_progress,
+        )
     except (
         experiment_package_store_error,
         experiment_package_error,
@@ -416,6 +437,8 @@ def run_package_apparatus(args: argparse.Namespace) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
+    if progress_started:
+        print()
     print("Experiment Package apparatus action complete:")
     print(f"  experiment: {package.experiment_id}")
     print(f"  package:    {package.package_sha256}")

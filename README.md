@@ -712,7 +712,8 @@ readiness checks.
 
 Package-owned trusted apparatus lifecycle actions are explicit and never run as a side effect of `apply`,
 `doctor`, or package installation. Core only dispatches the named action; the Experiment Package owns its
-semantics and safety checks. For example, a package may expose:
+semantics and safety checks. Long-running package actions may publish structured progress events, which the
+CLI renders as immediate `[step/total]` status lines. For example, a package may expose:
 
 ```text
 acmm package apparatus <experiment-id> initialize

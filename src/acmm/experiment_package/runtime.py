@@ -7,11 +7,12 @@ from pathlib import Path
 import re
 import sys
 from types import ModuleType
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.experiment_api import (
     EXPERIMENT_RUNTIME_API_VERSION,
+    apparatus_action_progress,
     apparatus_action_result,
     experiment_runtime,
     experiment_runtime_context,
@@ -158,6 +159,8 @@ def doctor_staged_experiment_runtime(
 def run_staged_experiment_apparatus_action(
     package: experiment_package,
     action_id: str,
+    *,
+    progress: Callable[[apparatus_action_progress], None] | None = None,
 ) -> apparatus_action_result:
     loaded = load_staged_experiment_runtime(package)
     action = loaded.runtime.apparatus_actions.get(action_id)
@@ -169,7 +172,11 @@ def run_staged_experiment_apparatus_action(
         )
 
     try:
-        result = action.run()
+        progressive = getattr(action, "run_with_progress", None)
+        if progress is not None and callable(progressive):
+            result = progressive(progress)
+        else:
+            result = action.run()
     except Exception as exc:
         raise experiment_runtime_error(
             f"Experiment apparatus action '{action_id}' failed: {exc}"

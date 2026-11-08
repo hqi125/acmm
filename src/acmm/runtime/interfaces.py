@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from acmm.evidence.interpretation import interpreted_structured_output
 
@@ -98,6 +98,26 @@ class executed_run:
 
 
 @dataclass(frozen=True)
+class apparatus_action_progress:
+    message: str
+    step: int | None = None
+    total: int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.message, str) or not self.message.strip():
+            raise ValueError("Apparatus progress message must not be empty.")
+        if self.step is not None and (not isinstance(self.step, int) or self.step <= 0):
+            raise ValueError("Apparatus progress step must be a positive integer.")
+        if self.total is not None and (not isinstance(self.total, int) or self.total <= 0):
+            raise ValueError("Apparatus progress total must be a positive integer.")
+        if self.step is not None and self.total is not None and self.step > self.total:
+            raise ValueError("Apparatus progress step must not exceed total.")
+
+
+ApparatusProgressReporter = Callable[[apparatus_action_progress], None]
+
+
+@dataclass(frozen=True)
 class apparatus_action_result:
     changed: bool
     detail: str
@@ -113,6 +133,14 @@ class apparatus_action_result:
 
 class runtime_apparatus_action(Protocol):
     def run(self) -> apparatus_action_result:
+        ...
+
+
+class progressive_runtime_apparatus_action(Protocol):
+    def run_with_progress(
+        self,
+        report: ApparatusProgressReporter,
+    ) -> apparatus_action_result:
         ...
 
 

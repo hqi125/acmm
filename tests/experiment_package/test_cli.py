@@ -21,6 +21,7 @@ EXPERIMENT_ID = "external_package_cli_v1"
 
 
 _RUNTIME_INIT = '''from acmm.experiment_api import (
+    apparatus_action_progress,
     apparatus_action_result,
     experiment_runtime,
     harness_capabilities,
@@ -49,6 +50,19 @@ class initializer:
             detail="initialized test apparatus",
             observations={"fixture_version": "test-v1"},
         )
+
+    def run_with_progress(self, report):
+        report(apparatus_action_progress(
+            message="checking test apparatus",
+            step=1,
+            total=2,
+        ))
+        report(apparatus_action_progress(
+            message="initializing test apparatus",
+            step=2,
+            total=2,
+        ))
+        return self.run()
 
 
 def build_runtime(context):
@@ -164,6 +178,9 @@ def test_package_apparatus_runs_package_owned_action(
     assert args.handler(args) == 0
 
     output = capsys.readouterr().out
+    assert "Experiment Package apparatus progress:" in output
+    assert "[1/2] checking test apparatus" in output
+    assert "[2/2] initializing test apparatus" in output
     assert "Experiment Package apparatus action complete:" in output
     assert "action:     initialize" in output
     assert "changed:    yes" in output
