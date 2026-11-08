@@ -12,7 +12,7 @@ from acmm.experiment_package.resources import (
     apply_staged_integration_resources,
     remove_staged_integration_resources,
     remove_superseded_staged_integration_resources,
-    validate_staged_integration_secrets,
+    validate_staged_package_secrets,
 )
 from acmm.experiment_package.store import (
     experiment_package_store_error,
@@ -263,7 +263,7 @@ def _run_package_upgrade(args: argparse.Namespace) -> int:
             else None
         )
         if subject_ids:
-            validate_staged_integration_secrets(target)
+            validate_staged_package_secrets(target)
     except (
         experiment_package_store_error,
         experiment_package_error,
@@ -404,7 +404,7 @@ def run_package_apply(args: argparse.Namespace) -> int:
         print(f"[integration:{integration_id}] {message}", flush=True)
 
     try:
-        validate_staged_integration_secrets(package)
+        validate_staged_package_secrets(package)
         resource_results = apply_staged_integration_resources(
             package,
             runtime_root,
@@ -830,6 +830,15 @@ def _print_package_summary(package: experiment_package, *, installed: bool) -> N
         print("  runtime:          none")
     else:
         print(f"  runtime SHA-256:  {package.runtime.sha256}")
+
+    if package.secrets:
+        rendered = ", ".join(
+            item.secret_id + ("" if item.required else " (optional)")
+            for item in package.secrets
+        )
+        print(f"  package secrets:  {rendered}")
+    else:
+        print("  package secrets:  none")
 
     if package.integrations:
         print("  integrations:")

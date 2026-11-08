@@ -176,13 +176,12 @@ bursts conservative while preserving straightforward experimental reproducibilit
 ## Provider usage observability
 
 When selected subjects use an Ollama Cloud LLM baseline, `acmm run` creates a best-effort Ollama
-Cloud usage monitor. A credential supplied through `--ollama-api-key-file PATH` takes precedence
-over the `OLLAMA_API_KEY` environment variable. When a credential is available, ACMM samples the
-official cloud usage API immediately before and after experiment-level execution and stores the
-normalized snapshots plus account/model deltas under `execution.provider_usage.ollama_cloud`. The
-key and key-file path are not persisted or mounted into subject runtimes. The usage API calls occur
-outside the execution start/end timestamps so telemetry latency does not inflate recorded execution
-duration.
+Cloud usage monitor. Core resolves the credential only from the Core-scoped ACMM secret binding
+`core:ollama_api_key`. When the binding is available, ACMM samples the official cloud usage API
+immediately before and after experiment-level execution and stores the normalized snapshots plus
+account/model deltas under `execution.provider_usage.ollama_cloud`. The key and its local source path
+are not persisted or mounted into subject runtimes. The usage API calls occur outside the execution
+start/end timestamps so telemetry latency does not inflate recorded execution duration.
 
 If the API key is absent, the API is unreachable, authentication fails, or the response cannot be
 interpreted, experiment acquisition continues normally. Telemetry is diagnostic provenance only; it

@@ -275,11 +275,19 @@ def test_package_manifest_schema_v0_2_loads_from_json_file() -> None:
     assert "integrations" in schema["properties"]
 
 
+def test_package_manifest_schema_v0_3_adds_package_secret_slots() -> None:
+    schema = load_package_manifest_schema("0.3")
+
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert schema["properties"]["schema_version"]["const"] == "0.3"
+    assert "secrets" in schema["properties"]
+
+
 def test_manifest_rejects_unsupported_schema_version(tmp_path: Path) -> None:
     package_root = tmp_path / "package"
     _write_package(package_root, full=False)
     (package_root / "experiment-package.yaml").write_text(
-        'schema_version: "0.3"\n'
+        'schema_version: "0.4"\n'
         f"experiment_id: {EXPERIMENT_ID}\n"
         "contract: experiment.yaml\n",
         encoding="utf-8",
@@ -287,9 +295,35 @@ def test_manifest_rejects_unsupported_schema_version(tmp_path: Path) -> None:
 
     with pytest.raises(
         experiment_package_error,
-        match="Unsupported Experiment Package schema_version '0.3'",
+        match="Unsupported Experiment Package schema_version '0.4'",
     ):
         load_experiment_package(
             package_root,
             contract_schema_path=CONTRACT_SCHEMA,
         )
+
+
+def test_package_schema_v0_3_loads_package_secret_slots(tmp_path: Path) -> None:
+    package_root = tmp_path / "package"
+    _write_package(package_root, full=False)
+    (package_root / "experiment-package.yaml").write_text(
+        'schema_version: "0.3"\n'
+        f"experiment_id: {EXPERIMENT_ID}\n"
+        "contract: experiment.yaml\n"
+        "secrets:\n"
+        "  - id: controller_access_token\n"
+        "  - id: optional_note\n"
+        "    required: false\n",
+        encoding="utf-8",
+    )
+
+    package = load_experiment_package(
+        package_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+
+    assert package.schema_version == "0.3"
+    assert [(item.secret_id, item.required) for item in package.secrets] == [
+        ("controller_access_token", True),
+        ("optional_note", False),
+    ]

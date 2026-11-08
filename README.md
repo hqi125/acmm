@@ -777,15 +777,16 @@ Interrupted acquisition preserves already-written records plus `experiment_inter
 never writes a completed `experiment_execution.yaml`.
 
 `--capture-runtime-logs` records sanitized container diagnostics without adding them to scientific
-evidence. Provider usage telemetry is likewise operational provenance only. `acmm run` can read the
-Ollama Cloud credential from `--ollama-api-key-file PATH` or fall back to `OLLAMA_API_KEY`, then
-record best-effort usage snapshots. If Ollama's immediate post-execution usage view is below the
+evidence. Provider usage telemetry is likewise operational provenance only. When selected subjects use
+Ollama Cloud, `acmm run` resolves `core:ollama_api_key` through the ACMM secret-binding registry and
+records best-effort usage snapshots. Initialize the local secret store with `acmm secret init`;
+secret source files are conventionally kept under `~/.config/acmm/secrets/`, while the versioned
+registry remains `~/.config/acmm/secret-bindings.yaml`. If Ollama's immediate post-execution usage view is below the
 known minimum request floor for the selected cloud-backed runs, ACMM briefly resamples with a bounded
-settling schedule before persisting the final snapshot. The file value overrides the environment
-variable; neither the key nor its path is persisted or mounted into subject runtimes. Missing, lagging,
-or ambiguous telemetry never affects experiment validity or ACMM scoring. See
-`docs/runtime/provider_usage.md`
-and `docs/security/secrets.md`.
+settling schedule before persisting the final snapshot. Neither the key nor its local source path is
+persisted or mounted into subject runtimes. Missing, lagging, or ambiguous telemetry never affects
+experiment validity or ACMM scoring. See `docs/runtime/provider_usage.md` and
+`docs/security/secrets.md`.
 
 ## Infrastructure and adapter boundaries
 

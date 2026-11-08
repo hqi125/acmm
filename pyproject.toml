@@ -31,6 +31,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "acmm.experiment_package" = ["schemas/*.json"]
+"acmm.secret_bindings" = ["schemas/*.json"]
 "acmm.runtime" = ["schemas/*.json"]
 "acmm_infra.subjects.agent_zero" = ["payloads/*.json", "payloads/*.yaml"]
 "acmm_infra.subjects.hermes" = ["payloads/*.sh"]

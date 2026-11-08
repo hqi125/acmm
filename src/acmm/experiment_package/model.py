@@ -16,6 +16,12 @@ class experiment_runtime_component:
 
 
 @dataclass(frozen=True)
+class experiment_package_secret:
+    secret_id: str
+    required: bool = True
+
+
+@dataclass(frozen=True)
 class experiment_integration_secret:
     secret_id: str
     required: bool = True
@@ -49,6 +55,7 @@ class experiment_package:
     contract: Mapping[str, Any]
     contract_sha256: str
     package_sha256: str
+    secrets: tuple[experiment_package_secret, ...]
     runtime: experiment_runtime_component | None
     integrations: tuple[experiment_integration_component, ...]
     analysis: tuple[experiment_analysis_component, ...]

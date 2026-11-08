@@ -11,7 +11,11 @@ from acmm.experiment_package.integration import (
 )
 from acmm.experiment_package.model import experiment_package
 from acmm.integration_api import integration_report, shared_integration_context
-from acmm.secret_bindings import resolve_secret, secret_binding_key
+from acmm.secret_bindings import (
+    experiment_secret_binding_key,
+    resolve_secret,
+    secret_binding_key,
+)
 
 
 _RESOURCE_DIRECTORY = "integration-resources"
@@ -37,6 +41,19 @@ class integration_resource_down_result:
     running_after: bool | None
     value: Mapping[str, Any]
     error: str | None = None
+
+
+def validate_staged_package_secrets(package: experiment_package) -> None:
+    for secret in package.secrets:
+        if not secret.required:
+            continue
+        resolve_secret(
+            experiment_secret_binding_key(
+                experiment_id=package.experiment_id,
+                secret_id=secret.secret_id,
+            )
+        )
+    validate_staged_integration_secrets(package)
 
 
 def validate_staged_integration_secrets(package: experiment_package) -> None:
@@ -388,4 +405,5 @@ __all__ = [
     "restore_staged_integration_resources",
     "status_staged_integration_resources",
     "validate_staged_integration_secrets",
+    "validate_staged_package_secrets",
 ]

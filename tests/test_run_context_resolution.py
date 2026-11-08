@@ -178,6 +178,7 @@ def test_explicit_run_selector_is_not_replaced_by_deployment_experiment(
         ("--repo-root", "/tmp/repo"),
         ("--runtime-root", "/tmp/runtime"),
         ("--schema", "/tmp/schema.json"),
+        ("--ollama-api-key-file", "/tmp/ollama-key"),
     ),
 )
 def test_run_parser_rejects_retired_experiment_source_options(

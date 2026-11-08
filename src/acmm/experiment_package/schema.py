@@ -12,6 +12,7 @@ _SCHEMA_DIRECTORY = Path(__file__).resolve().parent / "schemas"
 _SCHEMA_FILES = {
     "0.1": "experiment-package-v0.1.schema.json",
     "0.2": "experiment-package-v0.2.schema.json",
+    "0.3": "experiment-package-v0.3.schema.json",
 }
 
 

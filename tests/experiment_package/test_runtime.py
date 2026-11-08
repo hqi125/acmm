@@ -12,6 +12,7 @@ from acmm.experiment_package import (
     experiment_runtime_error,
     load_experiment_package,
     load_staged_experiment_runtime,
+    validate_staged_package_secrets,
 )
 
 
@@ -233,3 +234,62 @@ def test_runtime_entrypoint_must_not_mutate_managed_package_content(tmp_path: Pa
 
     with pytest.raises(experiment_runtime_error, match="changed before runtime activation"):
         load_staged_experiment_runtime(package)
+
+
+def test_runtime_context_resolves_declared_package_secret(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from acmm.secret_bindings import (
+        bind_secret_file,
+        experiment_secret_binding_key,
+        initialize_secret_store,
+    )
+
+    source = tmp_path / "source"
+    runtime_root = tmp_path / "runtime-root"
+    _write_runtime_package(source)
+    manifest_path = source / "experiment-package.yaml"
+    manifest = manifest_path.read_text(encoding="utf-8")
+    manifest = manifest.replace(
+        'schema_version: "0.1"\n',
+        'schema_version: "0.3"\n',
+        1,
+    ).replace(
+        "contract: experiment.yaml\n",
+        "contract: experiment.yaml\n"
+        "secrets:\n"
+        "  - id: controller_access_token\n",
+        1,
+    )
+    manifest_path.write_text(manifest, encoding="utf-8")
+
+    registry = tmp_path / "bindings.yaml"
+    token = tmp_path / "controller-token"
+    token.write_text("controller-secret\n", encoding="utf-8")
+    token.chmod(0o600)
+    monkeypatch.setenv("ACMM_SECRET_BINDINGS_FILE", str(registry))
+    monkeypatch.setenv("ACMM_SECRET_DIRECTORY", str(tmp_path / "secrets"))
+    initialize_secret_store()
+    bind_secret_file(
+        experiment_secret_binding_key(
+            EXPERIMENT_ID,
+            "controller_access_token",
+        ),
+        token,
+    )
+
+    package = acquire_experiment_package(
+        source,
+        runtime_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+    validate_staged_package_secrets(package)
+    loaded = load_staged_experiment_runtime(package)
+
+    assert (
+        loaded.context.resolve_package_secret("controller_access_token")
+        == "controller-secret"
+    )
+    with pytest.raises(ValueError, match="did not declare secret"):
+        loaded.context.resolve_package_secret("not_declared")

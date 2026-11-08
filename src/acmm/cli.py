@@ -36,6 +36,7 @@ from acmm.experiment_package import (
 )
 from acmm.experiment_package.cli import register_experiment_package_commands
 from acmm.environment_cli import register_environment_commands
+from acmm.secret_bindings import secret_binding_error
 from acmm.secret_bindings.cli import register_secret_commands
 from acmm.preflight.live import (
     inspect_live_readiness,
@@ -70,7 +71,11 @@ from acmm.runtime.execution_summary import (
     write_execution_summary,
     write_interruption_summary,
 )
-from acmm.runtime.provider_usage import ollama_cloud_usage_monitor
+from acmm.runtime.provider_usage import (
+    OLLAMA_CLOUD_API_KEY_SECRET_ID,
+    ollama_cloud_usage_monitor,
+    resolve_ollama_cloud_api_key,
+)
 from acmm.runtime.planner import (
     build_experiment_plan,
     experiment_plan,
@@ -103,24 +108,6 @@ def _harness_version() -> str:
         return version("acmm")
     except PackageNotFoundError:
         return "0.1.0"
-
-
-def _read_ollama_api_key_file(path: Path) -> str:
-    resolved = path.expanduser().resolve()
-    try:
-        value = resolved.read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        raise ValueError(
-            f"Could not read Ollama API key file: {exc}"
-        ) from exc
-
-    if not value:
-        raise ValueError("Ollama API key file is empty.")
-    if "\n" in value or "\r" in value:
-        raise ValueError(
-            "Ollama API key file must contain exactly one raw API key token."
-        )
-    return value
 
 
 def _execution_package_provenance(
@@ -1132,15 +1119,25 @@ def _run_experiment(args: argparse.Namespace) -> int:
                 ollama_usage_models.append(utility_model)
 
     ollama_api_key: str | None = None
-    if args.ollama_api_key_file is not None:
+    ollama_credential_error: str | None = None
+    if ollama_usage_models:
         try:
-            ollama_api_key = _read_ollama_api_key_file(args.ollama_api_key_file)
-        except ValueError as exc:
-            cleanup_errors = cleanup_runtime_resources()
-            print(f"ERROR: {exc}", file=sys.stderr)
-            for error in cleanup_errors:
-                print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
-            return 2
+            ollama_api_key = resolve_ollama_cloud_api_key()
+        except secret_binding_error as exc:
+            ollama_credential_error = (
+                f"ACMM core secret binding '{OLLAMA_CLOUD_API_KEY_SECRET_ID}' "
+                "is unavailable"
+            )
+            print(
+                "Provider usage telemetry: Ollama Cloud credential unavailable "
+                f"from Core secret bindings ({exc}).",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "Provider usage telemetry: Ollama Cloud credential resolved from "
+                f"Core secret binding '{OLLAMA_CLOUD_API_KEY_SECRET_ID}'."
+            )
 
     expected_ollama_request_count = sum(
         1
@@ -1151,16 +1148,12 @@ def _run_experiment(args: argparse.Namespace) -> int:
         ollama_cloud_usage_monitor(
             tuple(ollama_usage_models),
             api_key=ollama_api_key,
+            credential_error=ollama_credential_error,
             expected_minimum_request_count=expected_ollama_request_count,
         )
         if ollama_usage_models
         else None
     )
-    if ollama_usage_models and args.ollama_api_key_file is not None:
-        print(
-            "Provider usage telemetry: Ollama Cloud credential loaded from "
-            "--ollama-api-key-file."
-        )
     registry = compose_execution_registry(
         loaded_runtime.runtime,
         subject_adapters,
@@ -1678,16 +1671,6 @@ def _build_parser() -> argparse.ArgumentParser:
             "Capture sanitized timestamped per-subject container logs into the "
             "execution result directory. Diagnostic capture is best-effort and "
             "is not used for compliance adjudication."
-        ),
-    )
-    run_parser.add_argument(
-        "--ollama-api-key-file",
-        type=Path,
-        metavar="PATH",
-        help=(
-            "Read the Ollama Cloud API key from a host-side file for provider "
-            "usage telemetry. The file value overrides OLLAMA_API_KEY; neither "
-            "the key nor its path is persisted or mounted into subject runtimes."
         ),
     )
     run_parser.add_argument(

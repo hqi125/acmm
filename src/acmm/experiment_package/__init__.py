@@ -9,6 +9,7 @@ from acmm.experiment_package.resources import (
     restore_staged_integration_resources,
     status_staged_integration_resources,
     validate_staged_integration_secrets,
+    validate_staged_package_secrets,
 )
 from acmm.experiment_package.integration import (
     compose_staged_experiment_profile_integrations,
@@ -26,6 +27,7 @@ from acmm.experiment_package.model import (
     experiment_analysis_component,
     experiment_integration_component,
     experiment_package,
+    experiment_package_secret,
     experiment_runtime_component,
 )
 from acmm.experiment_package.provenance import (
@@ -77,12 +79,14 @@ __all__ = [
     "restore_staged_integration_resources",
     "status_staged_integration_resources",
     "validate_staged_integration_secrets",
+    "validate_staged_package_secrets",
     "compose_staged_experiment_profile_integrations",
     "compose_staged_experiment_manager_integrations",
     "experiment_analysis_component",
     "experiment_integration_component",
     "experiment_integration_error",
     "experiment_package",
+    "experiment_package_secret",
     "experiment_package_error",
     "experiment_package_store_error",
     "installed_experiment_package",

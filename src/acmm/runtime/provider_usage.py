@@ -3,15 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
-import os
 import time
 from typing import Any, Callable, Mapping, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from acmm.secret_bindings import core_secret_binding_key, resolve_secret
+
 
 _OLLAMA_USAGE_ENDPOINT = "https://ollama.com/api/usage"
+OLLAMA_CLOUD_API_KEY_SECRET_ID = "ollama_api_key"
+_OLLAMA_CLOUD_API_KEY_UNAVAILABLE = (
+    "ACMM core secret binding 'ollama_api_key' is unavailable"
+)
 _OLLAMA_USAGE_RANGE = "24h"
 _OLLAMA_USAGE_SCOPE = "self"
 _OLLAMA_USAGE_GROUP_BY = "model"
@@ -24,6 +29,14 @@ _METRIC_FIELDS = (
     "cached_input_tokens",
     "output_tokens",
 )
+
+
+def resolve_ollama_cloud_api_key() -> str:
+    """Resolve the Ollama Cloud telemetry credential from ACMM Core bindings."""
+
+    return resolve_secret(
+        core_secret_binding_key(secret_id=OLLAMA_CLOUD_API_KEY_SECRET_ID)
+    )
 
 
 class execution_provider_usage_monitor(Protocol):
@@ -53,6 +66,7 @@ class ollama_cloud_usage_monitor:
         model_names: tuple[str, ...],
         *,
         api_key: str | None = None,
+        credential_error: str | None = None,
         opener: Callable[..., Any] = urlopen,
         now: Callable[[], datetime] | None = None,
         timeout_seconds: float = _OLLAMA_USAGE_TIMEOUT_SECONDS,
@@ -78,7 +92,12 @@ class ollama_cloud_usage_monitor:
             raise ValueError("settle intervals must be non-negative.")
 
         self._model_names = normalized
-        self._api_key = api_key if api_key is not None else os.getenv("OLLAMA_API_KEY")
+        self._api_key = api_key
+        self._credential_error = (
+            credential_error
+            if credential_error is not None
+            else _OLLAMA_CLOUD_API_KEY_UNAVAILABLE
+        )
         self._opener = opener
         self._now = now if now is not None else lambda: datetime.now(timezone.utc)
         self._timeout_seconds = timeout_seconds
@@ -156,7 +175,7 @@ class ollama_cloud_usage_monitor:
                 sampled_at=sampled_at,
                 account=None,
                 models={},
-                error="OLLAMA_API_KEY is not set",
+                error=self._credential_error,
             )
 
         query = urlencode(

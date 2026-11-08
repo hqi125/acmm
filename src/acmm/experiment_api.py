@@ -32,7 +32,11 @@ from acmm.evidence.text import (
     numeric_values_share_text_unit,
 )
 from acmm.harness.capabilities import harness_capabilities
-from acmm.secret_bindings import resolve_secret, secret_binding_key
+from acmm.secret_bindings import (
+    experiment_secret_binding_key,
+    resolve_secret,
+    secret_binding_key,
+)
 from acmm.runtime.interfaces import (
     captured_evidence,
     environment_finalizer,
@@ -54,9 +58,11 @@ class experiment_runtime_context:
     experiment_id: str
     package_sha256: str
     package_root: Path
+    package_secret_ids: tuple[str, ...] = ()
     integration_secret_ids: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "package_secret_ids", tuple(self.package_secret_ids))
         normalized = {
             integration_id: tuple(secret_ids)
             for integration_id, secret_ids in self.integration_secret_ids.items()
@@ -96,6 +102,18 @@ class experiment_runtime_context:
             raise ValueError(f"Experiment resource does not exist: '{relative}'.")
 
         return resource
+
+    def resolve_package_secret(self, secret_id: str) -> str:
+        if secret_id not in self.package_secret_ids:
+            raise ValueError(
+                f"Experiment Package did not declare secret '{secret_id}'."
+            )
+        return resolve_secret(
+            experiment_secret_binding_key(
+                experiment_id=self.experiment_id,
+                secret_id=secret_id,
+            )
+        )
 
     def resolve_integration_secret(
         self,

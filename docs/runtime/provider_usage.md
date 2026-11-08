@@ -49,30 +49,29 @@ experiment provenance.
 
 ## API key
 
-The usage endpoint requires direct Ollama Cloud authentication. `acmm run` accepts the credential
-through `--ollama-api-key-file PATH` and otherwise falls back to `OLLAMA_API_KEY`. The API key is
-optional for ACMM execution. Without it, provider telemetry is recorded as unavailable and the
-experiment proceeds normally. The file value overrides the environment variable. ACMM reads it only
-in the host process; neither the secret nor the supplied path is persisted or mounted into a subject
-runtime.
+The usage endpoint requires direct Ollama Cloud authentication. ACMM Core resolves the credential
+only through the global secret-binding registry using the Core-scoped key `core:ollama_api_key`.
+There is no `acmm run` API-key option and no environment-variable fallback. The API key remains
+optional for ACMM execution: without a valid binding, provider telemetry is recorded as unavailable
+and the experiment proceeds normally.
 
 Keep the key outside both ACMM repositories. A convenient WSL layout is:
 
 ```text
-~/.config/acmm/ollama_api_key
+~/.config/acmm/secrets/ollama_api_key
 ```
 
-Recommended permissions are owner-only on both the directory and file. The preferred invocation is:
+Initialize the ACMM secret store once, then keep the key owner-only inside the managed secret
+directory and bind it:
 
 ```text
-acmm run <experiment-selector> --ollama-api-key-file ~/.config/acmm/ollama_api_key
+acmm secret init
+chmod 600 ~/.config/acmm/secrets/ollama_api_key
+acmm secret bind core ollama_api_key --file ~/.config/acmm/secrets/ollama_api_key
 ```
 
-The environment-variable fallback remains available when that is more convenient:
-
-```text
-OLLAMA_API_KEY="$(cat ~/.config/acmm/ollama_api_key)" acmm run <experiment-selector>
-```
+Subsequent `acmm run` executions resolve the binding automatically. Neither the secret value nor its
+local source path is persisted in execution artifacts or mounted into subject runtimes.
 
 Do not place the key in `experiment.yaml`, `experiment-package.yaml`, integration files, `.env` files
 inside either repository, command examples committed to Git, execution notes, or test fixtures.

@@ -58,6 +58,7 @@ def load_staged_experiment_runtime(
         experiment_id=package.experiment_id,
         package_sha256=package.package_sha256,
         package_root=package.root,
+        package_secret_ids=tuple(secret.secret_id for secret in package.secrets),
         integration_secret_ids={
             component.integration_id: tuple(
                 secret.secret_id for secret in component.secrets

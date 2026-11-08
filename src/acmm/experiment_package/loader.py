@@ -18,6 +18,7 @@ from acmm.experiment_package.model import (
     experiment_integration_component,
     experiment_integration_secret,
     experiment_package,
+    experiment_package_secret,
     experiment_runtime_component,
 )
 from acmm.experiment_package.schema import load_package_manifest_schema
@@ -84,6 +85,7 @@ def load_experiment_package(
             f"'{contract_experiment_id}'."
         )
 
+    secrets = _load_package_secrets(manifest.get("secrets"))
     runtime = _load_runtime_component(root, manifest.get("runtime"))
     integrations = _load_integration_components(
         root,
@@ -99,6 +101,7 @@ def load_experiment_package(
         contract=MappingProxyType(contract),
         contract_sha256=_file_sha256(contract_path),
         package_sha256=package_tree_sha256(root),
+        secrets=secrets,
         runtime=runtime,
         integrations=integrations,
         analysis=analysis,
@@ -192,6 +195,42 @@ def _contract_experiment_id(contract: Mapping[str, Any]) -> str:
         raise experiment_package_error("Experiment Contract requires experiment.id.")
 
     return experiment_id
+
+
+def _load_package_secrets(data: Any) -> tuple[experiment_package_secret, ...]:
+    if data is None:
+        return ()
+    if not isinstance(data, list):
+        raise experiment_package_error("secrets must be a sequence.")
+
+    secrets: list[experiment_package_secret] = []
+    seen_secret_ids: set[str] = set()
+    for index, item in enumerate(data):
+        field = f"secrets[{index}]"
+        if not isinstance(item, dict):
+            raise experiment_package_error(f"{field} must be a mapping.")
+        secret_id = str(item["id"])
+        if _COMPONENT_ID_PATTERN.fullmatch(secret_id) is None:
+            raise experiment_package_error(
+                f"Invalid Experiment Package secret id '{secret_id}'."
+            )
+        if secret_id in seen_secret_ids:
+            raise experiment_package_error(
+                f"Duplicate Experiment Package secret id '{secret_id}'."
+            )
+        seen_secret_ids.add(secret_id)
+        required = item.get("required", True)
+        if not isinstance(required, bool):
+            raise experiment_package_error(
+                f"{field}.required must be a boolean."
+            )
+        secrets.append(
+            experiment_package_secret(
+                secret_id=secret_id,
+                required=required,
+            )
+        )
+    return tuple(secrets)
 
 
 def _load_runtime_component(

@@ -6,6 +6,7 @@ import json
 
 from acmm.runtime.provider_usage import (
     ollama_cloud_usage_monitor,
+    resolve_ollama_cloud_api_key,
     summarize_ollama_cloud_request_count,
 )
 
@@ -109,8 +110,8 @@ def test_ollama_usage_monitor_is_unavailable_without_api_key() -> None:
     report = monitor.finish()["ollama_cloud"]
 
     assert report["status"] == "unavailable"
-    assert report["before"]["error"] == "OLLAMA_API_KEY is not set"
-    assert report["after"]["error"] == "OLLAMA_API_KEY is not set"
+    assert report["before"]["error"] == "ACMM core secret binding 'ollama_api_key' is unavailable"
+    assert report["after"]["error"] == "ACMM core secret binding 'ollama_api_key' is unavailable"
     assert report["account_delta"] is None
 
 
@@ -165,15 +166,15 @@ def test_ollama_request_count_summary_reports_missing_key() -> None:
     provider_usage = {
         "ollama_cloud": {
             "status": "unavailable",
-            "before": {"error": "OLLAMA_API_KEY is not set"},
-            "after": {"error": "OLLAMA_API_KEY is not set"},
+            "before": {"error": "ACMM core secret binding 'ollama_api_key' is unavailable"},
+            "after": {"error": "ACMM core secret binding 'ollama_api_key' is unavailable"},
         }
     }
 
     value, detail = summarize_ollama_cloud_request_count(provider_usage)
 
     assert value is None
-    assert detail == "OLLAMA_API_KEY is not set"
+    assert detail == "ACMM core secret binding 'ollama_api_key' is unavailable"
 
 
 def test_ollama_usage_monitor_settles_until_expected_request_floor_is_visible() -> None:
@@ -264,3 +265,41 @@ def test_ollama_usage_monitor_records_when_settle_target_is_not_reached() -> Non
 
     assert value == 2
     assert detail == "model-scoped delta; provider settle target not reached"
+
+
+def test_ollama_api_key_resolves_from_core_secret_binding(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from acmm.secret_bindings import (
+        bind_secret_file,
+        core_secret_binding_key,
+        initialize_secret_store,
+    )
+
+    registry = tmp_path / "bindings.yaml"
+    source = tmp_path / "ollama-token"
+    source.write_text("bound-key\n", encoding="utf-8")
+    source.chmod(0o600)
+    monkeypatch.setenv("ACMM_SECRET_BINDINGS_FILE", str(registry))
+    monkeypatch.setenv("ACMM_SECRET_DIRECTORY", str(tmp_path / "secrets"))
+    initialize_secret_store()
+    bind_secret_file(core_secret_binding_key("ollama_api_key"), source)
+
+    assert resolve_ollama_cloud_api_key() == "bound-key"
+
+
+def test_ollama_usage_monitor_does_not_read_environment_secret(monkeypatch) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "environment-key-must-be-ignored")
+    monitor = ollama_cloud_usage_monitor(
+        ("gpt-oss:120b-cloud",),
+        now=_clock(),
+    )
+    monitor.begin()
+    report = monitor.finish()["ollama_cloud"]
+
+    assert report["status"] == "unavailable"
+    assert (
+        report["before"]["error"]
+        == "ACMM core secret binding 'ollama_api_key' is unavailable"
+    )

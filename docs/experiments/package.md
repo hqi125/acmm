@@ -22,10 +22,11 @@ Baseline, for example, requires no capability integration.
 ## Manifest schemas
 
 Package schema v0.1 remains supported because frozen packages use it. Package schema v0.2 adds the
-ordered `integrations` component list. This is a package-format compatibility requirement, not a
-second research-tool architecture.
+ordered `integrations` component list. Package schema v0.3 adds top-level Experiment secret
+declarations for trusted runtime/controller credentials while retaining v0.2 integration semantics.
+These are package-format compatibility changes, not a second research-tool architecture.
 
-A v0.2 integration component declares:
+A v0.2-or-later integration component declares:
 
 ```yaml
 integrations:
@@ -152,22 +153,38 @@ make cross-subject evidence analyzable, not to repair subject behavior.
 Future trusted pre/post-state observation can plug into the same generic package/runtime boundary
 without making Core aware of the concrete external service.
 
-## Integration secrets
+## Package and integration secrets
 
-An integration may declare named secret slots in package schema v0.2. Secret declarations are part
-of immutable package identity; secret values and machine-local source paths are not.
+Package schema v0.3 adds Experiment-scoped secret slots for trusted runtime/controller needs.
+Integration-scoped secret slots introduced in schema v0.2 remain available for concrete capability
+integrations. Secret declarations are part of immutable package identity; secret values and
+machine-local source paths are not.
 
 Local bindings are managed separately:
 
 ```text
-acmm secret bind EXPERIMENT_ID INTEGRATION_ID SECRET_ID --file PATH
+acmm secret init
+acmm secret validate
+acmm secret upgrade
+acmm secret bind experiment EXPERIMENT_ID SECRET_ID --file PATH
+acmm secret bind integration EXPERIMENT_ID INTEGRATION_ID SECRET_ID --file PATH
 acmm secret list
-acmm secret unbind EXPERIMENT_ID INTEGRATION_ID SECRET_ID
+acmm secret unbind experiment EXPERIMENT_ID SECRET_ID
+acmm secret unbind integration EXPERIMENT_ID INTEGRATION_ID SECRET_ID
 ```
 
-The default binding registry is `~/.config/acmm/secret-bindings.yaml`. A file-backed secret must be
-owner-only on POSIX systems. Integration code resolves only secret slots it explicitly declared.
-Core does not interpret what a secret means to a concrete tool.
+The default binding registry is `~/.config/acmm/secret-bindings.yaml`; recommended secret source
+files live under `~/.config/acmm/secrets/`. Registry YAML is a versioned data format validated
+against the bundled JSON Schema selected by its mandatory `schema_version`. Ordinary Core
+operations require the registry version that Core currently supports and never migrate an older
+registry implicitly. `acmm secret upgrade` is the only supported registry transformation path.
+`acmm secret validate` additionally checks every bound source file for existence, regular-file
+status, safe permissions, readability, and a non-empty value without displaying secret content.
+
+A file-backed secret must be owner-only on POSIX systems. Runtime code can resolve only Experiment
+secret slots declared by its package; integration code can resolve only secret slots declared by
+that integration. Core does not interpret what either secret means to the package. `unbind` changes
+only registry metadata and never deletes the referenced secret source file.
 
 ## Shared integration resources
 

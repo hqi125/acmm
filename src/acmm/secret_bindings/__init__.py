@@ -1,23 +1,50 @@
 from acmm.secret_bindings.bindings import (
     bind_secret_file,
+    core_secret_binding_key,
     default_secret_bindings_path,
+    default_secret_directory_path,
+    experiment_secret_binding_key,
     has_secret_binding,
+    initialize_secret_store,
     list_secret_bindings,
     resolve_secret,
     secret_binding,
-    secret_binding_error,
     secret_binding_key,
+    secret_binding_key_type,
+    secret_binding_label,
+    secret_registry_upgrade,
+    secret_store_initialization,
     unbind_secret,
+    upgrade_secret_bindings_registry,
+    validate_secret_bindings_registry,
 )
+from acmm.secret_bindings.errors import (
+    secret_binding_error,
+    secret_binding_version_error,
+)
+from acmm.secret_bindings.schema import CURRENT_SECRET_BINDINGS_SCHEMA_VERSION
+
 
 __all__ = [
+    "CURRENT_SECRET_BINDINGS_SCHEMA_VERSION",
     "bind_secret_file",
+    "core_secret_binding_key",
     "default_secret_bindings_path",
+    "default_secret_directory_path",
+    "experiment_secret_binding_key",
     "has_secret_binding",
+    "initialize_secret_store",
     "list_secret_bindings",
     "resolve_secret",
     "secret_binding",
     "secret_binding_error",
     "secret_binding_key",
+    "secret_binding_key_type",
+    "secret_binding_label",
+    "secret_binding_version_error",
+    "secret_registry_upgrade",
+    "secret_store_initialization",
     "unbind_secret",
+    "upgrade_secret_bindings_registry",
+    "validate_secret_bindings_registry",
 ]
