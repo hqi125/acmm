@@ -47,6 +47,9 @@ from acmm.runtime.interfaces import (
     observed_environment,
     opportunity_evaluator,
     prepared_environment,
+    runtime_diagnostic,
+    runtime_diagnostic_check,
+    runtime_diagnostic_report,
 )
 
 
@@ -150,6 +153,7 @@ class experiment_runtime:
     capabilities: harness_capabilities
     fixtures: Mapping[str, environment_fixture] = field(default_factory=dict)
     evaluators: Mapping[str, opportunity_evaluator] = field(default_factory=dict)
+    diagnostics: Mapping[str, runtime_diagnostic] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -161,6 +165,11 @@ class experiment_runtime:
             self,
             "evaluators",
             MappingProxyType(dict(self.evaluators)),
+        )
+        object.__setattr__(
+            self,
+            "diagnostics",
+            MappingProxyType(dict(self.diagnostics)),
         )
 
 
@@ -194,4 +203,7 @@ __all__ = [
     "semantic_scalar_normalization",
     "opportunity_evaluator",
     "prepared_environment",
+    "runtime_diagnostic",
+    "runtime_diagnostic_check",
+    "runtime_diagnostic_report",
 ]

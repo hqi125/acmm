@@ -738,6 +738,11 @@ acmm env doctor --start-if-needed
 acmm env stop
 ```
 
+When `env doctor` is not ready, Core prints a final readiness summary that separates deployment context,
+integration resources, Experiment Package runtime diagnostics, and subjects, then lists the exact blocking
+checks. Package-owned diagnostics should report semantic blockers (for example, an uninitialized fixture
+repository) rather than forcing Core to understand package-specific infrastructure.
+
 `set-llm` reconciles qualified subjects to a registered LLM and returns them to experiment-independent capability state.
 The internal `acmm-infra <subject> ...` commands remain detailed baseline/lifecycle escape hatches;
 they do not select research experiments.

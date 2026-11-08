@@ -12,6 +12,7 @@ from acmm.experiment_package import (
     experiment_runtime_error,
     load_experiment_package,
     load_staged_experiment_runtime,
+    doctor_staged_experiment_runtime,
     validate_staged_package_secrets,
 )
 
@@ -28,6 +29,8 @@ from acmm.experiment_api import (
     evaluation_context,
     judgment_result,
     prepared_environment,
+    runtime_diagnostic_check,
+    runtime_diagnostic_report,
 )
 
 
@@ -48,12 +51,25 @@ class package_evaluator:
     def evaluate(self, context: evaluation_context) -> judgment_result:
         del context
         return judgment_result(outcome="compliant", evidence_ids=(), detail=self.name)
+
+
+class package_diagnostic:
+    def doctor(self) -> runtime_diagnostic_report:
+        return runtime_diagnostic_report(
+            checks=(
+                runtime_diagnostic_check(
+                    name="runtime_ready",
+                    ok=True,
+                    detail="runtime diagnostic ready",
+                ),
+            )
+        )
 '''
 
 
 _RUNTIME_INIT = '''from acmm.experiment_api import experiment_runtime, harness_capabilities
 
-from .components import package_evaluator, package_fixture
+from .components import package_diagnostic, package_evaluator, package_fixture
 
 
 def build_runtime(context):
@@ -71,6 +87,7 @@ def build_runtime(context):
             "fixture_value_retrieval": package_evaluator("retrieval"),
             "fixture_value_addition": package_evaluator("addition"),
         },
+        diagnostics={"package_runtime": package_diagnostic()},
     )
 '''
 
@@ -143,6 +160,7 @@ def test_staged_runtime_loads_relative_modules_and_package_resources(tmp_path: P
         "fixture_value_retrieval",
         "fixture_value_addition",
     }
+    assert set(loaded.runtime.diagnostics) == {"package_runtime"}
     fixture = loaded.runtime.fixtures["package_fixture_environment_v1"]
     assert fixture.marker == "staged-runtime"
     assert package.runtime is not None
@@ -293,3 +311,41 @@ def test_runtime_context_resolves_declared_package_secret(
     )
     with pytest.raises(ValueError, match="did not declare secret"):
         loaded.context.resolve_package_secret("not_declared")
+
+
+def test_staged_runtime_doctor_executes_package_diagnostics(tmp_path: Path) -> None:
+    package = _acquire(tmp_path)
+
+    reports = doctor_staged_experiment_runtime(package)
+
+    assert len(reports) == 1
+    diagnostic_id, report = reports[0]
+    assert diagnostic_id == "package_runtime"
+    assert report.is_ready
+    assert [(item.name, item.ok, item.detail) for item in report.checks] == [
+        ("runtime_ready", True, "runtime diagnostic ready"),
+    ]
+
+
+def test_staged_runtime_doctor_converts_diagnostic_exception_to_failure(
+    tmp_path: Path,
+) -> None:
+    runtime_init = _RUNTIME_INIT.replace(
+        'diagnostics={"package_runtime": package_diagnostic()},',
+        'diagnostics={"package_runtime": exploding_diagnostic()},',
+    ).replace(
+        "from .components import package_diagnostic, package_evaluator, package_fixture",
+        "from .components import package_diagnostic, package_evaluator, package_fixture\n\n"
+        "class exploding_diagnostic:\n"
+        "    def doctor(self):\n"
+        "        raise RuntimeError('diagnostic boom')",
+    )
+    package = _acquire(tmp_path, runtime_init=runtime_init)
+
+    reports = doctor_staged_experiment_runtime(package)
+
+    assert len(reports) == 1
+    _, report = reports[0]
+    assert not report.is_ready
+    assert report.checks[0].name == "diagnostic_execution"
+    assert report.checks[0].detail == "diagnostic boom"

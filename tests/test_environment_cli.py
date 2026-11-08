@@ -636,3 +636,134 @@ def test_environment_stop_reports_integration_resources(
     assert "initial state:  running" in output
     assert "result:         stopped" in output
     assert "container:      absent" in output
+
+
+def test_environment_doctor_includes_runtime_diagnostics_in_readiness(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    from acmm import environment_cli
+    from acmm.experiment_api import (
+        runtime_diagnostic_check,
+        runtime_diagnostic_report,
+    )
+    from acmm_infra.cohort import (
+        cohort_doctor_result,
+        cohort_subject,
+        cohort_subject_status,
+        experiment_cohort,
+    )
+    from acmm_infra.common import doctor_check, doctor_report
+    from acmm_infra.readiness import deployed_subject_doctor_result
+
+    subject = cohort_subject(
+        "hermes_gpt_oss120b",
+        "hermes",
+        "gpt_oss_120b_cloud_v1",
+    )
+    package_sha256 = "a" * 64
+    package = object()
+
+    monkeypatch.setattr(environment_cli, "default_repo_root", lambda: tmp_path)
+    monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(tmp_path / "runtime"))
+    monkeypatch.setattr(
+        environment_cli,
+        "resolve_deployed_cohort",
+        lambda *args, **kwargs: experiment_cohort(
+            "package_fixture_v1",
+            None,
+            (subject,),
+        ),
+    )
+    monkeypatch.setattr(
+        environment_cli,
+        "inspect_cohort",
+        lambda *args, **kwargs: (
+            cohort_subject_status(
+                subject_id=subject.subject_id,
+                infrastructure_subject=subject.infrastructure_subject,
+                running=False,
+                experiment_id="package_fixture_v1",
+                package_sha256=package_sha256,
+                package_state="match",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        environment_cli,
+        "open_staged_experiment_package",
+        lambda *args, **kwargs: package,
+    )
+    monkeypatch.setattr(
+        environment_cli,
+        "acquire_staged_integration_resources",
+        lambda *args, **kwargs: (),
+    )
+    monkeypatch.setattr(
+        environment_cli,
+        "doctor_staged_integration_resources",
+        lambda *args, **kwargs: (),
+    )
+    monkeypatch.setattr(
+        environment_cli,
+        "doctor_staged_experiment_runtime",
+        lambda *args, **kwargs: (
+            (
+                "fixture_controller",
+                runtime_diagnostic_report(
+                    checks=(
+                        runtime_diagnostic_check(
+                            name="repository_identity",
+                            ok=False,
+                            detail="repository identity is not pinned",
+                        ),
+                    )
+                ),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        environment_cli,
+        "doctor_cohort",
+        lambda *args, **kwargs: (
+            cohort_doctor_result(
+                subject=subject,
+                doctor=deployed_subject_doctor_result(
+                    infrastructure_subject="hermes",
+                    experiment_id="package_fixture_v1",
+                    report=doctor_report(
+                        (doctor_check("ready", True, "ready"),)
+                    ),
+                    error=None,
+                ),
+                deployment_state={
+                    "package": {"sha256": package_sha256},
+                },
+                initially_running=False,
+                started_by_acmm=False,
+            ),
+        ),
+    )
+
+    parser = build_acmm_parser()
+    args = parser.parse_args(["env", "doctor"])
+    assert args.handler(args) == 1
+
+    output = capsys.readouterr().out
+    assert "runtime diagnostics:" in output
+    assert "fixture_controller: NOT READY" in output
+    assert (
+        "repository_identity: NOT READY - repository identity is not pinned"
+        in output
+    )
+    assert "readiness summary:" in output
+    assert "deployment context: READY" in output
+    assert "integration resources: READY (none configured)" in output
+    assert "runtime diagnostics: NOT READY (0/1)" in output
+    assert "subjects: READY (1/1)" in output
+    assert (
+        "runtime:fixture_controller:repository_identity: "
+        "repository identity is not pinned" in output
+    )
+    assert output.rstrip().endswith("NOT READY")

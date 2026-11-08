@@ -14,6 +14,8 @@ from acmm.experiment_api import (
     EXPERIMENT_RUNTIME_API_VERSION,
     experiment_runtime,
     experiment_runtime_context,
+    runtime_diagnostic_check,
+    runtime_diagnostic_report,
 )
 from acmm.experiment_package.model import experiment_package
 from acmm.experiment_package.snapshot import (
@@ -110,6 +112,45 @@ def load_staged_experiment_runtime(
         runtime=runtime,
         module_name=module_name,
     )
+
+
+def doctor_staged_experiment_runtime(
+    package: experiment_package,
+) -> tuple[tuple[str, runtime_diagnostic_report], ...]:
+    if package.runtime is None:
+        return ()
+
+    loaded = load_staged_experiment_runtime(package)
+    reports: list[tuple[str, runtime_diagnostic_report]] = []
+    for diagnostic_id, diagnostic in loaded.runtime.diagnostics.items():
+        try:
+            report = diagnostic.doctor()
+        except Exception as exc:
+            detail = str(exc) or exc.__class__.__name__
+            report = runtime_diagnostic_report(
+                checks=(
+                    runtime_diagnostic_check(
+                        name="diagnostic_execution",
+                        ok=False,
+                        detail=detail,
+                    ),
+                )
+            )
+        if not isinstance(report, runtime_diagnostic_report):
+            report = runtime_diagnostic_report(
+                checks=(
+                    runtime_diagnostic_check(
+                        name="diagnostic_protocol",
+                        ok=False,
+                        detail=(
+                            "Runtime diagnostic doctor() must return "
+                            "runtime_diagnostic_report."
+                        ),
+                    ),
+                )
+            )
+        reports.append((diagnostic_id, report))
+    return tuple(reports)
 
 
 def compose_execution_registry(
@@ -231,6 +272,8 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
 
     fixture_ids = frozenset(runtime.fixtures)
     evaluator_ids = frozenset(runtime.evaluators)
+    diagnostic_ids = frozenset(runtime.diagnostics)
+    _validate_capability_identifiers("diagnostic", diagnostic_ids)
 
     if fixture_ids != runtime.capabilities.fixtures:
         raise experiment_runtime_error(
@@ -251,6 +294,12 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
         if not callable(getattr(evaluator, "evaluate", None)):
             raise experiment_runtime_error(
                 f"Runtime evaluator '{evaluator_id}' does not provide callable evaluate()."
+            )
+
+    for diagnostic_id, diagnostic in runtime.diagnostics.items():
+        if not callable(getattr(diagnostic, "doctor", None)):
+            raise experiment_runtime_error(
+                f"Runtime diagnostic '{diagnostic_id}' does not provide callable doctor()."
             )
 
 

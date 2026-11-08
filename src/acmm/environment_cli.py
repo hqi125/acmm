@@ -9,6 +9,7 @@ import sys
 from acmm.experiment_package import (
     acquire_staged_integration_resources,
     doctor_staged_integration_resources,
+    doctor_staged_experiment_runtime,
     down_staged_integration_resources,
     open_staged_experiment_package,
     restore_staged_integration_resources,
@@ -42,6 +43,160 @@ def _safe_environment_handler(handler):
             return 2
 
     return run
+
+
+def _environment_readiness_summary(
+    *,
+    context_ready,
+    resources_ready,
+    runtime_ready,
+    subject_ready,
+    resource_reports,
+    resource_restore_errors,
+    runtime_reports,
+    runtime_error,
+    doctor_results,
+):
+    blockers = []
+
+    if not context_ready:
+        blockers.append(
+            {
+                "source": "deployment_context",
+                "detail": "deployment context is not fully converged",
+            }
+        )
+
+    for integration_id, report in resource_reports:
+        for check in report.checks:
+            if not check.ok:
+                blockers.append(
+                    {
+                        "source": f"integration:{integration_id}:{check.name}",
+                        "detail": check.detail,
+                    }
+                )
+    for integration_id, detail in resource_restore_errors:
+        blockers.append(
+            {
+                "source": f"integration:{integration_id}:cleanup",
+                "detail": detail,
+            }
+        )
+
+    if runtime_error is not None:
+        blockers.append(
+            {
+                "source": "runtime:load",
+                "detail": runtime_error,
+            }
+        )
+    for diagnostic_id, report in runtime_reports:
+        for check in report.checks:
+            if not check.ok:
+                blockers.append(
+                    {
+                        "source": f"runtime:{diagnostic_id}:{check.name}",
+                        "detail": check.detail,
+                    }
+                )
+
+    for item in doctor_results:
+        if item.is_ready:
+            continue
+        result = item.doctor
+        found = False
+        if result.error is not None:
+            blockers.append(
+                {
+                    "source": f"subject:{item.subject.subject_id}:doctor",
+                    "detail": result.error,
+                }
+            )
+            found = True
+        elif result.report is not None:
+            for check in result.report.checks:
+                if not check.ok:
+                    blockers.append(
+                        {
+                            "source": (
+                                f"subject:{item.subject.subject_id}:{check.name}"
+                            ),
+                            "detail": check.detail,
+                        }
+                    )
+                    found = True
+        if item.release_error is not None:
+            blockers.append(
+                {
+                    "source": f"subject:{item.subject.subject_id}:cleanup",
+                    "detail": item.release_error,
+                }
+            )
+            found = True
+        if not found:
+            blockers.append(
+                {
+                    "source": f"subject:{item.subject.subject_id}",
+                    "detail": "subject doctor did not reach a ready state",
+                }
+            )
+
+    resource_ready_count = sum(report.is_ready for _, report in resource_reports)
+    runtime_ready_count = sum(report.is_ready for _, report in runtime_reports)
+    runtime_total = len(runtime_reports)
+    if runtime_error is not None:
+        runtime_total += 1
+    subject_ready_count = sum(item.is_ready for item in doctor_results)
+
+    return {
+        "components": {
+            "deployment_context": {"ready": context_ready},
+            "integration_resources": {
+                "ready": resources_ready,
+                "ready_count": resource_ready_count,
+                "total": len(resource_reports),
+            },
+            "runtime_diagnostics": {
+                "ready": runtime_ready,
+                "ready_count": runtime_ready_count,
+                "total": runtime_total,
+            },
+            "subjects": {
+                "ready": subject_ready,
+                "ready_count": subject_ready_count,
+                "total": len(doctor_results),
+            },
+        },
+        "blockers": blockers,
+    }
+
+
+def _print_environment_readiness_summary(summary) -> None:
+    components = summary["components"]
+    print("readiness summary:")
+    print(
+        "  deployment context: "
+        + ("READY" if components["deployment_context"]["ready"] else "NOT READY")
+    )
+    for key, label in (
+        ("integration_resources", "integration resources"),
+        ("runtime_diagnostics", "runtime diagnostics"),
+        ("subjects", "subjects"),
+    ):
+        item = components[key]
+        state = "READY" if item["ready"] else "NOT READY"
+        if item["total"]:
+            detail = f" ({item['ready_count']}/{item['total']})"
+        else:
+            detail = " (none configured)"
+        print(f"  {label}: {state}{detail}")
+
+    blockers = summary["blockers"]
+    if blockers:
+        print("  blockers:")
+        for blocker in blockers:
+            print(f"    - {blocker['source']}: {blocker['detail']}")
 
 
 def register_environment_commands(subparsers: argparse._SubParsersAction) -> None:
@@ -236,6 +391,8 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
     resource_leases = ()
     resource_reports = ()
     resource_restore_errors = ()
+    runtime_reports = ()
+    runtime_error = None
 
     def resource_progress(integration_id, event) -> None:
         if args.json:
@@ -309,6 +466,10 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
                 package,
                 runtime_root,
             )
+            try:
+                runtime_reports = doctor_staged_experiment_runtime(package)
+            except Exception as exc:
+                runtime_error = str(exc) or exc.__class__.__name__
         doctor_results = doctor_cohort(
             repo_root,
             runtime_root,
@@ -343,11 +504,27 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
         all(report.is_ready for _, report in resource_reports)
         and not resource_restore_errors
     )
-    ready = subject_ready and context_ready and resources_ready
+    runtime_ready = (
+        runtime_error is None
+        and all(report.is_ready for _, report in runtime_reports)
+    )
+    ready = subject_ready and context_ready and resources_ready and runtime_ready
+    readiness_summary = _environment_readiness_summary(
+        context_ready=context_ready,
+        resources_ready=resources_ready,
+        runtime_ready=runtime_ready,
+        subject_ready=subject_ready,
+        resource_reports=resource_reports,
+        resource_restore_errors=resource_restore_errors,
+        runtime_reports=runtime_reports,
+        runtime_error=runtime_error,
+        doctor_results=doctor_results,
+    )
 
     if args.json:
         payload = {
             "ready": ready,
+            "readiness_summary": readiness_summary,
             "context": asdict(context),
             "subjects": [],
             "integration_resources": [
@@ -362,6 +539,15 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
                 }
                 for integration_id, report in resource_reports
             ],
+            "runtime_diagnostics": [
+                {
+                    "diagnostic_id": diagnostic_id,
+                    "ready": report.is_ready,
+                    "checks": [asdict(check) for check in report.checks],
+                }
+                for diagnostic_id, report in runtime_reports
+            ],
+            "runtime_error": runtime_error,
         }
         for item in doctor_results:
             result = item.doctor
@@ -403,6 +589,19 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
             for iid, detail in resource_restore_errors:
                 if iid == integration_id:
                     print(f"      cleanup error: {detail}")
+    if runtime_reports or runtime_error is not None:
+        print("  runtime diagnostics:")
+        if runtime_error is not None:
+            print("    runtime: NOT READY")
+            print(f"      error: {runtime_error}")
+        for diagnostic_id, report in runtime_reports:
+            print(
+                f"    {diagnostic_id}: "
+                f"{'READY' if report.is_ready else 'NOT READY'}"
+            )
+            for check in report.checks:
+                state = "READY" if check.ok else "NOT READY"
+                print(f"      {check.name}: {state} - {check.detail}")
     print("  subjects:")
     for item in doctor_results:
         subject = item.subject
@@ -459,6 +658,10 @@ def run_environment_doctor(args: argparse.Namespace) -> int:
                 "Experiment cohort context is not fully converged with the "
                 "selected package revision."
             )
+    if not ready:
+        print()
+        _print_environment_readiness_summary(readiness_summary)
+        print()
     print("READY" if ready else "NOT READY")
     return 0 if ready else 1
 

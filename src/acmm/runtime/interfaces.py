@@ -7,6 +7,27 @@ from typing import Any, Mapping, Protocol
 from acmm.evidence.interpretation import interpreted_structured_output
 
 
+
+
+@dataclass(frozen=True)
+class runtime_diagnostic_check:
+    name: str
+    ok: bool
+    detail: str
+
+
+@dataclass(frozen=True)
+class runtime_diagnostic_report:
+    checks: tuple[runtime_diagnostic_check, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "checks", tuple(self.checks))
+
+    @property
+    def is_ready(self) -> bool:
+        return all(item.ok for item in self.checks)
+
+
 @dataclass(frozen=True)
 class captured_evidence:
     id: str
@@ -72,6 +93,13 @@ class evaluation_context:
 class executed_run:
     record: dict[str, Any]
     artifacts: tuple[captured_evidence, ...]
+
+
+
+
+class runtime_diagnostic(Protocol):
+    def doctor(self) -> runtime_diagnostic_report:
+        ...
 
 
 class subject_adapter(Protocol):

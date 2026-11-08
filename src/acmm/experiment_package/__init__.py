@@ -41,6 +41,7 @@ from acmm.experiment_package.runtime import (
     compose_execution_registry,
     experiment_runtime_error,
     load_staged_experiment_runtime,
+    doctor_staged_experiment_runtime,
     loaded_experiment_runtime,
 )
 from acmm.experiment_package.store import (
@@ -99,6 +100,7 @@ __all__ = [
     "load_staged_experiment_integrations",
     "loaded_experiment_integration",
     "load_staged_experiment_runtime",
+    "doctor_staged_experiment_runtime",
     "loaded_experiment_runtime",
     "open_staged_experiment_package",
     "resolve_installed_experiment_package",
