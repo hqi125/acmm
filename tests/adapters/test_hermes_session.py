@@ -177,3 +177,43 @@ def test_parse_hermes_session_export_marks_wrapped_tool_error() -> None:
     assert parsed.failure is None
     tool_results = json.loads(parsed.evidence[2].content)
     assert tool_results[0]["is_error"] is True
+
+
+def test_parse_hermes_session_export_marks_missing_tool_dispatch_error() -> None:
+    messages = [
+        {"role": "user", "content": PROMPT},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-missing",
+                    "function": {
+                        "name": "search_code",
+                        "arguments": '{"query":"example"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-missing",
+            "name": "search_code",
+            "content": (
+                "Tool 'search_code' does not exist. Available tools: "
+                "mcp__github__search_code, search_files"
+            ),
+        },
+        {"role": "assistant", "content": "done"},
+    ]
+
+    parsed = parse_hermes_session_export(
+        _export(messages),
+        PROMPT,
+        "",
+        "session-123",
+    )
+
+    assert parsed.failure is None
+    tool_results = json.loads(parsed.evidence[2].content)
+    assert tool_results[0]["is_error"] is True

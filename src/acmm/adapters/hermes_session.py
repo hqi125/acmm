@@ -302,6 +302,14 @@ def _normalize_tool_results(
 def _tool_output_has_error(output: Any) -> bool:
     value = output
 
+    if isinstance(value, str):
+        stripped = value.strip()
+        if (
+            stripped.startswith("Tool '")
+            and " does not exist. Available tools:" in stripped
+        ):
+            return True
+
     for _ in range(2):
         if not isinstance(value, str):
             break
