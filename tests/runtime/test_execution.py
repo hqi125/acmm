@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from acmm.contract.loader import load_contract
+from acmm.integration_api import tool_result_interpretation_context
 from acmm.record.validator import (
     load_run_record_schema,
     sha256_file,
@@ -126,6 +127,48 @@ class fake_adapter:
                 },
             },
             failure=self.failure,
+        )
+
+
+class plain_text_tool_adapter(fake_adapter):
+    def execute(self, subject, scenario, environment, termination):
+        base = super().execute(subject, scenario, environment, termination)
+        evidence = list(base.evidence)
+        evidence[0] = captured_evidence(
+            id="conversation",
+            channel="conversation",
+            artifact="evidence/conversation.json",
+            content=(
+                b'{"context_id":"test","messages":['
+                b'{"role":"tool","name":"github.label_write",'
+                b'"content":"Failed to create label: Name has already been taken",'
+                b'"is_error":false,"status":"completed"}]}'
+            ),
+        )
+        evidence[2] = captured_evidence(
+            id="tool_results",
+            channel="tool_results",
+            artifact="evidence/tool_results.json",
+            content=(
+                b'[{"name":"github.label_write",'
+                b'"output":"Failed to create label: Name has already been taken",'
+                b'"is_error":false}]'
+            ),
+        )
+        return adapter_execution_result(
+            termination=base.termination,
+            evidence=tuple(evidence),
+            subject_provenance=base.subject_provenance,
+            failure=base.failure,
+        )
+
+
+class provider_error_interpreter:
+    def detects_error(self, context: tool_result_interpretation_context) -> bool:
+        return (
+            context.tool_name == "github.label_write"
+            and isinstance(context.output, str)
+            and context.output.startswith("Failed to ")
         )
 
 
@@ -511,3 +554,32 @@ def test_environment_fixture_rejects_non_record_provenance_fields() -> None:
     assert result.record["execution"]["failure"]["kind"] == "orchestration_error"
     assert "unexpected field(s): unexpected" in result.record["execution"]["failure"]["message"]
     _validate_result(contract, result)
+
+
+def test_integration_can_promote_plain_text_tool_failure_without_adapter_coupling() -> None:
+    contract = load_contract(CONTRACT_PATH)
+    planned = build_experiment_plan(contract).runs[0]
+    registry = _registry(adapter=plain_text_tool_adapter())
+    registry = execution_registry(
+        subject_adapters=registry.subject_adapters,
+        fixtures=registry.fixtures,
+        evaluators=registry.evaluators,
+        tool_result_error_interpreters=(provider_error_interpreter(),),
+    )
+
+    result = execute_planned_run(
+        contract,
+        planned,
+        sha256_file(CONTRACT_PATH),
+        registry,
+        "0.1.0",
+        now=_clock(),
+        run_id_factory=lambda: RUN_ID,
+    )
+
+    artifacts = {item.id: item for item in result.artifacts}
+    tool_results = json.loads(artifacts["tool_results"].content)
+    conversation = json.loads(artifacts["conversation"].content)
+    assert tool_results[0]["is_error"] is True
+    assert conversation["messages"][0]["is_error"] is True
+    assert conversation["messages"][0]["status"] == "failed"

@@ -296,6 +296,40 @@ def test_agent_zero_adapter_does_not_treat_null_error_field_as_failure() -> None
     assert tool_results[0]["is_error"] is False
 
 
+def test_agent_zero_adapter_leaves_plain_text_tool_payload_unclassified() -> None:
+    client = fake_agent_zero_client()
+
+    def failed_logs(api_key, context_id, *, length=1000):
+        del api_key, length
+        return {
+            "context_id": context_id,
+            "log": {
+                "items": [
+                    {
+                        "no": 1,
+                        "id": "call-1",
+                        "type": "tool",
+                        "content": "Failed to create label: Name has already been taken",
+                        "kvps": {"_tool_name": "github.label_write"},
+                        "timestamp": 2.0,
+                    }
+                ]
+            },
+        }
+
+    client.get_logs = failed_logs
+    result = agent_zero_adapter(client).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.failure is None
+    tool_results = json.loads(result.evidence[2].content)
+    assert tool_results[0]["is_error"] is False
+
+
 def test_agent_zero_adapter_marks_controlled_tool_failure() -> None:
     client = fake_agent_zero_client()
 

@@ -17,6 +17,7 @@ from acmm.experiment_package.integration import (
     experiment_integration_error,
     load_staged_experiment_integration,
     load_staged_experiment_integrations,
+    staged_tool_result_error_interpreters,
     loaded_experiment_integration,
 )
 from acmm.experiment_package.loader import (
@@ -44,6 +45,7 @@ from acmm.experiment_package.runtime import (
     doctor_staged_experiment_runtime,
     loaded_experiment_runtime,
     run_staged_experiment_apparatus_action,
+    run_staged_experiment_apparatus_cleanup,
 )
 from acmm.experiment_package.store import (
     experiment_package_store_error,
@@ -99,11 +101,13 @@ __all__ = [
     "load_experiment_package",
     "load_staged_experiment_integration",
     "load_staged_experiment_integrations",
+    "staged_tool_result_error_interpreters",
     "loaded_experiment_integration",
     "load_staged_experiment_runtime",
     "doctor_staged_experiment_runtime",
     "loaded_experiment_runtime",
     "run_staged_experiment_apparatus_action",
+    "run_staged_experiment_apparatus_cleanup",
     "open_staged_experiment_package",
     "resolve_installed_experiment_package",
     "uninstall_experiment_package",

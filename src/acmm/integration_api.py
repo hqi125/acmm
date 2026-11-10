@@ -154,6 +154,21 @@ class shared_integration_context:
         return context.resolve_secret(secret_id)
 
 
+@dataclass(frozen=True)
+class tool_result_interpretation_context:
+    subject_id: str
+    tool_name: str
+    output: Any
+
+
+class tool_result_error_interpreter(Protocol):
+    def detects_error(
+        self,
+        context: tool_result_interpretation_context,
+    ) -> bool:
+        ...
+
+
 class subject_profile_integration(Protocol):
     def compose_profile(
         self,
@@ -223,12 +238,23 @@ class subject_integration:
 class experiment_integration:
     subjects: Mapping[str, subject_integration] = field(default_factory=dict)
     shared_resource: shared_resource_integration | None = None
+    tool_result_error_interpreters: tuple[tool_result_error_interpreter, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "subjects", MappingProxyType(dict(self.subjects)))
-        if not self.subjects and self.shared_resource is None:
+        object.__setattr__(
+            self,
+            "tool_result_error_interpreters",
+            tuple(self.tool_result_error_interpreters),
+        )
+        if (
+            not self.subjects
+            and self.shared_resource is None
+            and not self.tool_result_error_interpreters
+        ):
             raise ValueError(
-                "Experiment integration must provide subjects and/or a shared resource."
+                "Experiment integration must provide subjects, a shared resource, "
+                "and/or tool-result interpretation."
             )
 
 
@@ -251,5 +277,7 @@ __all__ = [
     "subject_integration",
     "subject_integration_context",
     "subject_manager_integration",
+    "tool_result_error_interpreter",
+    "tool_result_interpretation_context",
     "subject_profile_integration",
 ]

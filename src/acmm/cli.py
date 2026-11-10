@@ -35,6 +35,8 @@ from acmm.experiment_package import (
     restore_staged_integration_resources,
     resolve_installed_experiment_package,
     run_staged_experiment_apparatus_action,
+    run_staged_experiment_apparatus_cleanup,
+    staged_tool_result_error_interpreters,
     validate_staged_package_secrets,
 )
 from acmm.experiment_package.cli import register_experiment_package_commands
@@ -111,6 +113,80 @@ from acmm_infra.runtime_lifecycle import (
     subject_runtime_lease,
 )
 
+
+class _run_help_formatter(argparse.HelpFormatter):
+    def _format_action(self, action: argparse.Action) -> str:
+        rendered = super()._format_action(action)
+        if action.dest != "experiment":
+            return rendered
+
+        apparatus_entry = argparse.Action(
+            option_strings=[],
+            dest="apparatus",
+            nargs=None,
+            help="Inspect or operate engineering apparatus commands.",
+        )
+        return rendered + super()._format_action(apparatus_entry)
+
+
+def _build_run_apparatus_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="acmm run apparatus",
+        description=(
+            "Inspect or operate engineering apparatus for the active, fully "
+            "converged Experiment Package deployment."
+        ),
+    )
+    subparsers = parser.add_subparsers(
+        dest="apparatus_command",
+        metavar="COMMAND",
+        required=True,
+    )
+
+    list_parser = subparsers.add_parser(
+        "list",
+        help="List typed apparatus capabilities and package-owned free-form actions.",
+    )
+    list_parser.set_defaults(handler=_run_apparatus_list)
+
+    cleanup_parser = subparsers.add_parser(
+        "cleanup",
+        help="Clean quarantined external resources recorded by one execution.",
+    )
+    cleanup_parser.add_argument(
+        "--execution",
+        required=True,
+        metavar="PATH",
+        help="Execution directory or experiment_execution.yaml path to clean.",
+    )
+    cleanup_parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Verify and list cleanup targets without deleting them.",
+    )
+    cleanup_parser.set_defaults(handler=_run_apparatus_cleanup)
+
+    exec_parser = subparsers.add_parser(
+        "exec",
+        help="Execute one package-owned free-form apparatus action.",
+    )
+    exec_parser.add_argument(
+        "action",
+        metavar="ACTION",
+        help="Package-owned apparatus action identifier.",
+    )
+    exec_parser.set_defaults(handler=_run_apparatus_exec)
+    return parser
+
+
+def _parse_cli_arguments(
+    argv: list[str] | None = None,
+    namespace: argparse.Namespace | None = None,
+) -> argparse.Namespace:
+    values = list(sys.argv[1:] if argv is None else argv)
+    if len(values) >= 2 and values[0] == "run" and values[1] == "apparatus":
+        return _build_run_apparatus_parser().parse_args(values[2:], namespace)
+    return _build_parser().parse_args(values, namespace)
 
 def _harness_version() -> str:
     try:
@@ -625,11 +701,22 @@ def _resolve_active_run_package() -> experiment_package:
     )
 
 
-def _run_apparatus(args: argparse.Namespace) -> int:
+def _load_active_apparatus():
+    package = _resolve_active_run_package()
+    validate_staged_package_secrets(package)
+    loaded = load_staged_experiment_runtime(package)
+    return package, loaded
+
+
+def _print_apparatus_load_error(exc: Exception) -> int:
+    print(f"ERROR: {exc}", file=sys.stderr)
+    return 2
+
+
+def _run_apparatus_list(args: argparse.Namespace) -> int:
+    del args
     try:
-        package = _resolve_active_run_package()
-        validate_staged_package_secrets(package)
-        loaded = load_staged_experiment_runtime(package)
+        package, loaded = _load_active_apparatus()
     except (
         experiment_package_store_error,
         experiment_package_error,
@@ -639,31 +726,126 @@ def _run_apparatus(args: argparse.Namespace) -> int:
         OSError,
         ValueError,
     ) as exc:
+        return _print_apparatus_load_error(exc)
+
+    print("Experiment apparatus operations:")
+    print(f"  experiment: {package.experiment_id}")
+    print(f"  package:    {package.package_sha256}")
+    print("  lifecycle:")
+    if loaded.runtime.apparatus_cleanup is None:
+        print("    cleanup: unavailable")
+    else:
+        cleanup = loaded.runtime.apparatus_cleanup
+        description = getattr(cleanup, "description", None)
+        suffix = (
+            f" - {description.strip()}"
+            if isinstance(description, str) and description.strip()
+            else ""
+        )
+        print(f"    cleanup{suffix}")
+    if not loaded.runtime.apparatus_actions:
+        print("  actions:    none")
+        return 0
+    print("  actions:")
+    for name, action in sorted(loaded.runtime.apparatus_actions.items()):
+        description = getattr(action, "description", None)
+        mutation = getattr(action, "mutates_external_state", None)
+        suffix_parts = []
+        if isinstance(description, str) and description.strip():
+            suffix_parts.append(description.strip())
+        if isinstance(mutation, bool):
+            suffix_parts.append("external mutation" if mutation else "read-only")
+        suffix = " - " + "; ".join(suffix_parts) if suffix_parts else ""
+        print(f"    {name}{suffix}")
+    return 0
+
+
+def _run_apparatus_cleanup(args: argparse.Namespace) -> int:
+    try:
+        package, loaded = _load_active_apparatus()
+    except (
+        experiment_package_store_error,
+        experiment_package_error,
+        experiment_runtime_error,
+        infrastructure_error,
+        profile_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        return _print_apparatus_load_error(exc)
+
+    if loaded.runtime.apparatus_cleanup is None:
+        print(
+            f"ERROR: Experiment Package '{package.experiment_id}' does not provide apparatus cleanup.",
+            file=sys.stderr,
+        )
+        return 2
+
+    execution_path = args.execution
+    progress_started = False
+
+    def report_cleanup_progress(event) -> None:
+        nonlocal progress_started
+        if not progress_started:
+            print("Experiment apparatus cleanup progress:")
+            print(f"  experiment: {package.experiment_id}")
+            print(f"  execution:  {Path(execution_path).expanduser()}")
+            progress_started = True
+        if event.step is not None and event.total is not None:
+            prefix = f"[{event.step}/{event.total}]"
+        elif event.step is not None:
+            prefix = f"[{event.step}]"
+        else:
+            prefix = "[-]"
+        print(f"  {prefix} {event.message}", flush=True)
+
+    try:
+        result = run_staged_experiment_apparatus_cleanup(
+            package,
+            str(Path(execution_path).expanduser().resolve()),
+            preview=bool(args.preview),
+            progress=report_cleanup_progress,
+        )
+    except (experiment_runtime_error, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    action_id = args.apparatus_action
-    if action_id is None:
-        print("Experiment apparatus actions:")
-        print(f"  experiment: {package.experiment_id}")
-        print(f"  package:    {package.package_sha256}")
-        if not loaded.runtime.apparatus_actions:
-            print("  actions:    none")
-            return 0
-        print("  actions:")
-        for name, action in sorted(loaded.runtime.apparatus_actions.items()):
-            description = getattr(action, "description", None)
-            mutation = getattr(action, "mutates_external_state", None)
-            suffix_parts = []
-            if isinstance(description, str) and description.strip():
-                suffix_parts.append(description.strip())
-            if isinstance(mutation, bool):
-                suffix_parts.append(
-                    "external mutation" if mutation else "read-only"
-                )
-            suffix = " - " + "; ".join(suffix_parts) if suffix_parts else ""
-            print(f"    {name}{suffix}")
-        return 0
+    if progress_started:
+        print()
+    print("Experiment apparatus cleanup complete:")
+    print(f"  experiment: {package.experiment_id}")
+    print(f"  package:    {package.package_sha256}")
+    print(f"  mode:       {'preview' if args.preview else 'delete'}")
+    print(f"  changed:    {'yes' if result.changed else 'no'}")
+    print(f"  detail:     {result.detail}")
+    if result.observations:
+        print("  observations:")
+        for key in sorted(result.observations):
+            print(f"    {key}: {result.observations[key]}")
+    return 0
+
+
+def _run_apparatus_exec(args: argparse.Namespace) -> int:
+    try:
+        package, loaded = _load_active_apparatus()
+    except (
+        experiment_package_store_error,
+        experiment_package_error,
+        experiment_runtime_error,
+        infrastructure_error,
+        profile_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        return _print_apparatus_load_error(exc)
+
+    action_id = args.action
+    if action_id not in loaded.runtime.apparatus_actions:
+        print(
+            f"ERROR: Experiment Package '{package.experiment_id}' does not provide apparatus action '{action_id}'.",
+            file=sys.stderr,
+        )
+        return 2
 
     progress_started = False
 
@@ -708,15 +890,6 @@ def _run_apparatus(args: argparse.Namespace) -> int:
 
 
 def _run_command(args: argparse.Namespace) -> int:
-    if args.experiment == "apparatus":
-        return _run_apparatus(args)
-    if args.apparatus_action is not None:
-        print(
-            "ERROR: A second positional argument is valid only for "
-            "'acmm run apparatus [ACTION]'.",
-            file=sys.stderr,
-        )
-        return 2
     return _run_experiment(args)
 
 
@@ -1283,6 +1456,7 @@ def _run_experiment(args: argparse.Namespace) -> int:
     registry = compose_execution_registry(
         loaded_runtime.runtime,
         subject_adapters,
+        tool_result_error_interpreters=staged_tool_result_error_interpreters(package),
         subject_configuration_overlays=overlays,
     )
 
@@ -1695,22 +1869,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run_parser = subparsers.add_parser(
         "run",
-        help="Execute one installed ACMM Experiment Package.",
+        help="Run an installed Experiment Package or enter engineering apparatus commands.",
+        formatter_class=_run_help_formatter,
     )
     run_parser.add_argument(
         "experiment",
-        help=(
-            "Installed Experiment Package selector for scientific execution, or "
-            "the reserved word 'apparatus' for the active deployment context."
-        ),
-    )
-    run_parser.add_argument(
-        "apparatus_action",
-        nargs="?",
-        help=(
-            "With 'acmm run apparatus', optionally invoke one package-owned "
-            "engineering apparatus action. Omit to list available actions."
-        ),
+        help="Installed Experiment Package selector for scientific execution.",
     )
     run_index_group = run_parser.add_mutually_exclusive_group()
     run_index_group.add_argument(
@@ -1839,6 +2003,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_parser.set_defaults(handler=_run_command)
 
+
     export_parser = subparsers.add_parser(
         "export",
         help=(
@@ -1906,9 +2071,8 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    parser = _build_parser()
-    args = parser.parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_cli_arguments(argv)
 
     try:
         return args.handler(args)

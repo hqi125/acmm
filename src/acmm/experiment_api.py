@@ -50,6 +50,7 @@ from acmm.runtime.interfaces import (
     opportunity_evaluator,
     prepared_environment,
     runtime_apparatus_action,
+    runtime_apparatus_cleanup,
     runtime_diagnostic,
     runtime_diagnostic_check,
     runtime_diagnostic_report,
@@ -164,6 +165,7 @@ class experiment_runtime:
     evaluators: Mapping[str, opportunity_evaluator] = field(default_factory=dict)
     diagnostics: Mapping[str, runtime_diagnostic] = field(default_factory=dict)
     apparatus_actions: Mapping[str, runtime_apparatus_action] = field(default_factory=dict)
+    apparatus_cleanup: runtime_apparatus_cleanup | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -221,6 +223,7 @@ __all__ = [
     "opportunity_evaluator",
     "prepared_environment",
     "runtime_apparatus_action",
+    "runtime_apparatus_cleanup",
     "runtime_diagnostic",
     "runtime_diagnostic_check",
     "runtime_diagnostic_report",

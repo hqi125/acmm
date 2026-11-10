@@ -689,8 +689,10 @@ default and requires an explicit installed-package selector:
 
 ```text
 acmm package apply <experiment-id>
-acmm run apparatus                     # list package-owned engineering apparatus actions
-acmm run apparatus <action>            # invoke one action in the converged run context
+acmm run apparatus list                # list package-owned engineering apparatus operations
+acmm run apparatus exec <action>       # invoke one free-form package action
+acmm run apparatus cleanup --execution <execution-dir>
+                                       # clean package-owned quarantined resources
 acmm run <experiment-id> --preview
 acmm run <experiment-id>
 ```
@@ -712,19 +714,26 @@ all selected runtimes before the execution session is created. Neither option we
 readiness checks.
 
 Package-owned **engineering apparatus actions** are explicit and never run as a side effect of `apply`,
-`doctor`, or package installation. They live under the execution family because they may touch the external
-experimental world. `acmm run apparatus` resolves the one fully converged Experiment Package deployment and
-lists its package-defined actions; `acmm run apparatus <action>` invokes one without repeating the experiment
-selector. Long-running actions may publish structured progress events, which the CLI renders as immediate
-`[step/total]` status lines. For example:
+`doctor`, or package installation. They live under an independent `acmm run apparatus` command family because
+they may touch the external experimental world. `acmm run apparatus list` resolves the one fully converged
+Experiment Package deployment and lists its package-defined operations; `acmm run apparatus exec <action>`
+invokes one without repeating the experiment selector. The bare `acmm run apparatus` command is intentionally
+invalid so every apparatus operation has an explicit positional command. Each apparatus command owns its own
+arguments: for example, `--preview` under `cleanup` is unrelated to scientific `acmm run <experiment> --preview`.
+Long-running actions may publish structured progress events, which the CLI renders as immediate `[step/total]`
+status lines. For example:
 
 ```text
-acmm run apparatus
-acmm run apparatus initialize
+acmm run apparatus list
+acmm run apparatus exec initialize
+acmm run apparatus cleanup --execution results/<experiment-id>/<execution-id> --preview
+acmm run apparatus cleanup --execution results/<experiment-id>/<execution-id>
 ```
 
 Engineering apparatus actions are intentionally distinct from the typed scientific runtime lifecycle. Packages
-may implement the fixed lifecycle hooks `session_initialize`, `run_prepare`, `run_observe`, `run_finalize`,
+may additionally expose typed apparatus cleanup for execution-recorded quarantines; Core supplies the execution
+path while the package owns external-system identity checks and deletion semantics. Packages may implement the fixed
+lifecycle hooks `session_initialize`, `run_prepare`, `run_observe`, `run_finalize`,
 and `session_finalize`, but operators do not invoke those hooks independently. Core owns their ordering. In
 particular, `run_finalize` is invoked only after the run record and evidence artifacts have been durably
 persisted; a package may therefore perform destructive cleanup there without deleting the only copy of failed

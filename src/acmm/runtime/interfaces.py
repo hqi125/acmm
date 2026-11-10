@@ -154,6 +154,27 @@ class progressive_runtime_apparatus_action(Protocol):
         ...
 
 
+class runtime_apparatus_cleanup(Protocol):
+    def cleanup(
+        self,
+        execution_path: str,
+        *,
+        preview: bool = False,
+    ) -> apparatus_action_result:
+        ...
+
+
+class progressive_runtime_apparatus_cleanup(Protocol):
+    def cleanup_with_progress(
+        self,
+        execution_path: str,
+        report: ApparatusProgressReporter,
+        *,
+        preview: bool = False,
+    ) -> apparatus_action_result:
+        ...
+
+
 class runtime_diagnostic(Protocol):
     def doctor(self) -> runtime_diagnostic_report:
         ...

@@ -66,6 +66,25 @@ class initializer:
         return self.run()
 
 
+class cleaner:
+    description = "Clean test quarantines."
+
+    def cleanup(self, execution_path, *, preview=False):
+        return apparatus_action_result(
+            changed=not preview,
+            detail="previewed test cleanup" if preview else "cleaned test quarantine",
+            observations={"execution_path": execution_path},
+        )
+
+    def cleanup_with_progress(self, execution_path, report, *, preview=False):
+        report(apparatus_action_progress(
+            message="checking quarantine records",
+            step=1,
+            total=1,
+        ))
+        return self.cleanup(execution_path, preview=preview)
+
+
 def build_runtime(context):
     del context
     return experiment_runtime(
@@ -82,6 +101,7 @@ def build_runtime(context):
             "fixture_value_addition": evaluator(),
         },
         apparatus_actions={"initialize": initializer()},
+        apparatus_cleanup=cleaner(),
     )
 '''
 
@@ -172,15 +192,14 @@ def test_run_apparatus_lists_and_runs_active_package_action(
         contract_schema_path=CONTRACT_SCHEMA,
     )
     monkeypatch.setattr(cli_module, "_resolve_active_run_package", lambda: package)
-    parser = _build_parser()
-
-    list_args = parser.parse_args(["run", "apparatus"])
+    list_args = cli_module._parse_cli_arguments(["run", "apparatus", "list"])
     assert list_args.handler(list_args) == 0
     listed = capsys.readouterr().out
-    assert "Experiment apparatus actions:" in listed
+    assert "Experiment apparatus operations:" in listed
+    assert "cleanup - Clean test quarantines." in listed
     assert "initialize" in listed
 
-    args = parser.parse_args(["run", "apparatus", "initialize"])
+    args = cli_module._parse_cli_arguments(["run", "apparatus", "exec", "initialize"])
     assert args.handler(args) == 0
 
     output = capsys.readouterr().out
@@ -193,8 +212,99 @@ def test_run_apparatus_lists_and_runs_active_package_action(
     assert "detail:     initialized test apparatus" in output
     assert "fixture_version: test-v1" in output
 
+    execution_dir = tmp_path / "execution-test"
+    cleanup_args = cli_module._parse_cli_arguments(
+        [
+            "run",
+            "apparatus",
+            "cleanup",
+            "--execution",
+            str(execution_dir),
+            "--preview",
+        ]
+    )
+    assert cleanup_args.handler(cleanup_args) == 0
+    cleanup_output = capsys.readouterr().out
+    assert "Experiment apparatus cleanup progress:" in cleanup_output
+    assert "[1/1] checking quarantine records" in cleanup_output
+    assert "mode:       preview" in cleanup_output
+    assert "changed:    no" in cleanup_output
+    assert "detail:     previewed test cleanup" in cleanup_output
 
-def test_run_apparatus_rejects_unknown_action(
+
+def test_top_level_help_builds_with_apparatus_enabled(capsys) -> None:
+    with pytest.raises(SystemExit) as top_help:
+        cli_module._parse_cli_arguments(["-h"])
+    assert top_help.value.code == 0
+    output = capsys.readouterr().out
+    assert "{env,package,secret,run,export,validate-record}" in output
+    assert "run" in output
+
+    scientific = cli_module._parse_cli_arguments(
+        ["run", "example_package", "--preview"]
+    )
+    assert scientific.experiment == "example_package"
+    assert scientific.preview is True
+    assert not hasattr(scientific, "apparatus")
+
+
+def test_run_apparatus_help_is_scoped_by_command(capsys) -> None:
+    with pytest.raises(SystemExit) as run_help:
+        cli_module._parse_cli_arguments(["run", "-h"])
+    assert run_help.value.code == 0
+    run_output = capsys.readouterr().out
+    assert "experiment" in run_output
+    assert "apparatus" in run_output
+    assert "Installed Experiment Package selector for scientific" in run_output
+    assert "Inspect or operate engineering apparatus commands." in run_output
+    assert "--subject" in run_output
+    assert "--preview" in run_output
+    assert "--execution" not in run_output
+
+    with pytest.raises(SystemExit) as apparatus_help:
+        cli_module._parse_cli_arguments(["run", "apparatus", "-h"])
+    assert apparatus_help.value.code == 0
+    apparatus_output = capsys.readouterr().out
+    assert "usage: acmm run apparatus" in apparatus_output
+    assert "list" in apparatus_output
+    assert "cleanup" in apparatus_output
+    assert "exec" in apparatus_output
+    assert "--execution" not in apparatus_output
+    assert "--preview" not in apparatus_output
+
+    with pytest.raises(SystemExit) as cleanup_help:
+        cli_module._parse_cli_arguments(["run", "apparatus", "cleanup", "-h"])
+    assert cleanup_help.value.code == 0
+    cleanup_output = capsys.readouterr().out
+    assert "--execution PATH" in cleanup_output
+    assert "--preview" in cleanup_output
+
+    with pytest.raises(SystemExit) as exec_help:
+        cli_module._parse_cli_arguments(["run", "apparatus", "exec", "-h"])
+    assert exec_help.value.code == 0
+    exec_output = capsys.readouterr().out
+    assert "ACTION" in exec_output
+    assert "--preview" not in exec_output
+    assert "--execution" not in exec_output
+
+def test_run_apparatus_requires_explicit_command(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli_module._parse_cli_arguments(["run", "apparatus"])
+    assert exc_info.value.code == 2
+    error = capsys.readouterr().err
+    assert "the following arguments are required: COMMAND" in error
+
+
+def test_run_apparatus_rejects_unknown_command(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli_module._parse_cli_arguments(["run", "apparatus", "missing"])
+    assert exc_info.value.code == 2
+    error = capsys.readouterr().err
+    assert "invalid choice: 'missing'" in error
+    assert "list, cleanup, exec" in error
+
+
+def test_run_apparatus_exec_rejects_unknown_action(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -209,9 +319,8 @@ def test_run_apparatus_rejects_unknown_action(
         contract_schema_path=CONTRACT_SCHEMA,
     )
     monkeypatch.setattr(cli_module, "_resolve_active_run_package", lambda: package)
-    parser = _build_parser()
 
-    args = parser.parse_args(["run", "apparatus", "missing"])
+    args = cli_module._parse_cli_arguments(["run", "apparatus", "exec", "missing"])
     assert args.handler(args) == 2
     assert "does not provide apparatus action 'missing'" in capsys.readouterr().err
 

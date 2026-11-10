@@ -3,11 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import json
 import re
 from typing import Any, Callable
 import uuid
 
 from acmm.evidence.interpretation import interpretation_detail, interpret_scenario_evidence
+from acmm.integration_api import (
+    tool_result_error_interpreter,
+    tool_result_interpretation_context,
+)
 from acmm.runtime.interfaces import (
     adapter_execution_result,
     captured_evidence,
@@ -83,7 +88,12 @@ def execute_planned_run(
             contract["run_protocol"]["termination"],
         )
 
-        captured += adapter_result.evidence
+        adapter_evidence = _apply_tool_result_error_interpreters(
+            adapter_result.evidence,
+            subject_id=planned.subject_id,
+            interpreters=registry.tool_result_error_interpreters,
+        )
+        captured += adapter_evidence
         observed_termination = adapter_result.termination
 
         if adapter_result.subject_provenance is not None:
@@ -274,6 +284,115 @@ def execute_planned_run(
             scenario,
             contract["run_protocol"]["reset"],
         )
+
+
+def _apply_tool_result_error_interpreters(
+    evidence: tuple[captured_evidence, ...],
+    *,
+    subject_id: str,
+    interpreters: tuple[tool_result_error_interpreter, ...],
+) -> tuple[captured_evidence, ...]:
+    if not interpreters:
+        return evidence
+
+    realized: list[captured_evidence] = []
+    for artifact in evidence:
+        if artifact.channel not in {"tool_results", "conversation"}:
+            realized.append(artifact)
+            continue
+
+        try:
+            value = json.loads(artifact.content.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            realized.append(artifact)
+            continue
+
+        if artifact.channel == "conversation":
+            if isinstance(value, list):
+                records = value
+            elif isinstance(value, dict) and isinstance(value.get("messages"), list):
+                records = value["messages"]
+            else:
+                realized.append(artifact)
+                continue
+        elif isinstance(value, list):
+            records = value
+        else:
+            realized.append(artifact)
+            continue
+
+        changed = False
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+
+            if artifact.channel == "conversation":
+                if item.get("role") != "tool":
+                    continue
+                tool_name = item.get("name")
+                output = item.get("content")
+            else:
+                tool_name = item.get("name")
+                output = item.get("output")
+
+            if not isinstance(tool_name, str) or not tool_name:
+                continue
+
+            current_is_error = item.get("is_error") is True
+            if current_is_error:
+                continue
+
+            context = tool_result_interpretation_context(
+                subject_id=subject_id,
+                tool_name=tool_name,
+                output=output,
+            )
+            if not _integration_detects_tool_result_error(interpreters, context):
+                continue
+
+            item["is_error"] = True
+            if artifact.channel == "conversation":
+                item["status"] = "failed"
+            changed = True
+
+        if not changed:
+            realized.append(artifact)
+            continue
+
+        content = (
+            json.dumps(
+                value,
+                ensure_ascii=True,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+        realized.append(
+            captured_evidence(
+                id=artifact.id,
+                channel=artifact.channel,
+                artifact=artifact.artifact,
+                content=content,
+            )
+        )
+
+    return tuple(realized)
+
+
+def _integration_detects_tool_result_error(
+    interpreters: tuple[tool_result_error_interpreter, ...],
+    context: tool_result_interpretation_context,
+) -> bool:
+    for interpreter in interpreters:
+        detected = interpreter.detects_error(context)
+        if not isinstance(detected, bool):
+            raise TypeError(
+                "Integration tool-result error interpreter must return bool."
+            )
+        if detected:
+            return True
+    return False
 
 
 def _attach_deferred_finalization(

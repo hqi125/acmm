@@ -95,8 +95,8 @@ Typical workflow:
 acmm package validate <package-directory>
 acmm package install <package-directory>
 acmm package apply <selector>
-acmm run apparatus
-acmm run apparatus <action>
+acmm run apparatus list
+acmm run apparatus exec <action>
 acmm run <selector> --preview
 acmm run <selector>
 acmm package install <package-directory> --upgrade
@@ -108,12 +108,18 @@ acmm package purge
 acmm package purge --detach-all
 ```
 
-`acmm run apparatus` is the operator/debug surface for package-defined apparatus actions that may touch the
-external experiment world. It resolves the currently fully converged Experiment Package context, lists the
-available package-defined actions when no action is supplied, and invokes one named action without requiring
-the experiment selector to be repeated. Core does not infer or auto-run these free-form actions during
-install/apply/doctor. Actions may optionally publish structured progress events; the CLI renders them
+`acmm run apparatus` is an independent nested operator/debug command family for package apparatus that may touch
+the external experiment world. The bare family command is invalid; operators use `acmm run apparatus list` to
+inspect package-defined operations and `acmm run apparatus exec <action>` to invoke one named free-form action
+without repeating the experiment selector. Command-specific arguments stay on their owning subcommand rather than
+being flattened into either `acmm run` or the apparatus root. Core does not infer or auto-run free-form actions
+during install/apply/doctor. Actions may optionally publish structured progress events; the CLI renders them
 immediately as `[step/total]` messages while preserving the package-owned action/result contract.
+
+A runtime may also expose typed apparatus cleanup. `acmm run apparatus cleanup --execution <path>` passes one
+persisted execution directory to the package cleanup implementation; `--preview` requests verification without
+mutation. Core owns only the generic command/result contract. The package must derive its quarantine targets from
+the execution evidence and enforce external-system identity/safety checks before deletion.
 
 Free-form apparatus actions are separate from the optional typed execution lifecycle. A package lifecycle may
 implement `session_initialize`, `run_prepare`, `run_observe`, `run_finalize`, and `session_finalize`. Core
@@ -166,6 +172,14 @@ Capability integrations configure how the subject receives a capability; adapter
 for collecting normalized conversation, native tool-call/tool-result, and final-response evidence.
 Raw/native representations should be retained whenever the host exposes them. Normalization exists to
 make cross-subject evidence analyzable, not to repair subject behavior.
+
+The ownership boundary for tool-result failure semantics follows provenance. Core adapters may interpret
+stable agent/runtime envelope semantics such as structured `ok`/`error` fields or terminal exit status.
+An integration may additionally expose a tool-result error interpreter when its external provider has
+provider-specific payload semantics that Core should not know. Integration interpretation is monotonic:
+it may promote an otherwise non-error normalized result to an error, but it cannot clear an error already
+established by the adapter. This keeps provider phrases and wire quirks out of Core while preserving one
+normalized evidence surface for evaluators.
 
 Future trusted pre/post-state observation can plug into the same generic package/runtime boundary
 without making Core aware of the concrete external service.

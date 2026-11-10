@@ -20,6 +20,7 @@ from acmm.experiment_api import (
     runtime_diagnostic_report,
 )
 from acmm.experiment_package.model import experiment_package
+from acmm.integration_api import tool_result_error_interpreter
 from acmm.experiment_package.snapshot import (
     staged_package_verification_error,
     verify_staged_component_snapshot,
@@ -189,10 +190,48 @@ def run_staged_experiment_apparatus_action(
         )
     return result
 
+def run_staged_experiment_apparatus_cleanup(
+    package: experiment_package,
+    execution_path: str,
+    *,
+    preview: bool = False,
+    progress: Callable[[apparatus_action_progress], None] | None = None,
+) -> apparatus_action_result:
+    loaded = load_staged_experiment_runtime(package)
+    cleanup = loaded.runtime.apparatus_cleanup
+    if cleanup is None:
+        raise experiment_runtime_error(
+            f"Experiment Package '{package.experiment_id}' does not provide "
+            "apparatus cleanup support."
+        )
+
+    try:
+        progressive = getattr(cleanup, "cleanup_with_progress", None)
+        if progress is not None and callable(progressive):
+            result = progressive(
+                execution_path,
+                progress,
+                preview=preview,
+            )
+        else:
+            result = cleanup.cleanup(execution_path, preview=preview)
+    except Exception as exc:
+        raise experiment_runtime_error(
+            f"Experiment apparatus cleanup failed: {exc}"
+        ) from exc
+
+    if not isinstance(result, apparatus_action_result):
+        raise experiment_runtime_error(
+            "Experiment apparatus cleanup must return apparatus_action_result."
+        )
+    return result
+
+
 def compose_execution_registry(
     runtime: experiment_runtime,
     subject_adapters: Mapping[str, subject_adapter],
     *,
+    tool_result_error_interpreters: tuple[tool_result_error_interpreter, ...] = (),
     subject_configuration_overlays: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> execution_registry:
     overlays = {
@@ -205,6 +244,7 @@ def compose_execution_registry(
         lifecycle=runtime.lifecycle,
         fixtures=dict(runtime.fixtures),
         evaluators=dict(runtime.evaluators),
+        tool_result_error_interpreters=tuple(tool_result_error_interpreters),
         subject_configuration_overlays=overlays,
     )
 
@@ -336,6 +376,12 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
                     "Runtime execution lifecycle does not provide callable "
                     f"{method_name}()."
                 )
+
+    if runtime.apparatus_cleanup is not None:
+        if not callable(getattr(runtime.apparatus_cleanup, "cleanup", None)):
+            raise experiment_runtime_error(
+                "Runtime apparatus cleanup does not provide callable cleanup()."
+            )
 
     for fixture_id, fixture in runtime.fixtures.items():
         if not callable(getattr(fixture, "prepare", None)):

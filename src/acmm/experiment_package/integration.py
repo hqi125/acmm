@@ -22,6 +22,7 @@ from acmm.integration_api import (
     experiment_integration,
     experiment_integration_context,
     subject_integration_context,
+    tool_result_error_interpreter,
 )
 
 
@@ -217,6 +218,19 @@ def _resolved_integrations(
     return loaded
 
 
+def staged_tool_result_error_interpreters(
+    package: experiment_package,
+    *,
+    loaded_integrations: Iterable[loaded_experiment_integration] | None = None,
+) -> tuple[tool_result_error_interpreter, ...]:
+    loaded = _resolved_integrations(package, loaded_integrations)
+    return tuple(
+        interpreter
+        for item in loaded
+        for interpreter in item.integration.tool_result_error_interpreters
+    )
+
+
 def _subject_context(
     package: experiment_package,
     component: experiment_integration_component,
@@ -345,6 +359,13 @@ def _validate_integration(integration: experiment_integration) -> None:
                 raise experiment_integration_error(
                     f"Integration shared resource does not provide callable {method}()."
                 )
+
+    for interpreter in integration.tool_result_error_interpreters:
+        if not callable(getattr(interpreter, "detects_error", None)):
+            raise experiment_integration_error(
+                "Integration tool-result error interpreter does not provide "
+                "callable detects_error()."
+            )
 
     for subject, binding in integration.subjects.items():
         if (
