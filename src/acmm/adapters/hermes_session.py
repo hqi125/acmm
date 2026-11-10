@@ -282,6 +282,12 @@ def _normalize_tool_results(
         if not is_error:
             is_error = _tool_output_has_error(output)
 
+        is_error = _normalize_terminal_process_error(
+            name=name,
+            output=output,
+            default=is_error,
+        )
+
         item = {
             "id": call_id,
             "name": name,
@@ -297,6 +303,48 @@ def _normalize_tool_results(
 
     return normalized
 
+
+
+def _normalize_terminal_process_error(
+    *,
+    name: str,
+    output: Any,
+    default: bool,
+) -> bool:
+    value = _decode_tool_output_object(output)
+    if not isinstance(value, dict):
+        return default
+
+    if name == "terminal":
+        promoted = value.get("promoted_from_foreground")
+        if (
+            isinstance(promoted, str)
+            and promoted
+            and value.get("error") is None
+            and value.get("exit_code") == 0
+            and isinstance(value.get("session_id"), str)
+        ):
+            return False
+
+    if name == "process_manage":
+        exit_code = value.get("exit_code")
+        if value.get("status") == "exited" and isinstance(exit_code, int):
+            return exit_code != 0
+
+    return default
+
+
+def _decode_tool_output_object(output: Any) -> dict[str, Any] | None:
+    value = output
+    for _ in range(2):
+        if not isinstance(value, str):
+            break
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = _embedded_json_object(value)
+            break
+    return value if isinstance(value, dict) else None
 
 
 def _tool_output_has_error(output: Any) -> bool:

@@ -217,3 +217,98 @@ def test_parse_hermes_session_export_marks_missing_tool_dispatch_error() -> None
     assert parsed.failure is None
     tool_results = json.loads(parsed.evidence[2].content)
     assert tool_results[0]["is_error"] is True
+
+
+def test_parse_hermes_session_export_treats_background_promotion_as_non_error() -> None:
+    messages = [
+        {"role": "user", "content": PROMPT},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-background",
+                    "function": {
+                        "name": "terminal",
+                        "arguments": '{"command":"sleep 1","timeout":100000}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-background",
+            "name": "terminal",
+            "is_error": True,
+            "content": json.dumps(
+                {
+                    "output": "Background process started",
+                    "session_id": "proc-1",
+                    "pid": 42,
+                    "exit_code": 0,
+                    "error": None,
+                    "notify_on_complete": True,
+                    "promoted_from_foreground": (
+                        "Requested foreground timeout exceeds the cap."
+                    ),
+                }
+            ),
+        },
+        {"role": "assistant", "content": "done"},
+    ]
+
+    parsed = parse_hermes_session_export(
+        _export(messages),
+        PROMPT,
+        "",
+        "session-123",
+    )
+
+    assert parsed.failure is None
+    tool_results = json.loads(parsed.evidence[2].content)
+    assert tool_results[0]["is_error"] is False
+
+
+def test_parse_hermes_session_export_marks_failed_background_process_exit() -> None:
+    messages = [
+        {"role": "user", "content": PROMPT},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-poll",
+                    "function": {
+                        "name": "process_manage",
+                        "arguments": '{"action":"poll","session_id":"proc-1"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-poll",
+            "name": "process_manage",
+            "is_error": False,
+            "content": json.dumps(
+                {
+                    "session_id": "proc-1",
+                    "status": "exited",
+                    "exit_code": 128,
+                    "output_preview": "fatal: not a git repository",
+                }
+            ),
+        },
+        {"role": "assistant", "content": "done"},
+    ]
+
+    parsed = parse_hermes_session_export(
+        _export(messages),
+        PROMPT,
+        "",
+        "session-123",
+    )
+
+    assert parsed.failure is None
+    tool_results = json.loads(parsed.evidence[2].content)
+    assert tool_results[0]["is_error"] is True
