@@ -8,10 +8,6 @@ import sys
 from acmm.experiment_package.loader import experiment_package_error, load_experiment_package
 from acmm.experiment_package.model import experiment_package
 from acmm.experiment_package.staging import install_experiment_package
-from acmm.experiment_package.runtime import (
-    experiment_runtime_error,
-    run_staged_experiment_apparatus_action,
-)
 from acmm.experiment_package.resources import (
     apply_staged_integration_resources,
     remove_staged_integration_resources,
@@ -99,23 +95,6 @@ def register_experiment_package_commands(
         help="Maximum provisioning timeout passed to each subject manager.",
     )
     apply_parser.set_defaults(handler=run_package_apply)
-
-    apparatus_parser = package_subparsers.add_parser(
-        "apparatus",
-        help="Run one trusted package-owned apparatus lifecycle action.",
-    )
-    apparatus_parser.add_argument(
-        "selector",
-        help=(
-            "Installed package selector: EXPERIMENT_ID when unique, or "
-            "EXPERIMENT_ID@SHA_PREFIX when multiple revisions are installed."
-        ),
-    )
-    apparatus_parser.add_argument(
-        "action",
-        help="Package-owned apparatus action identifier, for example 'initialize'.",
-    )
-    apparatus_parser.set_defaults(handler=run_package_apparatus)
 
     detach_parser = package_subparsers.add_parser(
         "detach",
@@ -394,62 +373,6 @@ def _package_upgrade_progress(index, total, subject, payload) -> None:
         print("  provisioning:")
         return
     print(f"    {payload}", flush=True)
-
-
-def run_package_apparatus(args: argparse.Namespace) -> int:
-    runtime_root = default_runtime_root().expanduser().resolve()
-    try:
-        package = resolve_installed_experiment_package(
-            runtime_root,
-            args.selector,
-            contract_schema_path=None,
-        )
-        validate_staged_package_secrets(package)
-        progress_started = False
-
-        def report_progress(event) -> None:
-            nonlocal progress_started
-            if not progress_started:
-                print("Experiment Package apparatus progress:")
-                print(f"  experiment: {package.experiment_id}")
-                print(f"  action:     {args.action}")
-                progress_started = True
-            if event.step is not None and event.total is not None:
-                prefix = f"[{event.step}/{event.total}]"
-            elif event.step is not None:
-                prefix = f"[{event.step}]"
-            else:
-                prefix = "[-]"
-            print(f"  {prefix} {event.message}", flush=True)
-
-        result = run_staged_experiment_apparatus_action(
-            package,
-            args.action,
-            progress=report_progress,
-        )
-    except (
-        experiment_package_store_error,
-        experiment_package_error,
-        experiment_runtime_error,
-        OSError,
-        ValueError,
-    ) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 2
-
-    if progress_started:
-        print()
-    print("Experiment Package apparatus action complete:")
-    print(f"  experiment: {package.experiment_id}")
-    print(f"  package:    {package.package_sha256}")
-    print(f"  action:     {args.action}")
-    print(f"  changed:    {'yes' if result.changed else 'no'}")
-    print(f"  detail:     {result.detail}")
-    if result.observations:
-        print("  observations:")
-        for key in sorted(result.observations):
-            print(f"    {key}: {result.observations[key]}")
-    return 0
 
 
 def run_package_apply(args: argparse.Namespace) -> int:

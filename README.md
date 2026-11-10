@@ -689,7 +689,8 @@ default and requires an explicit installed-package selector:
 
 ```text
 acmm package apply <experiment-id>
-acmm package apparatus <experiment-id> <action>  # only when the package exposes trusted apparatus actions
+acmm run apparatus                     # list package-owned engineering apparatus actions
+acmm run apparatus <action>            # invoke one action in the converged run context
 acmm run <experiment-id> --preview
 acmm run <experiment-id>
 ```
@@ -710,14 +711,24 @@ retried up to `--startup-max-attempts` with progressive cooldowns after transien
 all selected runtimes before the execution session is created. Neither option weakens the final
 readiness checks.
 
-Package-owned trusted apparatus lifecycle actions are explicit and never run as a side effect of `apply`,
-`doctor`, or package installation. Core only dispatches the named action; the Experiment Package owns its
-semantics and safety checks. Long-running package actions may publish structured progress events, which the
-CLI renders as immediate `[step/total]` status lines. For example, a package may expose:
+Package-owned **engineering apparatus actions** are explicit and never run as a side effect of `apply`,
+`doctor`, or package installation. They live under the execution family because they may touch the external
+experimental world. `acmm run apparatus` resolves the one fully converged Experiment Package deployment and
+lists its package-defined actions; `acmm run apparatus <action>` invokes one without repeating the experiment
+selector. Long-running actions may publish structured progress events, which the CLI renders as immediate
+`[step/total]` status lines. For example:
 
 ```text
-acmm package apparatus <experiment-id> initialize
+acmm run apparatus
+acmm run apparatus initialize
 ```
+
+Engineering apparatus actions are intentionally distinct from the typed scientific runtime lifecycle. Packages
+may implement the fixed lifecycle hooks `session_initialize`, `run_prepare`, `run_observe`, `run_finalize`,
+and `session_finalize`, but operators do not invoke those hooks independently. Core owns their ordering. In
+particular, `run_finalize` is invoked only after the run record and evidence artifacts have been durably
+persisted; a package may therefore perform destructive cleanup there without deleting the only copy of failed
+or unpersisted evidence. Packages without a typed lifecycle continue to use the legacy fixture lifecycle.
 
 Package detachment and removal are explicit:
 

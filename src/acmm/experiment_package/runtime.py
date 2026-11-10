@@ -202,6 +202,7 @@ def compose_execution_registry(
 
     return execution_registry(
         subject_adapters=dict(subject_adapters),
+        lifecycle=runtime.lifecycle,
         fixtures=dict(runtime.fixtures),
         evaluators=dict(runtime.evaluators),
         subject_configuration_overlays=overlays,
@@ -321,6 +322,20 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
         raise experiment_runtime_error(
             "Runtime evaluator declarations must exactly match runtime.capabilities.evaluators."
         )
+
+    if runtime.lifecycle is not None:
+        for method_name in (
+            "session_initialize",
+            "run_prepare",
+            "run_observe",
+            "run_finalize",
+            "session_finalize",
+        ):
+            if not callable(getattr(runtime.lifecycle, method_name, None)):
+                raise experiment_runtime_error(
+                    "Runtime execution lifecycle does not provide callable "
+                    f"{method_name}()."
+                )
 
     for fixture_id, fixture in runtime.fixtures.items():
         if not callable(getattr(fixture, "prepare", None)):

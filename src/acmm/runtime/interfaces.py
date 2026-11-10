@@ -90,9 +90,19 @@ class evaluation_context:
 
 
 @dataclass(frozen=True)
+class deferred_run_finalizer:
+    callback: Callable[[runtime_run_finalization], Mapping[str, Any] | None]
+
+
+@dataclass(frozen=True)
 class executed_run:
     record: dict[str, Any]
     artifacts: tuple[captured_evidence, ...]
+    finalizer: deferred_run_finalizer | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
 
 
@@ -146,6 +156,84 @@ class progressive_runtime_apparatus_action(Protocol):
 
 class runtime_diagnostic(Protocol):
     def doctor(self) -> runtime_diagnostic_report:
+        ...
+
+
+
+
+@dataclass(frozen=True)
+class runtime_session_context:
+    experiment_id: str
+    execution_id: str
+    selected_run_indices: tuple[int, ...]
+    session_dir: str
+
+
+@dataclass(frozen=True)
+class runtime_run_context:
+    execution_id: str
+    run_index: int
+    subject_id: str
+    scenario_id: str
+    repetition: int
+    attempt: int
+
+
+@dataclass(frozen=True)
+class runtime_run_finalization:
+    persisted: bool
+    validity: str | None
+    termination: str | None
+    result_path: str | None = None
+    interrupted: bool = False
+
+
+@dataclass(frozen=True)
+class runtime_session_finalization:
+    completed: bool
+    interrupted: bool
+    detail: str | None = None
+
+
+class runtime_execution_lifecycle(Protocol):
+    def session_initialize(self, context: runtime_session_context) -> Any:
+        ...
+
+    def run_prepare(
+        self,
+        session_handle: Any,
+        context: runtime_run_context,
+        scenario: dict[str, Any],
+        reset: dict[str, Any],
+    ) -> prepared_environment:
+        ...
+
+    def run_observe(
+        self,
+        session_handle: Any,
+        context: runtime_run_context,
+        scenario: dict[str, Any],
+        handle: Any,
+    ) -> observed_environment:
+        ...
+
+    def run_finalize(
+        self,
+        session_handle: Any,
+        context: runtime_run_context,
+        scenario: dict[str, Any],
+        handle: Any,
+        reset: dict[str, Any],
+        outcome: runtime_run_finalization,
+    ) -> Mapping[str, Any] | None:
+        ...
+
+    def session_finalize(
+        self,
+        session_handle: Any,
+        context: runtime_session_context,
+        outcome: runtime_session_finalization,
+    ) -> Mapping[str, Any] | None:
         ...
 
 

@@ -12,9 +12,15 @@ import uuid
 
 import yaml
 
-from acmm.runtime.execution import execute_planned_run
+from acmm.runtime.execution import execute_planned_run, finalize_executed_run
 from acmm.runtime.execution_manifest import EXPERIMENT_EXECUTION_SCHEMA_VERSION
 from acmm.runtime.planner import build_experiment_plan, planned_run
+from acmm.runtime.interfaces import (
+    runtime_run_context,
+    runtime_run_finalization,
+    runtime_session_context,
+    runtime_session_finalization,
+)
 from acmm.runtime.provider_usage import execution_provider_usage_monitor
 from acmm.runtime.registry import execution_registry
 from acmm.runtime.result_store import persist_executed_run_to
@@ -217,6 +223,18 @@ def execute_experiment(
         _remove_empty_session(session_dir)
         raise
 
+    lifecycle_session_context = runtime_session_context(
+        experiment_id=experiment_id,
+        execution_id=execution_id,
+        selected_run_indices=selected_run_indices,
+        session_dir=str(session_dir),
+    )
+    lifecycle_session_handle = None
+    if registry.lifecycle is not None:
+        lifecycle_session_handle = registry.lifecycle.session_initialize(
+            lifecycle_session_context
+        )
+
     provider_usage_started = _begin_provider_usage_monitor(
         provider_usage_monitor,
         report,
@@ -252,6 +270,14 @@ def execute_experiment(
                     f"attempt={attempt_number}/{max_attempts_per_run}."
                 )
 
+                lifecycle_run_context = runtime_run_context(
+                    execution_id=execution_id,
+                    run_index=planned.run_index,
+                    subject_id=planned.subject_id,
+                    scenario_id=planned.scenario_id,
+                    repetition=planned.repetition,
+                    attempt=attempt_number,
+                )
                 executed = execute_planned_run(
                     contract=contract,
                     planned=planned,
@@ -260,14 +286,56 @@ def execute_experiment(
                     harness_version=harness_version,
                     now=clock,
                     run_id_factory=make_run_id,
-                )
-
-                result_path = persist_executed_run_to(
-                    executed,
-                    runs_dir,
+                    lifecycle_session_handle=lifecycle_session_handle,
+                    lifecycle_context=lifecycle_run_context,
                 )
 
                 execution = executed.record["execution"]
+                try:
+                    result_path = persist_executed_run_to(
+                        executed,
+                        runs_dir,
+                    )
+                except Exception:
+                    finalize_executed_run(
+                        executed,
+                        runtime_run_finalization(
+                            persisted=False,
+                            validity=execution.get("validity"),
+                            termination=execution.get("termination"),
+                        ),
+                    )
+                    raise
+
+                try:
+                    finalization = finalize_executed_run(
+                        executed,
+                        runtime_run_finalization(
+                            persisted=True,
+                            validity=execution.get("validity"),
+                            termination=execution.get("termination"),
+                            result_path=str(result_path),
+                        ),
+                    )
+                except Exception as exc:
+                    _write_run_finalization(
+                        result_path,
+                        {
+                            "ok": False,
+                            "detail": str(exc) or exc.__class__.__name__,
+                        },
+                    )
+                    raise
+                else:
+                    if executed.finalizer is not None:
+                        _write_run_finalization(
+                            result_path,
+                            {
+                                "ok": True,
+                                "result": finalization,
+                            },
+                        )
+
                 run_id = executed.record["run"]["id"]
 
                 attempt = run_attempt(
@@ -347,6 +415,16 @@ def execute_experiment(
             manifest,
         )
 
+        if registry.lifecycle is not None:
+            registry.lifecycle.session_finalize(
+                lifecycle_session_handle,
+                lifecycle_session_context,
+                runtime_session_finalization(
+                    completed=True,
+                    interrupted=False,
+                ),
+            )
+
         report(
             f"Execution {execution_id} complete: "
             f"{len(slots) - len([slot for slot in slots if not slot.is_resolved])}/"
@@ -397,6 +475,17 @@ def execute_experiment(
         )
         _write_yaml_atomically(interruption_path, interruption)
 
+        if registry.lifecycle is not None:
+            registry.lifecycle.session_finalize(
+                lifecycle_session_handle,
+                lifecycle_session_context,
+                runtime_session_finalization(
+                    completed=False,
+                    interrupted=True,
+                    detail="keyboard_interrupt",
+                ),
+            )
+
         result = experiment_interruption_result(
             execution_id=execution_id,
             experiment_id=experiment_id,
@@ -422,6 +511,21 @@ def execute_experiment(
             "selected run(s) resolved before Ctrl+C."
         )
         raise experiment_execution_interrupted(result) from None
+    except Exception as exc:
+        if registry.lifecycle is not None:
+            try:
+                registry.lifecycle.session_finalize(
+                    lifecycle_session_handle,
+                    lifecycle_session_context,
+                    runtime_session_finalization(
+                        completed=False,
+                        interrupted=False,
+                        detail=str(exc) or exc.__class__.__name__,
+                    ),
+                )
+            except Exception:
+                pass
+        raise
 
     return experiment_execution_result(
         execution_id=execution_id,
@@ -433,6 +537,16 @@ def execute_experiment(
         started_at=started_at,
         ended_at=ended_at,
         slots=tuple(slots),
+    )
+
+
+def _write_run_finalization(
+    run_dir: Path,
+    payload: Mapping[str, object],
+) -> None:
+    _write_yaml_atomically(
+        Path(run_dir) / "environment_finalization.yaml",
+        dict(payload),
     )
 
 

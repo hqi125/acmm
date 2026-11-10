@@ -53,6 +53,11 @@ from acmm.runtime.interfaces import (
     runtime_diagnostic,
     runtime_diagnostic_check,
     runtime_diagnostic_report,
+    runtime_execution_lifecycle,
+    runtime_run_context,
+    runtime_run_finalization,
+    runtime_session_context,
+    runtime_session_finalization,
 )
 
 
@@ -154,6 +159,7 @@ def _reject_resource_symlinks(
 @dataclass(frozen=True)
 class experiment_runtime:
     capabilities: harness_capabilities
+    lifecycle: runtime_execution_lifecycle | None = None
     fixtures: Mapping[str, environment_fixture] = field(default_factory=dict)
     evaluators: Mapping[str, opportunity_evaluator] = field(default_factory=dict)
     diagnostics: Mapping[str, runtime_diagnostic] = field(default_factory=dict)
@@ -218,4 +224,9 @@ __all__ = [
     "runtime_diagnostic",
     "runtime_diagnostic_check",
     "runtime_diagnostic_report",
+    "runtime_session_finalization",
+    "runtime_session_context",
+    "runtime_run_finalization",
+    "runtime_run_context",
+    "runtime_execution_lifecycle",
 ]

@@ -11,12 +11,15 @@ from acmm.evidence.interpretation import interpretation_detail, interpret_scenar
 from acmm.runtime.interfaces import (
     adapter_execution_result,
     captured_evidence,
+    deferred_run_finalizer,
     evaluation_context,
     executed_run,
     execution_failure,
     judgment_result,
     observed_environment,
     prepared_environment,
+    runtime_run_context,
+    runtime_run_finalization,
 )
 from acmm.runtime.planner import planned_run
 from acmm.runtime.registry import execution_registry
@@ -30,6 +33,8 @@ def execute_planned_run(
     harness_version: str,
     now: Callable[[], datetime] | None = None,
     run_id_factory: Callable[[], str] | None = None,
+    lifecycle_session_handle: Any = None,
+    lifecycle_context: runtime_run_context | None = None,
 ) -> executed_run:
     clock = now if now is not None else _utc_now
     make_run_id = run_id_factory if run_id_factory is not None else _new_run_id
@@ -48,12 +53,15 @@ def execute_planned_run(
     captured: tuple[captured_evidence, ...] = ()
     observed_termination = "harness_error"
     environment_session: _environment_session | None = None
+    scenario = contract_scenario
 
     try:
         environment_session = _prepare_environment(
             contract,
             contract_scenario,
             registry,
+            lifecycle_session_handle=lifecycle_session_handle,
+            lifecycle_context=lifecycle_context,
         )
         provenance["environment"] = dict(environment_session.provenance)
         captured = environment_session.evidence
@@ -87,16 +95,18 @@ def execute_planned_run(
         )
         captured += observation.evidence
 
-        _finalize_environment(
-            environment_session,
-            scenario,
-            contract["run_protocol"]["reset"],
-        )
-        environment_session = None
+        if not environment_session.uses_runtime_lifecycle:
+            _finalize_environment(
+                environment_session,
+                scenario,
+                contract["run_protocol"]["reset"],
+                outcome=None,
+            )
+            environment_session = None
 
         if adapter_result.failure is not None:
             ended_at = clock()
-            return _build_invalid_run(
+            result = _build_invalid_run(
                 contract,
                 planned,
                 contract_sha256,
@@ -108,10 +118,16 @@ def execute_planned_run(
                 provenance,
                 captured,
             )
+            return _attach_deferred_finalization(
+                result,
+                environment_session,
+                scenario,
+                contract["run_protocol"]["reset"],
+            )
 
         if adapter_result.termination == "harness_error":
             ended_at = clock()
-            return _build_invalid_run(
+            result = _build_invalid_run(
                 contract,
                 planned,
                 contract_sha256,
@@ -128,10 +144,16 @@ def execute_planned_run(
                 provenance,
                 captured,
             )
+            return _attach_deferred_finalization(
+                result,
+                environment_session,
+                scenario,
+                contract["run_protocol"]["reset"],
+            )
 
         if "subject" not in provenance:
             ended_at = clock()
-            return _build_invalid_run(
+            result = _build_invalid_run(
                 contract,
                 planned,
                 contract_sha256,
@@ -147,6 +169,12 @@ def execute_planned_run(
                 ),
                 provenance,
                 captured,
+            )
+            return _attach_deferred_finalization(
+                result,
+                environment_session,
+                scenario,
+                contract["run_protocol"]["reset"],
             )
 
         interpreted_evidence = interpret_scenario_evidence(scenario, captured)
@@ -176,17 +204,48 @@ def execute_planned_run(
             judgments=judgments,
         )
 
-        return executed_run(
+        result = executed_run(
             record=record,
             artifacts=captured,
         )
-
-    except Exception as exc:
-        cleanup_error = _best_effort_finalize_environment(
+        return _attach_deferred_finalization(
+            result,
             environment_session,
-            contract_scenario,
+            scenario,
             contract["run_protocol"]["reset"],
         )
+
+    except KeyboardInterrupt:
+        if environment_session is not None and environment_session.uses_runtime_lifecycle:
+            _best_effort_finalize_environment(
+                environment_session,
+                scenario,
+                contract["run_protocol"]["reset"],
+                outcome=runtime_run_finalization(
+                    persisted=False,
+                    validity=None,
+                    termination=observed_termination,
+                    interrupted=True,
+                ),
+            )
+        else:
+            _best_effort_finalize_environment(
+                environment_session,
+                scenario,
+                contract["run_protocol"]["reset"],
+                outcome=None,
+            )
+        raise
+
+    except Exception as exc:
+        cleanup_error = None
+        if environment_session is not None and not environment_session.uses_runtime_lifecycle:
+            cleanup_error = _best_effort_finalize_environment(
+                environment_session,
+                scenario,
+                contract["run_protocol"]["reset"],
+                outcome=None,
+            )
         ended_at = clock()
 
         detail = str(exc) or exc.__class__.__name__
@@ -197,7 +256,7 @@ def execute_planned_run(
             message=detail,
         )
 
-        return _build_invalid_run(
+        result = _build_invalid_run(
             contract,
             planned,
             contract_sha256,
@@ -209,15 +268,66 @@ def execute_planned_run(
             provenance,
             captured,
         )
+        return _attach_deferred_finalization(
+            result,
+            environment_session,
+            scenario,
+            contract["run_protocol"]["reset"],
+        )
+
+
+def _attach_deferred_finalization(
+    result: executed_run,
+    session: _environment_session | None,
+    scenario: dict[str, Any],
+    reset: dict[str, Any],
+) -> executed_run:
+    if session is None or not session.uses_runtime_lifecycle:
+        return result
+
+    def callback(outcome: runtime_run_finalization):
+        return _finalize_environment(
+            session,
+            scenario,
+            reset,
+            outcome=outcome,
+        )
+
+    return executed_run(
+        record=result.record,
+        artifacts=result.artifacts,
+        finalizer=deferred_run_finalizer(callback=callback),
+    )
+
+
+def finalize_executed_run(
+    result: executed_run,
+    outcome: runtime_run_finalization,
+) -> dict[str, Any]:
+    if result.finalizer is None:
+        return {}
+    finalized = result.finalizer.callback(outcome)
+    if finalized is None:
+        return {}
+    if not isinstance(finalized, dict):
+        finalized = dict(finalized)
+    return finalized
 
 
 @dataclass(frozen=True)
 class _environment_session:
     fixture: object | None
+    lifecycle: object | None
+    lifecycle_session_handle: Any
+    lifecycle_context: runtime_run_context | None
     handle: Any
     provenance: dict[str, Any]
     evidence: tuple[captured_evidence, ...]
     task_bindings: dict[str, str]
+
+    @property
+    def uses_runtime_lifecycle(self) -> bool:
+        return self.lifecycle is not None
 
 
 _TASK_BINDING_PATTERN = re.compile(r"\{\{([a-z][a-z0-9_]*)\}\}")
@@ -227,13 +337,53 @@ def _prepare_environment(
     contract: dict[str, Any],
     scenario: dict[str, Any],
     registry: execution_registry,
+    *,
+    lifecycle_session_handle: Any = None,
+    lifecycle_context: runtime_run_context | None = None,
 ) -> _environment_session:
     environment = scenario.get("environment", {})
     fixture_id = environment.get("fixture")
 
+    if registry.lifecycle is not None:
+        if lifecycle_context is None:
+            raise ValueError(
+                "Runtime execution lifecycle requires a run lifecycle context."
+            )
+        prepared = registry.lifecycle.run_prepare(
+            lifecycle_session_handle,
+            lifecycle_context,
+            scenario,
+            contract["run_protocol"]["reset"],
+        )
+        if not isinstance(prepared, prepared_environment):
+            raise TypeError(
+                "Runtime execution lifecycle run_prepare() must return "
+                "prepared_environment."
+            )
+        provenance_fixture_id = (
+            fixture_id if isinstance(fixture_id, str) and fixture_id else "runtime_lifecycle"
+        )
+        return _environment_session(
+            fixture=None,
+            lifecycle=registry.lifecycle,
+            lifecycle_session_handle=lifecycle_session_handle,
+            lifecycle_context=lifecycle_context,
+            handle=prepared.handle,
+            provenance=_environment_record_provenance(
+                fixture_id=provenance_fixture_id,
+                environment=environment,
+                prepared=prepared,
+            ),
+            evidence=tuple(prepared.evidence),
+            task_bindings=dict(prepared.task_bindings),
+        )
+
     if fixture_id is None:
         return _environment_session(
             fixture=None,
+            lifecycle=None,
+            lifecycle_session_handle=None,
+            lifecycle_context=None,
             handle=None,
             provenance={
                 "configuration": environment.get("configuration", {}),
@@ -255,6 +405,9 @@ def _prepare_environment(
 
     return _environment_session(
         fixture=fixture,
+        lifecycle=None,
+        lifecycle_session_handle=None,
+        lifecycle_context=None,
         handle=prepared.handle,
         provenance=_environment_record_provenance(
             fixture_id=fixture_id,
@@ -302,6 +455,21 @@ def _observe_environment(
     session: _environment_session,
     scenario: dict[str, Any],
 ) -> observed_environment:
+    if session.lifecycle is not None:
+        assert session.lifecycle_context is not None
+        observed = session.lifecycle.run_observe(
+            session.lifecycle_session_handle,
+            session.lifecycle_context,
+            scenario,
+            session.handle,
+        )
+        if not isinstance(observed, observed_environment):
+            raise TypeError(
+                "Runtime execution lifecycle run_observe() must return "
+                "observed_environment."
+            )
+        return observed
+
     fixture = session.fixture
     observe = getattr(fixture, "observe", None) if fixture is not None else None
     if not callable(observe):
@@ -315,17 +483,35 @@ def _observe_environment(
     return observed
 
 
+
 def _finalize_environment(
     session: _environment_session,
     scenario: dict[str, Any],
     reset: dict[str, Any],
+    *,
+    outcome: runtime_run_finalization | None,
 ) -> dict[str, Any]:
-    fixture = session.fixture
-    finalize = getattr(fixture, "finalize", None) if fixture is not None else None
-    if not callable(finalize):
-        return {}
+    if session.lifecycle is not None:
+        if outcome is None:
+            raise ValueError(
+                "Runtime execution lifecycle finalization requires an explicit outcome."
+            )
+        assert session.lifecycle_context is not None
+        result = session.lifecycle.run_finalize(
+            session.lifecycle_session_handle,
+            session.lifecycle_context,
+            scenario,
+            session.handle,
+            reset,
+            outcome,
+        )
+    else:
+        fixture = session.fixture
+        finalize = getattr(fixture, "finalize", None) if fixture is not None else None
+        if not callable(finalize):
+            return {}
+        result = finalize(scenario, session.handle, reset)
 
-    result = finalize(scenario, session.handle, reset)
     if result is None:
         return {}
     if not isinstance(result, dict):
@@ -337,14 +523,22 @@ def _best_effort_finalize_environment(
     session: _environment_session | None,
     scenario: dict[str, Any],
     reset: dict[str, Any],
+    *,
+    outcome: runtime_run_finalization | None = None,
 ) -> str | None:
     if session is None:
         return None
     try:
-        _finalize_environment(session, scenario, reset)
+        _finalize_environment(
+            session,
+            scenario,
+            reset,
+            outcome=outcome,
+        )
     except Exception as exc:
         return str(exc) or exc.__class__.__name__
     return None
+
 
 
 def _scenario_with_task_bindings(

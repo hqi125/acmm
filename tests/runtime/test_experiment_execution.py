@@ -846,3 +846,115 @@ def test_provider_usage_monitor_failure_does_not_invalidate_execution(
     manifest = yaml.safe_load(result.manifest_path.read_text(encoding="utf-8"))
     assert "provider_usage" not in manifest["execution"]
     assert any("telemetry unavailable" in message for message in messages)
+
+
+class fake_runtime_lifecycle:
+    def __init__(self) -> None:
+        self.events: list[tuple] = []
+
+    def session_initialize(self, context):
+        self.events.append(("session_initialize", context.execution_id))
+        return {"session": context.execution_id}
+
+    def run_prepare(self, session_handle, context, scenario, reset):
+        del reset
+        self.events.append(
+            (
+                "run_prepare",
+                session_handle["session"],
+                context.run_index,
+                context.attempt,
+                scenario["id"],
+            )
+        )
+        return prepared_environment(
+            handle={"fixture_value": 87},
+            provenance={
+                "fixture": "synthetic_environment_v1",
+                "configuration": {"lifecycle": True},
+            },
+        )
+
+    def run_observe(self, session_handle, context, scenario, handle):
+        from acmm.runtime.interfaces import observed_environment
+
+        del scenario, handle
+        self.events.append(
+            ("run_observe", session_handle["session"], context.run_index)
+        )
+        return observed_environment()
+
+    def run_finalize(
+        self,
+        session_handle,
+        context,
+        scenario,
+        handle,
+        reset,
+        outcome,
+    ):
+        del scenario, handle, reset
+        result_path = Path(outcome.result_path) if outcome.result_path else None
+        self.events.append(
+            (
+                "run_finalize",
+                session_handle["session"],
+                context.run_index,
+                outcome.persisted,
+                bool(result_path and result_path.is_dir()),
+            )
+        )
+        return {"persisted": outcome.persisted}
+
+    def session_finalize(self, session_handle, context, outcome):
+        self.events.append(
+            (
+                "session_finalize",
+                session_handle["session"],
+                context.execution_id,
+                outcome.completed,
+            )
+        )
+        return {"completed": outcome.completed}
+
+
+def test_runtime_lifecycle_finalizes_run_only_after_persistence(tmp_path: Path) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    lifecycle = fake_runtime_lifecycle()
+    registry = _registry(adapter)
+    registry = execution_registry(
+        subject_adapters=registry.subject_adapters,
+        lifecycle=lifecycle,
+        fixtures=registry.fixtures,
+        evaluators=registry.evaluators,
+        subject_configuration_overlays=registry.subject_configuration_overlays,
+    )
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=registry,
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        sleep=lambda _: None,
+        max_attempts_per_run=1,
+        run_indices=(0,),
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+    )
+
+    assert [event[0] for event in lifecycle.events] == [
+        "session_initialize",
+        "run_prepare",
+        "run_observe",
+        "run_finalize",
+        "session_finalize",
+    ]
+    assert lifecycle.events[3][3:] == (True, True)
+    run_dir = result.slots[0].attempts[0].result_path
+    finalization = yaml.safe_load(
+        (run_dir / "environment_finalization.yaml").read_text(encoding="utf-8")
+    )
+    assert finalization == {"ok": True, "result": {"persisted": True}}

@@ -30,9 +30,12 @@ from acmm.experiment_package import (
     experiment_package_store_error,
     experiment_runtime_error,
     load_staged_experiment_runtime,
+    open_staged_experiment_package,
     package_provenance,
     restore_staged_integration_resources,
     resolve_installed_experiment_package,
+    run_staged_experiment_apparatus_action,
+    validate_staged_package_secrets,
 )
 from acmm.experiment_package.cli import register_experiment_package_commands
 from acmm.environment_cli import register_environment_commands
@@ -85,7 +88,13 @@ from acmm.runtime.planner import (
 )
 from acmm.runtime.result_store import result_write_error
 from acmm.validation import validation_result
-from acmm_infra.cohort import apply_cohort, resolve_package_cohort
+from acmm_infra.cohort import (
+    apply_cohort,
+    inspect_cohort,
+    resolve_deployed_cohort,
+    resolve_package_cohort,
+    summarize_context,
+)
 from acmm_infra.common import infrastructure_error
 from acmm_infra.docker import docker_error
 from acmm_infra.profiles.llm import (
@@ -592,6 +601,123 @@ def _apply_selected_package_context(
         timeout_seconds=120.0,
         progress=progress,
     )
+
+
+def _resolve_active_run_package() -> experiment_package:
+    repo_root = default_repo_root().expanduser().resolve()
+    runtime_root = default_runtime_root().expanduser().resolve()
+    cohort = resolve_deployed_cohort(repo_root, runtime_root)
+    statuses = inspect_cohort(repo_root, runtime_root, cohort.subjects)
+    context = summarize_context(statuses)
+    if (
+        context.state != "converged"
+        or not context.experiment_id
+        or not context.package_sha256
+    ):
+        raise ValueError(
+            "acmm run apparatus requires one fully converged Experiment Package "
+            "deployment context."
+        )
+    return open_staged_experiment_package(
+        runtime_root,
+        context.experiment_id,
+        context.package_sha256,
+    )
+
+
+def _run_apparatus(args: argparse.Namespace) -> int:
+    try:
+        package = _resolve_active_run_package()
+        validate_staged_package_secrets(package)
+        loaded = load_staged_experiment_runtime(package)
+    except (
+        experiment_package_store_error,
+        experiment_package_error,
+        experiment_runtime_error,
+        infrastructure_error,
+        profile_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    action_id = args.apparatus_action
+    if action_id is None:
+        print("Experiment apparatus actions:")
+        print(f"  experiment: {package.experiment_id}")
+        print(f"  package:    {package.package_sha256}")
+        if not loaded.runtime.apparatus_actions:
+            print("  actions:    none")
+            return 0
+        print("  actions:")
+        for name, action in sorted(loaded.runtime.apparatus_actions.items()):
+            description = getattr(action, "description", None)
+            mutation = getattr(action, "mutates_external_state", None)
+            suffix_parts = []
+            if isinstance(description, str) and description.strip():
+                suffix_parts.append(description.strip())
+            if isinstance(mutation, bool):
+                suffix_parts.append(
+                    "external mutation" if mutation else "read-only"
+                )
+            suffix = " - " + "; ".join(suffix_parts) if suffix_parts else ""
+            print(f"    {name}{suffix}")
+        return 0
+
+    progress_started = False
+
+    def report_progress(event) -> None:
+        nonlocal progress_started
+        if not progress_started:
+            print("Experiment apparatus progress:")
+            print(f"  experiment: {package.experiment_id}")
+            print(f"  action:     {action_id}")
+            progress_started = True
+        if event.step is not None and event.total is not None:
+            prefix = f"[{event.step}/{event.total}]"
+        elif event.step is not None:
+            prefix = f"[{event.step}]"
+        else:
+            prefix = "[-]"
+        print(f"  {prefix} {event.message}", flush=True)
+
+    try:
+        result = run_staged_experiment_apparatus_action(
+            package,
+            action_id,
+            progress=report_progress,
+        )
+    except (experiment_runtime_error, OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    if progress_started:
+        print()
+    print("Experiment apparatus action complete:")
+    print(f"  experiment: {package.experiment_id}")
+    print(f"  package:    {package.package_sha256}")
+    print(f"  action:     {action_id}")
+    print(f"  changed:    {'yes' if result.changed else 'no'}")
+    print(f"  detail:     {result.detail}")
+    if result.observations:
+        print("  observations:")
+        for key in sorted(result.observations):
+            print(f"    {key}: {result.observations[key]}")
+    return 0
+
+
+def _run_command(args: argparse.Namespace) -> int:
+    if args.experiment == "apparatus":
+        return _run_apparatus(args)
+    if args.apparatus_action is not None:
+        print(
+            "ERROR: A second positional argument is valid only for "
+            "'acmm run apparatus [ACTION]'.",
+            file=sys.stderr,
+        )
+        return 2
+    return _run_experiment(args)
 
 
 def _run_experiment(args: argparse.Namespace) -> int:
@@ -1574,8 +1700,16 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "experiment",
         help=(
-            "Installed Experiment Package selector: EXPERIMENT_ID when unique, "
-            "or EXPERIMENT_ID@SHA_PREFIX when multiple revisions are installed."
+            "Installed Experiment Package selector for scientific execution, or "
+            "the reserved word 'apparatus' for the active deployment context."
+        ),
+    )
+    run_parser.add_argument(
+        "apparatus_action",
+        nargs="?",
+        help=(
+            "With 'acmm run apparatus', optionally invoke one package-owned "
+            "engineering apparatus action. Omit to list available actions."
         ),
     )
     run_index_group = run_parser.add_mutually_exclusive_group()
@@ -1703,7 +1837,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "(default: 1)."
         ),
     )
-    run_parser.set_defaults(handler=_run_experiment)
+    run_parser.set_defaults(handler=_run_command)
 
     export_parser = subparsers.add_parser(
         "export",

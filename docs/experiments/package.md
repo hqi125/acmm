@@ -95,7 +95,8 @@ Typical workflow:
 acmm package validate <package-directory>
 acmm package install <package-directory>
 acmm package apply <selector>
-acmm package apparatus <selector> <action>
+acmm run apparatus
+acmm run apparatus <action>
 acmm run <selector> --preview
 acmm run <selector>
 acmm package install <package-directory> --upgrade
@@ -107,11 +108,20 @@ acmm package purge
 acmm package purge --detach-all
 ```
 
-`package apparatus` dispatches an explicitly named trusted lifecycle action declared by the installed
-package runtime. Core does not infer or auto-run apparatus mutations during install/apply/doctor; packages
-without apparatus actions remain unchanged. Apparatus actions may optionally publish structured progress
-events; the CLI renders them immediately as `[step/total]` messages while preserving the package-owned
-action/result contract.
+`acmm run apparatus` is the operator/debug surface for package-defined apparatus actions that may touch the
+external experiment world. It resolves the currently fully converged Experiment Package context, lists the
+available package-defined actions when no action is supplied, and invokes one named action without requiring
+the experiment selector to be repeated. Core does not infer or auto-run these free-form actions during
+install/apply/doctor. Actions may optionally publish structured progress events; the CLI renders them
+immediately as `[step/total]` messages while preserving the package-owned action/result contract.
+
+Free-form apparatus actions are separate from the optional typed execution lifecycle. A package lifecycle may
+implement `session_initialize`, `run_prepare`, `run_observe`, `run_finalize`, and `session_finalize`. Core
+invokes those hooks only at their fixed execution phases; they are not independently callable apparatus
+actions. `run_finalize` is deliberately deferred until after the run result directory and evidence artifacts
+have been persisted, allowing trusted cleanup to be evidence-last. If persistence fails, Core reports an
+unpersisted finalization outcome so the package can quarantine external state instead of destroying it. Packages
+that do not declare a typed lifecycle retain the legacy fixture prepare/observe/finalize behavior.
 
 `acmm run` is strict by default. `--apply-if-needed` grants permission to reconcile only the selected
 subjects, after which ACMM repeats the strict deployment preflight. `--start-if-needed` is a separate

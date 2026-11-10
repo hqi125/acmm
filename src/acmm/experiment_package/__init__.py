@@ -43,6 +43,7 @@ from acmm.experiment_package.runtime import (
     load_staged_experiment_runtime,
     doctor_staged_experiment_runtime,
     loaded_experiment_runtime,
+    run_staged_experiment_apparatus_action,
 )
 from acmm.experiment_package.store import (
     experiment_package_store_error,
@@ -102,6 +103,7 @@ __all__ = [
     "load_staged_experiment_runtime",
     "doctor_staged_experiment_runtime",
     "loaded_experiment_runtime",
+    "run_staged_experiment_apparatus_action",
     "open_staged_experiment_package",
     "resolve_installed_experiment_package",
     "uninstall_experiment_package",

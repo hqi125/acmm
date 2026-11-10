@@ -6,6 +6,7 @@ import shutil
 import pytest
 import yaml
 
+import acmm.cli as cli_module
 from acmm.cli import _build_parser
 from acmm.experiment_package import (
     acquire_experiment_package,
@@ -156,7 +157,7 @@ def test_package_validate_install_query_and_uninstall_commands(
     assert not package_root.exists()
 
 
-def test_package_apparatus_runs_package_owned_action(
+def test_run_apparatus_lists_and_runs_active_package_action(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -170,25 +171,30 @@ def test_package_apparatus_runs_package_owned_action(
         runtime_root,
         contract_schema_path=CONTRACT_SCHEMA,
     )
+    monkeypatch.setattr(cli_module, "_resolve_active_run_package", lambda: package)
     parser = _build_parser()
 
-    args = parser.parse_args(
-        ["package", "apparatus", package.experiment_id, "initialize"]
-    )
+    list_args = parser.parse_args(["run", "apparatus"])
+    assert list_args.handler(list_args) == 0
+    listed = capsys.readouterr().out
+    assert "Experiment apparatus actions:" in listed
+    assert "initialize" in listed
+
+    args = parser.parse_args(["run", "apparatus", "initialize"])
     assert args.handler(args) == 0
 
     output = capsys.readouterr().out
-    assert "Experiment Package apparatus progress:" in output
+    assert "Experiment apparatus progress:" in output
     assert "[1/2] checking test apparatus" in output
     assert "[2/2] initializing test apparatus" in output
-    assert "Experiment Package apparatus action complete:" in output
+    assert "Experiment apparatus action complete:" in output
     assert "action:     initialize" in output
     assert "changed:    yes" in output
     assert "detail:     initialized test apparatus" in output
     assert "fixture_version: test-v1" in output
 
 
-def test_package_apparatus_rejects_unknown_action(
+def test_run_apparatus_rejects_unknown_action(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -202,13 +208,18 @@ def test_package_apparatus_rejects_unknown_action(
         runtime_root,
         contract_schema_path=CONTRACT_SCHEMA,
     )
+    monkeypatch.setattr(cli_module, "_resolve_active_run_package", lambda: package)
     parser = _build_parser()
 
-    args = parser.parse_args(
-        ["package", "apparatus", package.experiment_id, "missing"]
-    )
+    args = parser.parse_args(["run", "apparatus", "missing"])
     assert args.handler(args) == 2
     assert "does not provide apparatus action 'missing'" in capsys.readouterr().err
+
+
+def test_package_family_no_longer_exposes_apparatus() -> None:
+    parser = _build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["package", "apparatus", EXPERIMENT_ID, "initialize"])
 
 
 def test_package_uninstall_rejects_deployed_revision(
