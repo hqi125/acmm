@@ -301,7 +301,8 @@ def test_run_apparatus_rejects_unknown_command(capsys) -> None:
     assert exc_info.value.code == 2
     error = capsys.readouterr().err
     assert "invalid choice: 'missing'" in error
-    assert "list, cleanup, exec" in error
+    normalized_error = error.replace("'", "")
+    assert "choose from list, cleanup, exec" in normalized_error
 
 
 def test_run_apparatus_exec_rejects_unknown_action(
