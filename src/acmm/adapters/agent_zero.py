@@ -621,7 +621,11 @@ def _tool_output_has_error(output: str) -> bool:
 
     if not isinstance(value, dict):
         return False
-    return value.get("ok") is False or "error" in value
+    error = value.get("error")
+    return (
+        value.get("ok") is False
+        or (error is not None and error is not False and error != "")
+    )
 
 
 def _validate_model_observation(

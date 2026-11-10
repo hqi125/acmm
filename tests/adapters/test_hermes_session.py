@@ -269,6 +269,92 @@ def test_parse_hermes_session_export_treats_background_promotion_as_non_error() 
     assert tool_results[0]["is_error"] is False
 
 
+def test_parse_hermes_session_export_treats_successful_terminal_exit_as_non_error() -> None:
+    messages = [
+        {"role": "user", "content": PROMPT},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-ls",
+                    "function": {
+                        "name": "terminal",
+                        "arguments": '{"command":"ls -la /opt"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-ls",
+            "name": "terminal",
+            "content": json.dumps(
+                {
+                    "output": "total 16",
+                    "exit_code": 0,
+                    "error": None,
+                }
+            ),
+        },
+        {"role": "assistant", "content": "done"},
+    ]
+
+    parsed = parse_hermes_session_export(
+        _export(messages),
+        PROMPT,
+        "",
+        "session-123",
+    )
+
+    assert parsed.failure is None
+    tool_results = json.loads(parsed.evidence[2].content)
+    assert tool_results[0]["is_error"] is False
+
+
+def test_parse_hermes_session_export_marks_failed_terminal_exit() -> None:
+    messages = [
+        {"role": "user", "content": PROMPT},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-git",
+                    "function": {
+                        "name": "terminal",
+                        "arguments": '{"command":"git status"}',
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-git",
+            "name": "terminal",
+            "content": json.dumps(
+                {
+                    "output": "fatal: not a git repository",
+                    "exit_code": 128,
+                    "error": None,
+                }
+            ),
+        },
+        {"role": "assistant", "content": "done"},
+    ]
+
+    parsed = parse_hermes_session_export(
+        _export(messages),
+        PROMPT,
+        "",
+        "session-123",
+    )
+
+    assert parsed.failure is None
+    tool_results = json.loads(parsed.evidence[2].content)
+    assert tool_results[0]["is_error"] is True
+
+
 def test_parse_hermes_session_export_marks_failed_background_process_exit() -> None:
     messages = [
         {"role": "user", "content": PROMPT},

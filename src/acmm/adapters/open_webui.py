@@ -688,7 +688,13 @@ def _tool_output_has_error(output: str) -> bool:
         except json.JSONDecodeError:
             break
 
-    return isinstance(value, dict) and "error" in value
+    if not isinstance(value, dict):
+        return False
+    error = value.get("error")
+    return (
+        value.get("ok") is False
+        or (error is not None and error is not False and error != "")
+    )
 
 
 def _json_bytes(value: Any) -> bytes:

@@ -316,15 +316,9 @@ def _normalize_terminal_process_error(
         return default
 
     if name == "terminal":
-        promoted = value.get("promoted_from_foreground")
-        if (
-            isinstance(promoted, str)
-            and promoted
-            and value.get("error") is None
-            and value.get("exit_code") == 0
-            and isinstance(value.get("session_id"), str)
-        ):
-            return False
+        exit_code = value.get("exit_code")
+        if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+            return exit_code != 0 or _explicit_error_value(value.get("error"))
 
     if name == "process_manage":
         exit_code = value.get("exit_code")
@@ -368,7 +362,13 @@ def _tool_output_has_error(output: Any) -> bool:
             value = _embedded_json_object(value)
             break
 
-    return isinstance(value, dict) and "error" in value
+    if not isinstance(value, dict):
+        return False
+    return value.get("ok") is False or _explicit_error_value(value.get("error"))
+
+
+def _explicit_error_value(value: Any) -> bool:
+    return value is not None and value is not False and value != ""
 
 
 def _embedded_json_object(value: str) -> dict[str, Any] | None:

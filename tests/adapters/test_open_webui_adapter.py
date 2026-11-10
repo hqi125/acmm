@@ -296,6 +296,42 @@ def test_open_webui_timeout_captures_partial_evidence_before_cleanup() -> None:
     assert result.evidence[3].content == b""
     assert client.deleted == ["chat-123"]
 
+def test_open_webui_adapter_does_not_treat_null_error_field_as_failure() -> None:
+    client = fake_open_webui_client()
+    original_get_chat = client.get_chat
+
+    def get_chat(token, chat_id):
+        chat = original_get_chat(token, chat_id)
+        assistant_id = chat["chat"]["history"]["currentId"]
+        message = chat["chat"]["history"]["messages"][assistant_id]
+        for item in message["output"]:
+            if item.get("type") != "function_call_output":
+                continue
+            item["output"] = [
+                {
+                    "type": "input_text",
+                    "text": json.dumps(
+                        {"ok": True, "error": None, "value": 87}
+                    ),
+                }
+            ]
+            item["status"] = "completed"
+            break
+        return chat
+
+    client.get_chat = get_chat
+    result = open_webui_adapter(client).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.failure is None
+    tool_results = json.loads(result.evidence[2].content)
+    assert tool_results[0]["is_error"] is False
+
+
 def test_open_webui_adapter_marks_failed_tool_output() -> None:
     client = fake_open_webui_client()
     original_get_chat = client.get_chat
