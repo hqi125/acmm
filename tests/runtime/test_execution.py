@@ -583,3 +583,100 @@ def test_integration_can_promote_plain_text_tool_failure_without_adapter_couplin
     assert tool_results[0]["is_error"] is True
     assert conversation["messages"][0]["is_error"] is True
     assert conversation["messages"][0]["status"] == "failed"
+
+
+def test_runtime_subject_admission_wraps_subject_execution_before_observation() -> None:
+    from acmm.runtime.interfaces import (
+        runtime_subject_admission,
+        runtime_subject_admission_request,
+    )
+
+    contract = load_contract(CONTRACT_PATH)
+    planned = build_experiment_plan(contract).runs[0]
+    events: list[str] = []
+
+    class admission_fixture:
+        def prepare(self, scenario, reset):
+            del scenario, reset
+            events.append("prepare")
+            return prepared_environment(
+                handle={"fixture_value": 87},
+                provenance={
+                    "fixture": "synthetic_environment_v1",
+                    "configuration": {},
+                },
+                admission_requests=(
+                    runtime_subject_admission_request(
+                        integration_id="github_mcp",
+                        payload={"secret": "opaque"},
+                    ),
+                ),
+            )
+
+        def observe(self, scenario, handle):
+            del scenario, handle
+            events.append("observe")
+            return observed_environment()
+
+        def finalize(self, scenario, handle, reset):
+            del scenario, handle, reset
+            events.append("finalize")
+            return {"restored": True}
+
+    class ordered_adapter(fake_adapter):
+        def execute(self, subject, scenario, environment, termination):
+            events.append("subject")
+            return super().execute(subject, scenario, environment, termination)
+
+    class admission_controller:
+        def admit(self, subject_id, requests):
+            assert subject_id == "hermes_gpt_oss120b"
+            assert len(requests) == 1
+            assert requests[0].integration_id == "github_mcp"
+            assert requests[0].payload == {"secret": "opaque"}
+            events.append("admit")
+            return runtime_subject_admission(
+                handle={"private": "handle"},
+                provenance={"integration_ids": ("github_mcp",)},
+            )
+
+        def revoke(self, subject_id, admission):
+            assert subject_id == "hermes_gpt_oss120b"
+            assert admission.handle == {"private": "handle"}
+            events.append("revoke")
+            return {"revoked": True}
+
+    base = _registry(
+        adapter=ordered_adapter(),
+        fixture=admission_fixture(),
+    )
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        admission_controller=admission_controller(),
+    )
+
+    result = execute_planned_run(
+        contract=contract,
+        planned=planned,
+        contract_sha256=sha256_file(CONTRACT_PATH),
+        registry=registry,
+        harness_version="0.1.0",
+        now=_clock(),
+        run_id_factory=lambda: RUN_ID,
+    )
+
+    assert result.record["execution"]["validity"] == "valid"
+    assert events == [
+        "prepare",
+        "admit",
+        "subject",
+        "revoke",
+        "observe",
+        "finalize",
+    ]
+    assert result.record["provenance"]["admission"] == {
+        "integration_ids": ("github_mcp",)
+    }
+    _validate_result(contract, result)

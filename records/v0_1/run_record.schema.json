@@ -266,6 +266,10 @@
         }
       }
     },
+    "admission_provenance": {
+      "type": "object",
+      "additionalProperties": true
+    },
     "provenance": {
       "type": "object",
       "additionalProperties": false,
@@ -290,6 +294,9 @@
         },
         "environment": {
           "$ref": "#/$defs/environment_provenance"
+        },
+        "admission": {
+          "$ref": "#/$defs/admission_provenance"
         }
       }
     },

@@ -233,6 +233,7 @@ def compose_execution_registry(
     *,
     tool_result_error_interpreters: tuple[tool_result_error_interpreter, ...] = (),
     subject_configuration_overlays: Mapping[str, Mapping[str, Any]] | None = None,
+    admission_controller: Any = None,
 ) -> execution_registry:
     overlays = {
         subject_id: dict(configuration)
@@ -242,6 +243,7 @@ def compose_execution_registry(
     return execution_registry(
         subject_adapters=dict(subject_adapters),
         lifecycle=runtime.lifecycle,
+        admission_controller=admission_controller,
         fixtures=dict(runtime.fixtures),
         evaluators=dict(runtime.evaluators),
         tool_result_error_interpreters=tuple(tool_result_error_interpreters),
@@ -376,6 +378,12 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
                     "Runtime execution lifecycle does not provide callable "
                     f"{method_name}()."
                 )
+
+    if runtime.recovery is not None:
+        if not callable(getattr(runtime.recovery, "reconcile", None)):
+            raise experiment_runtime_error(
+                "Runtime execution recovery does not provide callable reconcile()."
+            )
 
     if runtime.apparatus_cleanup is not None:
         if not callable(getattr(runtime.apparatus_cleanup, "cleanup", None)):

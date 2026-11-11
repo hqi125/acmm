@@ -154,6 +154,37 @@ def build_integration(context):
 '''
 
 
+ADMISSION_INTEGRATION_SOURCE = '''from acmm.integration_api import experiment_integration, subject_integration
+
+
+class runtime_admission:
+    def __init__(self):
+        self.events = []
+
+    def admit(self, context, manager, payload):
+        del manager
+        self.events.append(("admit", context.infrastructure_subject, dict(payload)))
+        return {"secret_handle": payload["secret"]}
+
+    def revoke(self, context, manager, handle):
+        del manager
+        self.events.append(("revoke", context.infrastructure_subject, dict(handle)))
+        return {"revoked": True}
+
+
+_ADMISSION = runtime_admission()
+
+
+def build_integration(context):
+    del context
+    return experiment_integration(
+        subjects={
+            "hermes": subject_integration(admission=_ADMISSION),
+        },
+    )
+'''
+
+
 MANAGER_INTEGRATION_SOURCE = '''from acmm.integration_api import (
     experiment_integration,
     subject_integration,
@@ -565,3 +596,57 @@ def test_superseded_integration_removes_old_resource_when_replacement_has_none(
     assert (runtime_root / "old-resource-removed.txt").read_text(
         encoding="utf-8"
     ) == "removed"
+
+def test_runtime_admission_broker_cleans_up_partial_admission_and_hides_handles(
+    tmp_path: Path,
+) -> None:
+    from acmm.experiment_package import compose_staged_subject_admission_controller
+    from acmm.runtime.interfaces import runtime_subject_admission_request
+
+    _source, package, _runtime_root = _acquire(
+        tmp_path,
+        integration_source=ADMISSION_INTEGRATION_SOURCE,
+    )
+    loaded = load_staged_experiment_integration(package, "profile-test")
+    admission = loaded.integration.subjects["hermes"].admission
+    assert admission is not None
+
+    controller = compose_staged_subject_admission_controller(
+        package,
+        {"hermes_gpt_oss120b": ("hermes", "gpt_oss_120b_cloud_v1")},
+        lambda _subject_id: object(),
+        loaded_integrations=(loaded,),
+    )
+    assert controller is not None
+
+    secret_request = runtime_subject_admission_request(
+        integration_id="profile-test",
+        payload={"secret": "do-not-print"},
+    )
+    assert "do-not-print" not in repr(secret_request)
+
+    with pytest.raises(experiment_integration_error, match="unknown integration"):
+        controller.admit(
+            "hermes_gpt_oss120b",
+            (
+                secret_request,
+                runtime_subject_admission_request(
+                    integration_id="missing-integration",
+                    payload={},
+                ),
+            ),
+        )
+
+    assert admission.events == [
+        ("admit", "hermes", {"secret": "do-not-print"}),
+        ("revoke", "hermes", {"secret_handle": "do-not-print"}),
+    ]
+
+    result = controller.admit("hermes_gpt_oss120b", (secret_request,))
+    assert "do-not-print" not in repr(result)
+    assert result.provenance == {"integrations": ("profile-test",)}
+    observations = controller.revoke("hermes_gpt_oss120b", result)
+    assert observations == {
+        "integrations": {"profile-test": {"revoked": True}}
+    }
+

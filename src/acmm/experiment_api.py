@@ -55,10 +55,14 @@ from acmm.runtime.interfaces import (
     runtime_diagnostic_check,
     runtime_diagnostic_report,
     runtime_execution_lifecycle,
+    runtime_execution_recovery,
+    runtime_execution_recovery_context,
+    runtime_execution_recovery_result,
     runtime_run_context,
     runtime_run_finalization,
     runtime_session_context,
     runtime_session_finalization,
+    runtime_subject_admission_request,
 )
 
 
@@ -166,6 +170,7 @@ class experiment_runtime:
     diagnostics: Mapping[str, runtime_diagnostic] = field(default_factory=dict)
     apparatus_actions: Mapping[str, runtime_apparatus_action] = field(default_factory=dict)
     apparatus_cleanup: runtime_apparatus_cleanup | None = None
+    recovery: runtime_execution_recovery | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -232,4 +237,8 @@ __all__ = [
     "runtime_run_finalization",
     "runtime_run_context",
     "runtime_execution_lifecycle",
+    "runtime_execution_recovery",
+    "runtime_execution_recovery_context",
+    "runtime_execution_recovery_result",
+    "runtime_subject_admission_request",
 ]

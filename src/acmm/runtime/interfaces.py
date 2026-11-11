@@ -43,15 +43,32 @@ class execution_failure:
 
 
 @dataclass(frozen=True)
+class runtime_subject_admission_request:
+    integration_id: str
+    payload: Mapping[str, Any] = field(default_factory=dict, repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.integration_id, str) or not self.integration_id.strip():
+            raise ValueError("Runtime subject admission integration id must not be empty.")
+        object.__setattr__(
+            self,
+            "payload",
+            MappingProxyType(dict(self.payload)),
+        )
+
+
+@dataclass(frozen=True)
 class prepared_environment:
     handle: Any
     provenance: dict[str, Any]
     evidence: tuple[captured_evidence, ...] = ()
     task_bindings: Mapping[str, str] = field(default_factory=dict)
+    admission_requests: tuple[runtime_subject_admission_request, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "evidence", tuple(self.evidence))
         object.__setattr__(self, "task_bindings", MappingProxyType(dict(self.task_bindings)))
+        object.__setattr__(self, "admission_requests", tuple(self.admission_requests))
 
 
 @dataclass(frozen=True)
@@ -182,6 +199,37 @@ class runtime_diagnostic(Protocol):
 
 
 
+
+
+@dataclass(frozen=True)
+class runtime_subject_admission:
+    handle: Any = field(repr=False)
+    provenance: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "provenance",
+            MappingProxyType(dict(self.provenance)),
+        )
+
+
+class runtime_subject_admission_controller(Protocol):
+    def admit(
+        self,
+        subject_id: str,
+        requests: tuple[runtime_subject_admission_request, ...],
+    ) -> runtime_subject_admission:
+        ...
+
+    def revoke(
+        self,
+        subject_id: str,
+        admission: runtime_subject_admission,
+    ) -> Mapping[str, Any] | None:
+        ...
+
+
 @dataclass(frozen=True)
 class runtime_session_context:
     experiment_id: str
@@ -214,6 +262,30 @@ class runtime_session_finalization:
     completed: bool
     interrupted: bool
     detail: str | None = None
+
+
+@dataclass(frozen=True)
+class runtime_execution_recovery_context:
+    experiment_id: str
+    execution_id: str
+    selected_run_indices: tuple[int, ...]
+    session_dir: str
+
+
+@dataclass(frozen=True)
+class runtime_execution_recovery_result:
+    safe_to_continue: bool
+    changed: bool
+    detail: str
+    observations: Mapping[str, Any] = field(default_factory=dict)
+
+
+class runtime_execution_recovery(Protocol):
+    def reconcile(
+        self,
+        context: runtime_execution_recovery_context,
+    ) -> runtime_execution_recovery_result:
+        ...
 
 
 class runtime_execution_lifecycle(Protocol):

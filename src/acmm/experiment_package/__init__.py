@@ -14,6 +14,7 @@ from acmm.experiment_package.resources import (
 from acmm.experiment_package.integration import (
     compose_staged_experiment_profile_integrations,
     compose_staged_experiment_manager_integrations,
+    compose_staged_subject_admission_controller,
     experiment_integration_error,
     load_staged_experiment_integration,
     load_staged_experiment_integrations,
@@ -86,6 +87,7 @@ __all__ = [
     "validate_staged_package_secrets",
     "compose_staged_experiment_profile_integrations",
     "compose_staged_experiment_manager_integrations",
+    "compose_staged_subject_admission_controller",
     "experiment_analysis_component",
     "experiment_integration_component",
     "experiment_integration_error",

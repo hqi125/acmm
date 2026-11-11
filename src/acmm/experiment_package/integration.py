@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import sys
 from types import ModuleType
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 from acmm.experiment_package.model import (
     experiment_integration_component,
@@ -23,6 +23,10 @@ from acmm.integration_api import (
     experiment_integration_context,
     subject_integration_context,
     tool_result_error_interpreter,
+)
+from acmm.runtime.interfaces import (
+    runtime_subject_admission,
+    runtime_subject_admission_request,
 )
 
 
@@ -199,6 +203,170 @@ def compose_staged_experiment_manager_integrations(
         composed = realized
 
     return composed
+
+
+@dataclass(frozen=True)
+class _runtime_admission_entry:
+    integration_id: str
+    context: subject_integration_context
+    admission: Any
+    manager: Any
+    handle: Any
+
+
+class staged_subject_admission_controller:
+    def __init__(
+        self,
+        package: experiment_package,
+        subject_contexts: Mapping[str, tuple[str, str]],
+        manager_resolver: Callable[[str], Any],
+        *,
+        loaded_integrations: Iterable[loaded_experiment_integration] | None = None,
+    ) -> None:
+        self._package = package
+        self._subject_contexts = dict(subject_contexts)
+        self._manager_resolver = manager_resolver
+        self._loaded = _resolved_integrations(package, loaded_integrations)
+        self._by_id = {item.component.integration_id: item for item in self._loaded}
+
+    @property
+    def is_required(self) -> bool:
+        for subject_id, (infrastructure_subject, _baseline_id) in self._subject_contexts.items():
+            del subject_id
+            for item in self._loaded:
+                binding = item.integration.subjects.get(infrastructure_subject)
+                if binding is not None and binding.admission is not None:
+                    return True
+        return False
+
+    def admit(
+        self,
+        subject_id: str,
+        requests: tuple[runtime_subject_admission_request, ...],
+    ) -> runtime_subject_admission:
+        if subject_id not in self._subject_contexts:
+            raise experiment_integration_error(
+                f"Runtime admission subject '{subject_id}' is not configured."
+            )
+        integration_ids = [request.integration_id for request in requests]
+        if len(integration_ids) != len(set(integration_ids)):
+            raise experiment_integration_error(
+                "Runtime admission requests must have unique integration ids."
+            )
+
+        infrastructure_subject, baseline_id = self._subject_contexts[subject_id]
+        manager = self._manager_resolver(subject_id)
+        entries: list[_runtime_admission_entry] = []
+        try:
+            for request in requests:
+                item = self._by_id.get(request.integration_id)
+                if item is None:
+                    raise experiment_integration_error(
+                        f"Runtime admission requested unknown integration "
+                        f"'{request.integration_id}'."
+                    )
+                binding = item.integration.subjects.get(infrastructure_subject)
+                admission = None if binding is None else binding.admission
+                if admission is None:
+                    raise experiment_integration_error(
+                        f"Integration '{request.integration_id}' does not provide "
+                        f"runtime admission for '{infrastructure_subject}'."
+                    )
+                context = _subject_context(
+                    self._package,
+                    item.component,
+                    infrastructure_subject,
+                    baseline_id,
+                )
+                handle = admission.admit(context, manager, request.payload)
+                entries.append(
+                    _runtime_admission_entry(
+                        integration_id=request.integration_id,
+                        context=context,
+                        admission=admission,
+                        manager=manager,
+                        handle=handle,
+                    )
+                )
+        except Exception as exc:
+            cleanup_errors = self._revoke_entries(entries)
+            detail = str(exc) or exc.__class__.__name__
+            if cleanup_errors:
+                detail += " Runtime admission cleanup also failed: " + "; ".join(cleanup_errors)
+            raise experiment_integration_error(detail) from exc
+
+        return runtime_subject_admission(
+            handle=tuple(entries),
+            provenance={
+                "integrations": tuple(entry.integration_id for entry in entries),
+            },
+        )
+
+    def revoke(
+        self,
+        subject_id: str,
+        admission: runtime_subject_admission,
+    ) -> Mapping[str, Any]:
+        del subject_id
+        entries = admission.handle
+        if not isinstance(entries, tuple) or any(
+            not isinstance(entry, _runtime_admission_entry) for entry in entries
+        ):
+            raise experiment_integration_error(
+                "Runtime admission handle is invalid for staged integrations."
+            )
+        observations: dict[str, Any] = {}
+        errors: list[str] = []
+        for entry in reversed(entries):
+            try:
+                value = entry.admission.revoke(
+                    entry.context,
+                    entry.manager,
+                    entry.handle,
+                )
+                if value is not None:
+                    if not isinstance(value, Mapping):
+                        raise TypeError(
+                            "runtime admission revoke() must return a mapping or None"
+                        )
+                    observations[entry.integration_id] = dict(value)
+            except Exception as exc:
+                errors.append(
+                    f"{entry.integration_id}: {str(exc) or exc.__class__.__name__}"
+                )
+        if errors:
+            raise experiment_integration_error(
+                "Runtime subject admission revocation failed: " + "; ".join(errors)
+            )
+        return {"integrations": observations}
+
+    @staticmethod
+    def _revoke_entries(entries: list[_runtime_admission_entry]) -> tuple[str, ...]:
+        errors: list[str] = []
+        for entry in reversed(entries):
+            try:
+                entry.admission.revoke(entry.context, entry.manager, entry.handle)
+            except Exception as exc:
+                errors.append(
+                    f"{entry.integration_id}: {str(exc) or exc.__class__.__name__}"
+                )
+        return tuple(errors)
+
+
+def compose_staged_subject_admission_controller(
+    package: experiment_package,
+    subject_contexts: Mapping[str, tuple[str, str]],
+    manager_resolver: Callable[[str], Any],
+    *,
+    loaded_integrations: Iterable[loaded_experiment_integration] | None = None,
+) -> staged_subject_admission_controller | None:
+    controller = staged_subject_admission_controller(
+        package,
+        subject_contexts,
+        manager_resolver,
+        loaded_integrations=loaded_integrations,
+    )
+    return controller if controller.is_required else None
 
 
 def _resolved_integrations(
@@ -378,10 +546,11 @@ def _validate_integration(integration: experiment_integration) -> None:
 
         profile = getattr(binding, "profile", None)
         manager = getattr(binding, "manager", None)
-        if profile is None and manager is None:
+        admission = getattr(binding, "admission", None)
+        if profile is None and manager is None and admission is None:
             raise experiment_integration_error(
-                f"Integration subject '{subject}' must provide profile and/or manager "
-                "composition."
+                f"Integration subject '{subject}' must provide profile, manager, "
+                "and/or runtime admission behavior."
             )
         if profile is not None and not callable(getattr(profile, "compose_profile", None)):
             raise experiment_integration_error(
@@ -393,6 +562,13 @@ def _validate_integration(integration: experiment_integration) -> None:
                 f"Integration subject '{subject}' manager integration does not provide "
                 "callable compose_manager()."
             )
+        if admission is not None:
+            for method in ("admit", "revoke"):
+                if not callable(getattr(admission, method, None)):
+                    raise experiment_integration_error(
+                        f"Integration subject '{subject}' runtime admission does not "
+                        f"provide callable {method}()."
+                    )
 
 
 def _validate_manager_shape(manager: Any, integration_id: str | None) -> None:

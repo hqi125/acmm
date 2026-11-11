@@ -28,7 +28,16 @@ _ANSI_ESCAPE_RE = re.compile(
     re.VERBOSE,
 )
 _OTHER_CONTROL_RE = re.compile(r"[\x00-\x07\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F]")
-_LOG_SANITIZER_ID = "acmm_plain_terminal_v1"
+_JSON_AUTHORIZATION_BEARER_RE = re.compile(
+    r'(?i)(["\']Authorization["\']\s*:\s*["\']Bearer\s+)([^"\']+)(["\'])'
+)
+_AUTHORIZATION_BEARER_RE = re.compile(
+    r"(?i)(Authorization\s*[:=]\s*Bearer\s+)([^\s,;}]+)"
+)
+_GITHUB_TOKEN_RE = re.compile(
+    r"\b(?:gh[pousr]_[A-Za-z0-9._-]+|github_pat_[A-Za-z0-9._-]+)\b"
+)
+_LOG_SANITIZER_ID = "acmm_plain_terminal_v2"
 
 
 def capture_subject_runtime_log(
@@ -68,6 +77,7 @@ def _sanitize_runtime_log(text: str) -> tuple[str, dict[str, object]]:
 
     normalized, backspace_edits = _apply_backspaces(normalized)
     sanitized, other_controls_removed = _OTHER_CONTROL_RE.subn("", normalized)
+    sanitized, credential_values_redacted = _redact_credentials(sanitized)
 
     metadata: dict[str, object] = {
         "schema_version": "0.1",
@@ -81,9 +91,34 @@ def _sanitize_runtime_log(text: str) -> tuple[str, dict[str, object]]:
             "bare_carriage_returns_normalized": bare_carriage_returns,
             "backspace_edits_applied": backspace_edits,
             "other_control_characters_removed": other_controls_removed,
+            "credential_values_redacted": credential_values_redacted,
         },
     }
     return sanitized, metadata
+
+
+def _redact_credentials(text: str) -> tuple[str, int]:
+    redactions = 0
+
+    def replace_json(match: re.Match[str]) -> str:
+        nonlocal redactions
+        redactions += 1
+        return match.group(1) + "<redacted>" + match.group(3)
+
+    def replace_bearer(match: re.Match[str]) -> str:
+        nonlocal redactions
+        redactions += 1
+        return match.group(1) + "<redacted>"
+
+    def replace_token(_match: re.Match[str]) -> str:
+        nonlocal redactions
+        redactions += 1
+        return "<redacted>"
+
+    redacted = _JSON_AUTHORIZATION_BEARER_RE.sub(replace_json, text)
+    redacted = _AUTHORIZATION_BEARER_RE.sub(replace_bearer, redacted)
+    redacted = _GITHUB_TOKEN_RE.sub(replace_token, redacted)
+    return redacted, redactions
 
 
 def _apply_backspaces(text: str) -> tuple[str, int]:

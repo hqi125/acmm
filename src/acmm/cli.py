@@ -7,7 +7,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import sys
 import time
-from typing import Any
+from typing import Any, Mapping
 
 from acmm.analysis.export import analysis_export_error, export_execution
 from acmm.contract.compatibility import validate_harness_compatibility
@@ -24,6 +24,7 @@ from acmm.preflight.deployment import (
 from acmm.experiment_package import (
     acquire_staged_integration_resources,
     compose_execution_registry,
+    compose_staged_subject_admission_controller,
     doctor_staged_integration_resources,
     experiment_package,
     experiment_package_error,
@@ -41,6 +42,7 @@ from acmm.experiment_package import (
 )
 from acmm.experiment_package.cli import register_experiment_package_commands
 from acmm.environment_cli import register_environment_commands
+from acmm.campaign.cli import register_campaign_commands
 from acmm.secret_bindings import secret_binding_error
 from acmm.secret_bindings.cli import register_secret_commands
 from acmm.preflight.live import (
@@ -89,6 +91,13 @@ from acmm.runtime.planner import (
     selected_subject_ids as selected_subject_ids_for_runs,
 )
 from acmm.runtime.result_store import result_write_error
+from acmm.campaign.execution import (
+    campaign_execution_context,
+    finalize_campaign_execution,
+    finalize_campaign_execution_failure,
+    initialize_campaign_execution,
+    load_frozen_campaign_contract,
+)
 from acmm.validation import validation_result
 from acmm_infra.cohort import (
     apply_cohort,
@@ -893,7 +902,11 @@ def _run_command(args: argparse.Namespace) -> int:
     return _run_experiment(args)
 
 
-def _run_experiment(args: argparse.Namespace) -> int:
+def _run_experiment(
+    args: argparse.Namespace,
+    *,
+    campaign_context: campaign_execution_context | None = None,
+) -> int:
     schema_path = None
     repo_root = default_repo_root().expanduser().resolve()
     runtime_root = default_runtime_root().expanduser().resolve()
@@ -921,8 +934,26 @@ def _run_experiment(args: argparse.Namespace) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    contract = dict(package.contract)
-    contract_path = package.contract_path
+    if campaign_context is None:
+        contract = dict(package.contract)
+        contract_path = package.contract_path
+    else:
+        if package.package_sha256 != campaign_context.artifact.manifest["package"]["sha256"]:
+            print(
+                "ERROR: Installed Experiment Package revision does not match the "
+                "frozen campaign.",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            contract = load_frozen_campaign_contract(campaign_context.artifact)
+        except (ValueError, OSError) as exc:
+            print(f"ERROR: Could not load frozen campaign Contract: {exc}", file=sys.stderr)
+            return 2
+        contract_path = (
+            campaign_context.artifact.path
+            / campaign_context.artifact.manifest["campaign"]["contract_artifact"]
+        )
 
     try:
         loaded_runtime = load_staged_experiment_runtime(package)
@@ -942,21 +973,25 @@ def _run_experiment(args: argparse.Namespace) -> int:
         )
         return 1
 
-    plan = build_experiment_plan(contract)
+    if campaign_context is None:
+        plan = build_experiment_plan(contract)
 
-    try:
-        selected_runs = select_planned_runs(
-            plan,
-            contract,
-            run_selectors=args.run_index,
-            subject_selectors=args.subject,
-            subject_run_selectors=args.subject_run_index,
-            scenario_selectors=args.scenario,
-            repetition_selectors=args.repetition,
-        )
-    except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 2
+        try:
+            selected_runs = select_planned_runs(
+                plan,
+                contract,
+                run_selectors=args.run_index,
+                subject_selectors=args.subject,
+                subject_run_selectors=args.subject_run_index,
+                scenario_selectors=args.scenario,
+                repetition_selectors=args.repetition,
+            )
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+    else:
+        plan = campaign_context.plan
+        selected_runs = campaign_context.selected_runs
 
     selected_indices = tuple(run.run_index for run in selected_runs)
     selected_subject_ids = selected_subject_ids_for_runs(selected_runs)
@@ -1453,11 +1488,37 @@ def _run_experiment(args: argparse.Namespace) -> int:
         if ollama_usage_models
         else None
     )
+    subject_admission_contexts = {
+        subject_id: (
+            subject_bindings[subject_id].infrastructure_subject,
+            subject_bindings[subject_id].llm_baseline_id,
+        )
+        for subject_id in selected_subject_ids
+    }
+
+    def resolve_subject_admission_manager(subject_id: str):
+        lease = runtime_leases.get(subject_id)
+        if lease is not None:
+            return lease.context.manager
+        binding = subject_bindings[subject_id]
+        return discover_runtime_lease(
+            repo_root,
+            runtime_root,
+            binding.infrastructure_subject,
+            binding.llm_baseline_id,
+        ).context.manager
+
+    admission_controller = compose_staged_subject_admission_controller(
+        package,
+        subject_admission_contexts,
+        resolve_subject_admission_manager,
+    )
     registry = compose_execution_registry(
         loaded_runtime.runtime,
         subject_adapters,
         tool_result_error_interpreters=staged_tool_result_error_interpreters(package),
         subject_configuration_overlays=overlays,
+        admission_controller=admission_controller,
     )
 
     pacing = contract["run_protocol"].get("pacing", {})
@@ -1469,8 +1530,16 @@ def _run_experiment(args: argparse.Namespace) -> int:
             f"{inter_run_delay:g}s between selected planned runs."
         )
 
+    campaign_journal = [None]
+
     def session_ready(session_dir: Path) -> None:
         runtime_log_session_dir[0] = session_dir
+        if campaign_context is not None:
+            campaign_journal[0] = initialize_campaign_execution(campaign_context)
+
+    def campaign_event(event_type: str, payload: Mapping[str, object]) -> None:
+        if campaign_journal[0] is not None:
+            campaign_journal[0].emit(event_type, payload)
 
     cleanup_errors: tuple[str, ...] = ()
     try:
@@ -1480,6 +1549,17 @@ def _run_experiment(args: argparse.Namespace) -> int:
             registry=registry,
             results_root=Path(args.results_root),
             harness_version=_harness_version(),
+            session_parent=(
+                campaign_context.session_parent
+                if campaign_context is not None
+                else None
+            ),
+            event_sink=(campaign_event if campaign_context is not None else None),
+            execution_id_factory=(
+                (lambda: campaign_context.execution_id)
+                if campaign_context is not None
+                else None
+            ),
             max_attempts_per_run=args.max_attempts_per_run,
             run_indices=selected_indices,
             progress=lambda message: print(message, flush=True),
@@ -1488,7 +1568,11 @@ def _run_experiment(args: argparse.Namespace) -> int:
                 if args.start_if_needed or args.capture_runtime_logs
                 else None
             ),
-            session_ready=session_ready if args.capture_runtime_logs else None,
+            session_ready=(
+                session_ready
+                if args.capture_runtime_logs or campaign_context is not None
+                else None
+            ),
             package_provenance=_execution_package_provenance(package),
             provider_usage_monitor=provider_usage_monitor,
             deployment_reconciliation=(
@@ -1513,6 +1597,12 @@ def _run_experiment(args: argparse.Namespace) -> int:
         capture_runtime_log(active_subject_id[0])
         cleanup_errors = cleanup_runtime_resources()
         result = exc.result
+        if campaign_context is not None:
+            finalize_campaign_execution(
+                campaign_context,
+                result,
+                status="interrupted",
+            )
         _validate_persisted_execution(result, contract)
 
         try:
@@ -1537,6 +1627,11 @@ def _run_experiment(args: argparse.Namespace) -> int:
     ) as exc:
         capture_runtime_log(active_subject_id[0])
         cleanup_errors = cleanup_runtime_resources()
+        if campaign_context is not None:
+            finalize_campaign_execution_failure(
+                campaign_context,
+                detail=str(exc) or exc.__class__.__name__,
+            )
         print(f"ERROR: Experiment execution failed: {exc}", file=sys.stderr)
         for error in cleanup_errors:
             print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
@@ -1544,6 +1639,12 @@ def _run_experiment(args: argparse.Namespace) -> int:
 
     capture_runtime_log(active_subject_id[0])
     cleanup_errors = cleanup_runtime_resources()
+    if campaign_context is not None:
+        finalize_campaign_execution(
+            campaign_context,
+            result,
+            status="completed",
+        )
 
     validation_status = _validate_persisted_execution(
         result,
@@ -1864,6 +1965,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     register_environment_commands(subparsers)
+    register_campaign_commands(subparsers)
     register_experiment_package_commands(subparsers)
     register_secret_commands(subparsers)
 

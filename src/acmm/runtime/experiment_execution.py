@@ -140,6 +140,8 @@ def execute_experiment(
     package_provenance: Mapping[str, str | None] | None = None,
     deployment_reconciliation: Mapping[str, object] | None = None,
     provider_usage_monitor: execution_provider_usage_monitor | None = None,
+    session_parent: str | Path | None = None,
+    event_sink: Callable[[str, Mapping[str, object]], None] | None = None,
 ) -> experiment_execution_result:
     """
     Execute every selected planned slot in one experiment execution session.
@@ -180,6 +182,7 @@ def execute_experiment(
     prepare_run = before_run if before_run is not None else lambda planned: None
     finish_run = after_run if after_run is not None else lambda planned: None
     publish_session = session_ready if session_ready is not None else lambda path: None
+    emit = event_sink if event_sink is not None else lambda event, payload: None
     inter_run_delay_seconds = _inter_run_delay_seconds(contract)
 
     source_path = Path(contract_path)
@@ -200,9 +203,9 @@ def execute_experiment(
     _validate_directory_component("execution ID", execution_id)
 
     session_dir = (
-        Path(results_root)
-        / experiment_id
-        / f"execution_{execution_id}"
+        Path(session_parent) / f"execution_{execution_id}"
+        if session_parent is not None
+        else Path(results_root) / experiment_id / f"execution_{execution_id}"
     )
 
     if session_dir.exists():
@@ -229,10 +232,24 @@ def execute_experiment(
         selected_run_indices=selected_run_indices,
         session_dir=str(session_dir),
     )
+
+    # Publish the durable session boundary before package lifecycle initialization.
+    # Campaign execution uses this callback to establish its journal so abrupt
+    # failure during lifecycle setup is still reconstructible.
+    publish_session(session_dir)
+
     lifecycle_session_handle = None
     if registry.lifecycle is not None:
+        emit(
+            "runtime_session_initialize_started",
+            {"execution_id": execution_id},
+        )
         lifecycle_session_handle = registry.lifecycle.session_initialize(
             lifecycle_session_context
+        )
+        emit(
+            "runtime_session_initialized",
+            {"execution_id": execution_id},
         )
 
     provider_usage_started = _begin_provider_usage_monitor(
@@ -240,7 +257,13 @@ def execute_experiment(
         report,
     )
     started_at = clock()
-    publish_session(session_dir)
+    emit(
+        "execution_started",
+        {
+            "execution_id": execution_id,
+            "selected_run_indices": list(selected_run_indices),
+        },
+    )
 
     report(
         f"Execution {execution_id}: selected {len(selected_runs)} of "
@@ -260,7 +283,20 @@ def execute_experiment(
             active_selected_run_id = None
             active_attempt_number = None
 
+            emit(
+                "logical_run_started",
+                {
+                    "run_index": planned.run_index,
+                    "subject_id": planned.subject_id,
+                    "scenario_id": planned.scenario_id,
+                    "repetition": planned.repetition,
+                },
+            )
             prepare_run(planned)
+            emit(
+                "logical_run_prepared",
+                {"run_index": planned.run_index},
+            )
 
             for attempt_number in range(1, max_attempts_per_run + 1):
                 active_attempt_number = attempt_number
@@ -268,6 +304,14 @@ def execute_experiment(
                     f"Run {planned.run_index}: subject={planned.subject_id}, "
                     f"scenario={planned.scenario_id}, repetition={planned.repetition}, "
                     f"attempt={attempt_number}/{max_attempts_per_run}."
+                )
+
+                emit(
+                    "attempt_started",
+                    {
+                        "run_index": planned.run_index,
+                        "attempt": attempt_number,
+                    },
                 )
 
                 lifecycle_run_context = runtime_run_context(
@@ -288,6 +332,17 @@ def execute_experiment(
                     run_id_factory=make_run_id,
                     lifecycle_session_handle=lifecycle_session_handle,
                     lifecycle_context=lifecycle_run_context,
+                    event_sink=(
+                        lambda event, payload, run_index=planned.run_index,
+                        attempt=attempt_number: emit(
+                            event,
+                            {
+                                "run_index": run_index,
+                                "attempt": attempt,
+                                **dict(payload),
+                            },
+                        )
+                    ),
                 )
 
                 execution = executed.record["execution"]
@@ -306,6 +361,17 @@ def execute_experiment(
                         ),
                     )
                     raise
+
+                emit(
+                    "attempt_persisted",
+                    {
+                        "run_index": planned.run_index,
+                        "attempt": attempt_number,
+                        "validity": execution.get("validity"),
+                        "termination": execution.get("termination"),
+                        "result_path": str(result_path),
+                    },
+                )
 
                 try:
                     finalization = finalize_executed_run(
@@ -335,6 +401,14 @@ def execute_experiment(
                                 "result": finalization,
                             },
                         )
+
+                emit(
+                    "attempt_finalized",
+                    {
+                        "run_index": planned.run_index,
+                        "attempt": attempt_number,
+                    },
+                )
 
                 run_id = executed.record["run"]["id"]
 
@@ -374,6 +448,13 @@ def execute_experiment(
             active_attempt_number = None
 
             finish_run(planned)
+            emit(
+                "logical_run_closed",
+                {
+                    "run_index": planned.run_index,
+                    "resolved": bool(slots[-1].is_resolved),
+                },
+            )
 
             has_next_selected_run = selected_position + 1 < len(selected_runs)
 
@@ -425,6 +506,16 @@ def execute_experiment(
                 ),
             )
 
+        emit(
+            "execution_completed",
+            {
+                "execution_id": execution_id,
+                "resolved_run_indices": [
+                    slot.planned.run_index for slot in slots if slot.is_resolved
+                ],
+            },
+        )
+
         report(
             f"Execution {execution_id} complete: "
             f"{len(slots) - len([slot for slot in slots if not slot.is_resolved])}/"
@@ -432,6 +523,15 @@ def execute_experiment(
         )
     except KeyboardInterrupt:
         ended_at = clock()
+        emit(
+            "execution_interrupted",
+            {
+                "execution_id": execution_id,
+                "run_index": (active_planned.run_index if active_planned is not None else None),
+                "attempt": active_attempt_number,
+                "kind": "keyboard_interrupt",
+            },
+        )
         provider_usage = _finish_provider_usage_monitor(
             provider_usage_monitor,
             provider_usage_started,
@@ -512,6 +612,15 @@ def execute_experiment(
         )
         raise experiment_execution_interrupted(result) from None
     except Exception as exc:
+        emit(
+            "execution_failed",
+            {
+                "execution_id": execution_id,
+                "run_index": (active_planned.run_index if active_planned is not None else None),
+                "attempt": active_attempt_number,
+                "detail": str(exc) or exc.__class__.__name__,
+            },
+        )
         if registry.lifecycle is not None:
             try:
                 registry.lifecycle.session_finalize(

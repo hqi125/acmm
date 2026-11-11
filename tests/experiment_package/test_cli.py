@@ -237,7 +237,7 @@ def test_top_level_help_builds_with_apparatus_enabled(capsys) -> None:
         cli_module._parse_cli_arguments(["-h"])
     assert top_help.value.code == 0
     output = capsys.readouterr().out
-    assert "{env,package,secret,run,export,validate-record}" in output
+    assert "{env,campaign,package,secret,run,export,validate-record}" in output
     assert "run" in output
 
     scientific = cli_module._parse_cli_arguments(

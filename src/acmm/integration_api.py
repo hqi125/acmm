@@ -187,6 +187,26 @@ class subject_manager_integration(Protocol):
         ...
 
 
+
+
+class subject_runtime_admission_integration(Protocol):
+    def admit(
+        self,
+        context: subject_integration_context,
+        manager: object,
+        payload: Mapping[str, Any],
+    ) -> Any:
+        ...
+
+    def revoke(
+        self,
+        context: subject_integration_context,
+        manager: object,
+        handle: Any,
+    ) -> Mapping[str, Any] | None:
+        ...
+
+
 class shared_resource_integration(Protocol):
     def apply(
         self,
@@ -226,11 +246,13 @@ class shared_resource_integration(Protocol):
 class subject_integration:
     profile: subject_profile_integration | None = None
     manager: subject_manager_integration | None = None
+    admission: subject_runtime_admission_integration | None = None
 
     def __post_init__(self) -> None:
-        if self.profile is None and self.manager is None:
+        if self.profile is None and self.manager is None and self.admission is None:
             raise ValueError(
-                "Subject integration must provide profile and/or manager composition."
+                "Subject integration must provide profile, manager, and/or runtime "
+                "admission behavior."
             )
 
 
@@ -277,6 +299,7 @@ __all__ = [
     "subject_integration",
     "subject_integration_context",
     "subject_manager_integration",
+    "subject_runtime_admission_integration",
     "tool_result_error_interpreter",
     "tool_result_interpretation_context",
     "subject_profile_integration",

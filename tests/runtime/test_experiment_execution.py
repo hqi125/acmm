@@ -958,3 +958,44 @@ def test_runtime_lifecycle_finalizes_run_only_after_persistence(tmp_path: Path) 
         (run_dir / "environment_finalization.yaml").read_text(encoding="utf-8")
     )
     assert finalization == {"ok": True, "result": {"persisted": True}}
+
+
+def test_execute_experiment_emits_durable_lifecycle_events_and_supports_session_parent(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    events: list[tuple[str, dict[str, object]]] = []
+    session_parent = tmp_path / "campaign-executions"
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=_registry(adapter),
+        results_root=tmp_path / "unused-results-root",
+        session_parent=session_parent,
+        harness_version="0.1.0",
+        sleep=lambda _: None,
+        max_attempts_per_run=1,
+        run_indices=(0,),
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        event_sink=lambda event, payload: events.append((event, dict(payload))),
+    )
+
+    assert result.session_dir == session_parent / f"execution_{EXECUTION_ID}"
+    assert [event for event, _ in events] == [
+        "execution_started",
+        "logical_run_started",
+        "logical_run_prepared",
+        "attempt_started",
+        "environment_prepare_started",
+        "environment_prepared",
+        "subject_execution_started",
+        "subject_execution_ended",
+        "attempt_persisted",
+        "attempt_finalized",
+        "logical_run_closed",
+        "execution_completed",
+    ]

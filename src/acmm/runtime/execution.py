@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 import uuid
 
 from acmm.evidence.interpretation import interpretation_detail, interpret_scenario_evidence
@@ -25,6 +25,7 @@ from acmm.runtime.interfaces import (
     prepared_environment,
     runtime_run_context,
     runtime_run_finalization,
+    runtime_subject_admission,
 )
 from acmm.runtime.planner import planned_run
 from acmm.runtime.registry import execution_registry
@@ -40,9 +41,11 @@ def execute_planned_run(
     run_id_factory: Callable[[], str] | None = None,
     lifecycle_session_handle: Any = None,
     lifecycle_context: runtime_run_context | None = None,
+    event_sink: Callable[[str, Mapping[str, object]], None] | None = None,
 ) -> executed_run:
     clock = now if now is not None else _utc_now
     make_run_id = run_id_factory if run_id_factory is not None else _new_run_id
+    emit = event_sink if event_sink is not None else lambda event, payload: None
 
     subject = _find_by_id(contract["subjects"], planned.subject_id)
     contract_scenario = _find_by_id(contract["scenarios"], planned.scenario_id)
@@ -58,9 +61,11 @@ def execute_planned_run(
     captured: tuple[captured_evidence, ...] = ()
     observed_termination = "harness_error"
     environment_session: _environment_session | None = None
+    subject_admission: runtime_subject_admission | None = None
     scenario = contract_scenario
 
     try:
+        emit("environment_prepare_started", {})
         environment_session = _prepare_environment(
             contract,
             contract_scenario,
@@ -68,6 +73,7 @@ def execute_planned_run(
             lifecycle_session_handle=lifecycle_session_handle,
             lifecycle_context=lifecycle_context,
         )
+        emit("environment_prepared", {})
         provenance["environment"] = dict(environment_session.provenance)
         captured = environment_session.evidence
 
@@ -76,17 +82,72 @@ def execute_planned_run(
             environment_session.task_bindings,
         )
 
+        if environment_session.admission_requests:
+            controller = registry.admission_controller
+            if controller is None:
+                raise RuntimeError(
+                    "Prepared environment requires subject admission, but no "
+                    "runtime subject admission controller is configured."
+                )
+            integration_ids = [
+                request.integration_id
+                for request in environment_session.admission_requests
+            ]
+            emit(
+                "subject_admission_started",
+                {"integration_ids": integration_ids},
+            )
+            subject_admission = controller.admit(
+                planned.subject_id,
+                environment_session.admission_requests,
+            )
+            if not isinstance(subject_admission, runtime_subject_admission):
+                raise TypeError(
+                    "Runtime subject admission controller admit() must return "
+                    "runtime_subject_admission."
+                )
+            provenance["admission"] = dict(subject_admission.provenance)
+            emit(
+                "subject_admitted",
+                {"integration_ids": integration_ids},
+            )
+
         adapter = registry.subject_adapters[planned.subject_id]
         adapter_subject = _subject_with_configuration_overlay(
             subject,
             registry.subject_configuration_overlays.get(planned.subject_id),
         )
-        adapter_result = adapter.execute(
-            adapter_subject,
-            scenario,
-            environment_session.handle,
-            contract["run_protocol"]["termination"],
-        )
+        try:
+            emit("subject_execution_started", {})
+            adapter_result = adapter.execute(
+                adapter_subject,
+                scenario,
+                environment_session.handle,
+                contract["run_protocol"]["termination"],
+            )
+            emit(
+                "subject_execution_ended",
+                {"termination": adapter_result.termination},
+            )
+        finally:
+            if subject_admission is not None:
+                controller = registry.admission_controller
+                assert controller is not None
+                emit("subject_revocation_started", {})
+                revocation = controller.revoke(
+                    planned.subject_id,
+                    subject_admission,
+                )
+                subject_admission = None
+                if revocation is not None and not isinstance(revocation, Mapping):
+                    raise TypeError(
+                        "Runtime subject admission controller revoke() must return "
+                        "a mapping or None."
+                    )
+                emit(
+                    "subject_revoked",
+                    {"detail": dict(revocation or {})},
+                )
 
         adapter_evidence = _apply_tool_result_error_interpreters(
             adapter_result.evidence,
@@ -443,6 +504,7 @@ class _environment_session:
     provenance: dict[str, Any]
     evidence: tuple[captured_evidence, ...]
     task_bindings: dict[str, str]
+    admission_requests: tuple[Any, ...]
 
     @property
     def uses_runtime_lifecycle(self) -> bool:
@@ -495,6 +557,7 @@ def _prepare_environment(
             ),
             evidence=tuple(prepared.evidence),
             task_bindings=dict(prepared.task_bindings),
+            admission_requests=tuple(prepared.admission_requests),
         )
 
     if fixture_id is None:
@@ -509,6 +572,7 @@ def _prepare_environment(
             },
             evidence=(),
             task_bindings={},
+            admission_requests=(),
         )
 
     fixture = registry.fixtures[fixture_id]
@@ -535,6 +599,7 @@ def _prepare_environment(
         ),
         evidence=tuple(prepared.evidence),
         task_bindings=dict(prepared.task_bindings),
+        admission_requests=tuple(prepared.admission_requests),
     )
 
 
