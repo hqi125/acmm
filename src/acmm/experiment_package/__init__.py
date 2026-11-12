@@ -27,6 +27,7 @@ from acmm.experiment_package.loader import (
 )
 from acmm.experiment_package.model import (
     experiment_analysis_component,
+    experiment_campaign_materialization,
     experiment_integration_component,
     experiment_package,
     experiment_package_secret,
@@ -89,6 +90,7 @@ __all__ = [
     "compose_staged_experiment_manager_integrations",
     "compose_staged_subject_admission_controller",
     "experiment_analysis_component",
+    "experiment_campaign_materialization",
     "experiment_integration_component",
     "experiment_integration_error",
     "experiment_package",

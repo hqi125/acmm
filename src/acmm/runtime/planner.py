@@ -8,6 +8,10 @@ _DEFAULT_ORDERING = "subject_scenario_repetition"
 _INTERLEAVED_ORDERING = "subject_repetition_scenario"
 _DEFAULT_SCENARIO_ORDERING = "declaration"
 _CYCLIC_SCENARIO_ORDERING = "cyclic_rotation"
+_DEFAULT_MATERIALIZATION_GROUP_BY = ("run_index",)
+_MATERIALIZATION_FIELDS = frozenset(
+    {"run_index", "subject_id", "scenario_id", "repetition"}
+)
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,80 @@ class experiment_plan:
     @property
     def run_count(self) -> int:
         return len(self.runs)
+
+
+@dataclass(frozen=True)
+class planned_materialization:
+    key: str
+    runs: tuple[planned_run, ...]
+
+
+def normalize_materialization_group_by(
+    group_by: tuple[str, ...] | list[str] | None,
+) -> tuple[str, ...]:
+    if group_by is None:
+        return _DEFAULT_MATERIALIZATION_GROUP_BY
+    normalized = tuple(group_by)
+    if not normalized:
+        raise ValueError("Materialization group_by must not be empty.")
+    if len(normalized) != len(set(normalized)):
+        raise ValueError("Materialization group_by must not contain duplicates.")
+    unknown = tuple(field for field in normalized if field not in _MATERIALIZATION_FIELDS)
+    if unknown:
+        raise ValueError(
+            "Unsupported materialization coordinate(s): " + ", ".join(unknown) + "."
+        )
+    return normalized
+
+
+def materialization_key_for_run(
+    run: planned_run,
+    group_by: tuple[str, ...] | list[str] | None = None,
+) -> str:
+    fields = normalize_materialization_group_by(group_by)
+    values = {
+        "run_index": run.run_index,
+        "subject_id": run.subject_id,
+        "scenario_id": run.scenario_id,
+        "repetition": run.repetition,
+    }
+    return "|".join(f"{field}={values[field]}" for field in fields)
+
+
+def build_materialization_slices(
+    runs: tuple[planned_run, ...],
+    *,
+    subject_order: tuple[str, ...],
+    group_by: tuple[str, ...] | list[str] | None = None,
+) -> tuple[planned_materialization, ...]:
+    fields = normalize_materialization_group_by(group_by)
+    subject_rank = {subject_id: index for index, subject_id in enumerate(subject_order)}
+    buckets: dict[str, list[planned_run]] = {}
+    order: list[str] = []
+
+    for run in runs:
+        if run.subject_id not in subject_rank:
+            raise ValueError(
+                f"Materialization run references unknown subject '{run.subject_id}'."
+            )
+        key = materialization_key_for_run(run, fields)
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        buckets[key].append(run)
+
+    return tuple(
+        planned_materialization(
+            key=key,
+            runs=tuple(
+                sorted(
+                    buckets[key],
+                    key=lambda run: (subject_rank[run.subject_id], run.run_index),
+                )
+            ),
+        )
+        for key in order
+    )
 
 
 def build_experiment_plan(

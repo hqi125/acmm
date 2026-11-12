@@ -187,6 +187,11 @@ without making Core aware of the concrete external service.
 ## Package and integration secrets
 
 Package schema v0.3 adds Experiment-scoped secret slots for trusted runtime/controller needs.
+Package schema v0.4 adds an optional generic Campaign materialization declaration. A package may
+declare `campaign.materialization.group_by` using planned-run coordinates (`run_index`,
+`subject_id`, `scenario_id`, and/or `repetition`). Core freezes that grouping in Campaign v0.2
+and executes runs subject-major inside each materialization slice. Provider-specific resource
+lifetime, restoration, taint, and cleanup remain package/runtime concerns.
 Integration-scoped secret slots introduced in schema v0.2 remain available for concrete capability
 integrations. Secret declarations are part of immutable package identity; secret values and
 machine-local source paths are not.

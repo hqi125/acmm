@@ -171,3 +171,20 @@ filters as real execution: `--subject`, global `--run-index`, subject-relative
 independent of cyclic counterbalancing and is therefore the preferred way to identify the same
 execution category across subjects. Preview reports the resolved deterministic selection without
 creating an execution session or contacting agents.
+
+## Campaign materialization ordering
+
+Campaign execution may add one package-declared outer locality layer after the Contract plan has been generated. This does not alter the logical run population or any run index. Instead, Core groups selected planned runs by a frozen materialization key and executes each group subject-major.
+
+For example, a package declaring:
+
+```yaml
+campaign:
+  materialization:
+    group_by:
+      - scenario_id
+```
+
+creates one outer slice per scenario. Inside each scenario slice, Core groups execution by subject in Contract order while preserving run-index order for that subject. This is intended for expensive apparatus state whose safe lifetime spans multiple logical runs.
+
+See `docs/runtime/materialization.md` for lifecycle, failure, and Campaign persistence semantics.

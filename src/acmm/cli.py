@@ -23,6 +23,7 @@ from acmm.preflight.deployment import (
 )
 from acmm.experiment_package import (
     acquire_staged_integration_resources,
+    apply_staged_integration_resources,
     compose_execution_registry,
     compose_staged_subject_admission_controller,
     doctor_staged_integration_resources,
@@ -86,6 +87,7 @@ from acmm.runtime.provider_usage import (
 )
 from acmm.runtime.planner import (
     build_experiment_plan,
+    build_materialization_slices,
     experiment_plan,
     planned_run,
     select_planned_runs,
@@ -96,6 +98,7 @@ from acmm.campaign.execution import (
     campaign_execution_context,
     finalize_campaign_execution,
     finalize_campaign_execution_failure,
+    frozen_campaign_materialization_group_by,
     initialize_campaign_execution,
     load_frozen_campaign_contract,
 )
@@ -671,6 +674,17 @@ def _apply_selected_package_context(
         selected_subject_ids,
     )
 
+    def resource_progress(integration_id, message) -> None:
+        print(f"[integration:{integration_id}] {message}", flush=True)
+
+    validate_staged_package_secrets(package)
+    apply_staged_integration_resources(
+        package,
+        runtime_root,
+        timeout_seconds=120.0,
+        progress=resource_progress,
+    )
+
     def progress(index, total, subject, payload) -> None:
         if index is not None:
             print()
@@ -994,6 +1008,27 @@ def _run_experiment(
         plan = campaign_context.plan
         selected_runs = campaign_context.selected_runs
 
+    if campaign_context is not None:
+        materialization_group_by = frozen_campaign_materialization_group_by(
+            campaign_context.artifact
+        )
+    elif package.campaign_materialization is not None:
+        materialization_group_by = package.campaign_materialization.group_by
+    else:
+        materialization_group_by = ("run_index",)
+
+    subject_order = tuple(subject["id"] for subject in contract["subjects"])
+    materialization_slices = build_materialization_slices(
+        selected_runs,
+        subject_order=subject_order,
+        group_by=materialization_group_by,
+    )
+    selected_runs = tuple(
+        run
+        for materialization in materialization_slices
+        for run in materialization.runs
+    )
+
     selected_indices = tuple(run.run_index for run in selected_runs)
     selected_subject_ids = selected_subject_ids_for_runs(selected_runs)
     selected_subject_set = set(selected_subject_ids)
@@ -1054,9 +1089,9 @@ def _run_experiment(
             if args.apply_if_needed:
                 print(
                     "INFO: Experiment context reconciliation is permitted by "
-                    "--apply-if-needed. The selected subject context would be "
-                    "applied before execution and followed by a second strict "
-                    "deployment preflight."
+                    "--apply-if-needed. Shared integration resources and the "
+                    "selected subject context would be applied before execution, "
+                    "followed by a second strict deployment preflight."
                 )
             else:
                 print(
@@ -1078,8 +1113,8 @@ def _run_experiment(
         )
         print(
             "INFO: Experiment context is not converged; --apply-if-needed permits "
-            "ACMM to apply the selected Experiment Package context before "
-            "execution."
+            "ACMM to reconcile shared integration resources and the selected "
+            "subject context before execution."
         )
         try:
             _apply_selected_package_context(
@@ -1520,6 +1555,7 @@ def _run_experiment(
         tool_result_error_interpreters=staged_tool_result_error_interpreters(package),
         subject_configuration_overlays=overlays,
         admission_controller=admission_controller,
+        materialization_group_by=tuple(materialization_group_by),
     )
 
     pacing = contract["run_protocol"].get("pacing", {})
@@ -2042,9 +2078,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--apply-if-needed",
         action="store_true",
         help=(
-            "For real execution, permit ACMM to reconcile selected subject "
-            "experiment context when deployment preflight is not ready. A "
-            "second strict deployment preflight must pass before execution."
+            "For real execution, permit ACMM to reconcile shared integration "
+            "resources and selected subject experiment context when deployment "
+            "preflight is not ready. A second strict deployment preflight must "
+            "pass before execution."
         ),
     )
     run_parser.add_argument(

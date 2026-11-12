@@ -1036,3 +1036,87 @@ def test_execute_experiment_emits_durable_lifecycle_events_and_supports_session_
         "logical_run_closed",
         "execution_completed",
     ]
+
+
+class fake_materialized_runtime_lifecycle(fake_runtime_lifecycle):
+    def materialization_initialize(self, session_handle, context):
+        self.events.append(
+            (
+                "materialization_initialize",
+                session_handle["session"],
+                context.key,
+                context.selected_run_indices,
+            )
+        )
+        return {"materialization": context.key}
+
+    def materialization_finalize(self, session_handle, context, handle, outcome):
+        self.events.append(
+            (
+                "materialization_finalize",
+                session_handle["session"],
+                context.key,
+                handle["materialization"],
+                outcome.completed,
+                outcome.interrupted,
+            )
+        )
+        return {"materialization": context.key, "completed": outcome.completed}
+
+    def run_prepare(self, session_handle, context, scenario, reset):
+        assert context.materialization_key == f"scenario_id={scenario['id']}"
+        assert context.materialization_handle == {
+            "materialization": context.materialization_key
+        }
+        return super().run_prepare(session_handle, context, scenario, reset)
+
+
+def test_materialization_hooks_wrap_subject_major_slice(tmp_path: Path) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    lifecycle = fake_materialized_runtime_lifecycle()
+    base = _registry(adapter)
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        materialization_group_by=("scenario_id",),
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+    events: list[tuple[str, dict[str, object]]] = []
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=registry,
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        sleep=lambda _: None,
+        max_attempts_per_run=1,
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        event_sink=lambda event, payload: events.append((event, dict(payload))),
+    )
+
+    assert len(result.slots) == 5
+    assert [event[0] for event in lifecycle.events].count(
+        "materialization_initialize"
+    ) == 1
+    assert [event[0] for event in lifecycle.events].count(
+        "materialization_finalize"
+    ) == 1
+    initialize = next(
+        event for event in lifecycle.events if event[0] == "materialization_initialize"
+    )
+    assert initialize[2] == "scenario_id=synthetic_plus_13"
+    assert initialize[3] == (0, 1, 2, 3, 4)
+    finalize = next(
+        event for event in lifecycle.events if event[0] == "materialization_finalize"
+    )
+    assert finalize[4:] == (True, False)
+    event_names = [event for event, _ in events]
+    assert event_names.count("materialization_initialize_started") == 1
+    assert event_names.count("materialization_initialized") == 1
+    assert event_names.count("materialization_finalized") == 1

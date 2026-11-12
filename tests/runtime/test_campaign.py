@@ -11,7 +11,9 @@ from acmm.campaign.model import (
     campaign_error,
     create_campaign,
     load_campaign,
+    validate_campaign_manifest,
 )
+import acmm.campaign.model as campaign_model
 from experiment_package.support import install_test_package
 
 
@@ -124,3 +126,37 @@ def test_campaign_can_restore_its_frozen_package_revision_after_runtime_store_re
     assert restored.package_sha256 == package.package_sha256
     assert restored.root.is_dir()
     assert restored.contract_sha256 == package.contract_sha256
+
+
+def test_new_campaign_freezes_materialization_identity(tmp_path: Path, monkeypatch) -> None:
+    package, _ = install_test_package(tmp_path, monkeypatch)
+
+    manifest = build_campaign_manifest(package, campaign_id="campaign-materialization")
+
+    assert manifest["schema_version"] == "0.2"
+    assert manifest["design"]["materialization"] == {
+        "group_by": ["run_index"],
+        "subject_major_within_slice": True,
+        "slice_count": len(manifest["runs"]),
+    }
+    assert [item["materialization_key"] for item in manifest["runs"]] == [
+        f"run_index={item['run_index']}" for item in manifest["runs"]
+    ]
+
+
+def test_campaign_v0_1_manifest_remains_valid_after_materialization_upgrade(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package, _ = install_test_package(tmp_path, monkeypatch)
+    manifest = build_campaign_manifest(package, campaign_id="legacy-campaign")
+
+    manifest["schema_version"] = "0.1"
+    manifest["design"].pop("materialization")
+    for item in manifest["runs"]:
+        item.pop("materialization_key")
+    manifest["campaign"]["design_digest"] = campaign_model._sha256_json(
+        campaign_model._manifest_design_payload(manifest)
+    )
+
+    validate_campaign_manifest(manifest)

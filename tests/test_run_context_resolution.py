@@ -5,6 +5,7 @@ import shutil
 
 import pytest
 
+import acmm.cli as cli_module
 from acmm.cli import _build_parser
 from acmm.experiment_package import install_experiment_package
 from acmm.preflight.live import (
@@ -257,6 +258,76 @@ def test_run_preview_reports_permitted_reconciliation_without_mutation(
     assert binding is not None
     assert not (runtime_root / binding.infrastructure_subject).exists()
     assert package.root.exists()
+
+
+def test_apply_selected_package_context_reconciles_resources_before_subjects(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package, runtime_root = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=CONTRACT,
+        runtime_source=SMOKE_RUNTIME_SOURCE,
+    )
+    events: list[str] = []
+    cohort = object()
+
+    monkeypatch.setattr(
+        cli_module,
+        "resolve_package_cohort",
+        lambda repo_root, resolved_package, selected_subject_ids: cohort,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "validate_staged_package_secrets",
+        lambda resolved_package: events.append("secrets"),
+    )
+
+    def fake_apply_resources(
+        resolved_package,
+        resolved_runtime_root,
+        *,
+        timeout_seconds,
+        progress,
+    ):
+        assert resolved_package is package
+        assert resolved_runtime_root == runtime_root
+        assert timeout_seconds == 120.0
+        assert callable(progress)
+        events.append("resources")
+        return ()
+
+    def fake_apply_cohort(
+        repo_root,
+        resolved_runtime_root,
+        resolved_cohort,
+        *,
+        timeout_seconds,
+        progress,
+    ):
+        assert resolved_runtime_root == runtime_root
+        assert resolved_cohort is cohort
+        assert timeout_seconds == 120.0
+        assert callable(progress)
+        events.append("subjects")
+        return ()
+
+    monkeypatch.setattr(
+        cli_module,
+        "apply_staged_integration_resources",
+        fake_apply_resources,
+    )
+    monkeypatch.setattr(cli_module, "apply_cohort", fake_apply_cohort)
+
+    cli_module._apply_selected_package_context(
+        repo_root=ROOT,
+        runtime_root=runtime_root,
+        package=package,
+        selected_subject_ids=(SUBJECT_ID,),
+    )
+
+    assert events == ["secrets", "resources", "subjects"]
 
 
 def test_run_apply_if_needed_reconciles_only_selected_subjects_and_rechecks(

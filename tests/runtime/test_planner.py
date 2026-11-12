@@ -1,7 +1,11 @@
 from pathlib import Path
 
 from acmm.contract.loader import load_contract
-from acmm.runtime.planner import build_experiment_plan, select_planned_runs
+from acmm.runtime.planner import (
+    build_experiment_plan,
+    build_materialization_slices,
+    select_planned_runs,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -358,3 +362,52 @@ def test_repetition_selection_is_one_based_and_bounded() -> None:
             assert "repetition range 1..2" in str(exc)
         else:
             raise AssertionError("out-of-range repetition must fail")
+
+
+def test_materialization_slices_define_outer_order_and_subject_major_inner_order() -> None:
+    contract = {
+        "experiment": {"id": "materialization_order_test"},
+        "subjects": [
+            {"id": "subject_a"},
+            {"id": "subject_b"},
+        ],
+        "scenarios": [
+            {"id": "scenario_a"},
+            {"id": "scenario_b"},
+        ],
+        "run_protocol": {
+            "repetitions": 2,
+            "ordering": "subject_repetition_scenario",
+            "scenario_ordering": "cyclic_rotation",
+        },
+    }
+    plan = build_experiment_plan(contract)
+
+    slices = build_materialization_slices(
+        plan.runs,
+        subject_order=("subject_a", "subject_b"),
+        group_by=("scenario_id",),
+    )
+
+    assert [item.key for item in slices] == [
+        "scenario_id=scenario_a",
+        "scenario_id=scenario_b",
+    ]
+    assert [
+        (run.subject_id, run.scenario_id, run.repetition)
+        for run in slices[0].runs
+    ] == [
+        ("subject_a", "scenario_a", 1),
+        ("subject_a", "scenario_a", 2),
+        ("subject_b", "scenario_a", 1),
+        ("subject_b", "scenario_a", 2),
+    ]
+    assert [
+        (run.subject_id, run.scenario_id, run.repetition)
+        for run in slices[1].runs
+    ] == [
+        ("subject_a", "scenario_b", 1),
+        ("subject_a", "scenario_b", 2),
+        ("subject_b", "scenario_b", 1),
+        ("subject_b", "scenario_b", 2),
+    ]

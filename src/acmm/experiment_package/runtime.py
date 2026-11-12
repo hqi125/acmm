@@ -234,6 +234,7 @@ def compose_execution_registry(
     tool_result_error_interpreters: tuple[tool_result_error_interpreter, ...] = (),
     subject_configuration_overlays: Mapping[str, Mapping[str, Any]] | None = None,
     admission_controller: Any = None,
+    materialization_group_by: tuple[str, ...] = ("run_index",),
 ) -> execution_registry:
     overlays = {
         subject_id: dict(configuration)
@@ -243,6 +244,7 @@ def compose_execution_registry(
     return execution_registry(
         subject_adapters=dict(subject_adapters),
         lifecycle=runtime.lifecycle,
+        materialization_group_by=tuple(materialization_group_by),
         admission_controller=admission_controller,
         fixtures=dict(runtime.fixtures),
         evaluators=dict(runtime.evaluators),
@@ -378,6 +380,18 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
                     "Runtime execution lifecycle does not provide callable "
                     f"{method_name}()."
                 )
+
+        materialization_initialize = callable(
+            getattr(runtime.lifecycle, "materialization_initialize", None)
+        )
+        materialization_finalize = callable(
+            getattr(runtime.lifecycle, "materialization_finalize", None)
+        )
+        if materialization_initialize != materialization_finalize:
+            raise experiment_runtime_error(
+                "Runtime materialization lifecycle must provide both callable "
+                "materialization_initialize() and materialization_finalize(), or neither."
+            )
 
     if runtime.recovery is not None:
         if not callable(getattr(runtime.recovery, "reconcile", None)):

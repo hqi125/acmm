@@ -21,11 +21,19 @@ from acmm.experiment_package.staging import (
     open_staged_experiment_package,
     stage_experiment_package,
 )
-from acmm.runtime.planner import build_experiment_plan
+from acmm.runtime.planner import (
+    build_experiment_plan,
+    build_materialization_slices,
+    materialization_key_for_run,
+    normalize_materialization_group_by,
+)
 
 
-CAMPAIGN_SCHEMA_VERSION = "0.1"
-_CAMPAIGN_SCHEMA_NAME = "campaign-v0.1.schema.json"
+CAMPAIGN_SCHEMA_VERSION = "0.2"
+_CAMPAIGN_SCHEMA_FILES = {
+    "0.1": "campaign-v0.1.schema.json",
+    "0.2": "campaign-v0.2.schema.json",
+}
 
 
 class campaign_error(ValueError):
@@ -41,6 +49,8 @@ class campaign_preview:
     subject_ids: tuple[str, ...]
     scenario_ids: tuple[str, ...]
     repetitions: int
+    materialization_group_by: tuple[str, ...]
+    materialization_count: int
 
 
 @dataclass(frozen=True)
@@ -54,6 +64,13 @@ class campaign_artifact:
 
 def build_campaign_preview(package: experiment_package) -> campaign_preview:
     plan = build_experiment_plan(dict(package.contract))
+    group_by = _package_materialization_group_by(package)
+    subject_ids = tuple(subject["id"] for subject in package.contract["subjects"])
+    materializations = build_materialization_slices(
+        plan.runs,
+        subject_order=subject_ids,
+        group_by=group_by,
+    )
     payload = _design_payload(package, plan.runs)
     digest = _sha256_json(payload)
     protocol = package.contract["run_protocol"]
@@ -62,9 +79,11 @@ def build_campaign_preview(package: experiment_package) -> campaign_preview:
         package_sha256=package.package_sha256,
         design_digest=digest,
         run_count=plan.run_count,
-        subject_ids=tuple(subject["id"] for subject in package.contract["subjects"]),
+        subject_ids=subject_ids,
         scenario_ids=tuple(scenario["id"] for scenario in package.contract["scenarios"]),
         repetitions=protocol["repetitions"],
+        materialization_group_by=group_by,
+        materialization_count=len(materializations),
     )
 
 
@@ -79,6 +98,13 @@ def build_campaign_manifest(
     _validate_identifier("campaign ID", realized_campaign_id)
 
     plan = build_experiment_plan(dict(package.contract))
+    materialization_group_by = _package_materialization_group_by(package)
+    subject_ids = tuple(subject["id"] for subject in package.contract["subjects"])
+    materializations = build_materialization_slices(
+        plan.runs,
+        subject_order=subject_ids,
+        group_by=materialization_group_by,
+    )
     design_payload = _design_payload(package, plan.runs)
     design_digest = _sha256_json(design_payload)
     provenance = package_provenance(package)
@@ -98,6 +124,10 @@ def build_campaign_manifest(
             {
                 **run_spec,
                 "run_id": _logical_run_id(realized_campaign_id, run_spec),
+                "materialization_key": materialization_key_for_run(
+                    planned,
+                    materialization_group_by,
+                ),
             }
         )
 
@@ -130,12 +160,17 @@ def build_campaign_manifest(
             ],
         },
         "design": {
-            "subjects": [subject["id"] for subject in package.contract["subjects"]],
+            "subjects": list(subject_ids),
             "scenarios": [scenario["id"] for scenario in package.contract["scenarios"]],
             "run_protocol": {
                 "repetitions": protocol["repetitions"],
                 "ordering": protocol.get("ordering", "subject_scenario_repetition"),
                 "scenario_ordering": protocol.get("scenario_ordering", "declaration"),
+            },
+            "materialization": {
+                "group_by": list(materialization_group_by),
+                "subject_major_within_slice": True,
+                "slice_count": len(materializations),
             },
         },
         "runs": runs,
@@ -320,7 +355,13 @@ def ensure_campaign_package_installed(
         ) from exc
 
 def validate_campaign_manifest(manifest: Mapping[str, Any]) -> None:
-    schema_path = Path(__file__).with_name("schemas") / _CAMPAIGN_SCHEMA_NAME
+    schema_version = manifest.get("schema_version")
+    schema_name = _CAMPAIGN_SCHEMA_FILES.get(schema_version)
+    if schema_name is None:
+        raise campaign_error(
+            f"Unsupported Campaign schema_version '{schema_version}'."
+        )
+    schema_path = Path(__file__).with_name("schemas") / schema_name
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -347,12 +388,40 @@ def validate_campaign_manifest(manifest: Mapping[str, Any]) -> None:
         raise campaign_error("Campaign runs contain duplicate run_id values.")
     if manifest["campaign"]["run_count"] != len(runs):
         raise campaign_error("Campaign run_count does not match the frozen run table.")
+    if schema_version == "0.2":
+        group_by = normalize_materialization_group_by(
+            tuple(manifest["design"]["materialization"]["group_by"])
+        )
+        subject_ids = tuple(manifest["design"]["subjects"])
+        planned = tuple(
+            _planned_run_from_manifest(item)
+            for item in runs
+        )
+        expected = {
+            item.run_index: materialization_key_for_run(item, group_by)
+            for item in planned
+        }
+        for item in runs:
+            if item["materialization_key"] != expected[item["run_index"]]:
+                raise campaign_error(
+                    "Campaign run materialization_key does not match frozen grouping."
+                )
+        slices = build_materialization_slices(
+            planned,
+            subject_order=subject_ids,
+            group_by=group_by,
+        )
+        if manifest["design"]["materialization"]["slice_count"] != len(slices):
+            raise campaign_error(
+                "Campaign materialization slice_count does not match the frozen run table."
+            )
 
 
 def _design_payload(package: experiment_package, runs) -> dict[str, Any]:
     provenance = package_provenance(package)
+    group_by = _package_materialization_group_by(package)
     return {
-        "schema": "acmm.campaign-design/v1",
+        "schema": "acmm.campaign-design/v2",
         "experiment_id": package.experiment_id,
         "package": {
             "schema_version": provenance.package_schema_version,
@@ -370,12 +439,17 @@ def _design_payload(package: experiment_package, runs) -> dict[str, Any]:
                 )
             ],
         },
+        "materialization": {
+            "group_by": list(group_by),
+            "subject_major_within_slice": True,
+        },
         "runs": [
             {
                 "run_index": item.run_index,
                 "subject_id": item.subject_id,
                 "scenario_id": item.scenario_id,
                 "repetition": item.repetition,
+                "materialization_key": materialization_key_for_run(item, group_by),
             }
             for item in runs
         ],
@@ -384,8 +458,31 @@ def _design_payload(package: experiment_package, runs) -> dict[str, Any]:
 
 def _manifest_design_payload(manifest: Mapping[str, Any]) -> dict[str, Any]:
     package = manifest["package"]
+    if manifest.get("schema_version") == "0.1":
+        return {
+            "schema": "acmm.campaign-design/v1",
+            "experiment_id": manifest["campaign"]["experiment_id"],
+            "package": {
+                "schema_version": package["schema_version"],
+                "sha256": package["sha256"],
+                "contract_sha256": package["contract_sha256"],
+                "runtime_sha256": package["runtime_sha256"],
+                "integrations": package["integrations"],
+            },
+            "runs": [
+                {
+                    "run_index": item["run_index"],
+                    "subject_id": item["subject_id"],
+                    "scenario_id": item["scenario_id"],
+                    "repetition": item["repetition"],
+                }
+                for item in manifest["runs"]
+            ],
+        }
+
+    materialization = manifest["design"]["materialization"]
     return {
-        "schema": "acmm.campaign-design/v1",
+        "schema": "acmm.campaign-design/v2",
         "experiment_id": manifest["campaign"]["experiment_id"],
         "package": {
             "schema_version": package["schema_version"],
@@ -394,16 +491,41 @@ def _manifest_design_payload(manifest: Mapping[str, Any]) -> dict[str, Any]:
             "runtime_sha256": package["runtime_sha256"],
             "integrations": package["integrations"],
         },
+        "materialization": {
+            "group_by": materialization["group_by"],
+            "subject_major_within_slice": materialization[
+                "subject_major_within_slice"
+            ],
+        },
         "runs": [
             {
                 "run_index": item["run_index"],
                 "subject_id": item["subject_id"],
                 "scenario_id": item["scenario_id"],
                 "repetition": item["repetition"],
+                "materialization_key": item["materialization_key"],
             }
             for item in manifest["runs"]
         ],
     }
+
+
+def _package_materialization_group_by(package: experiment_package) -> tuple[str, ...]:
+    configured = package.campaign_materialization
+    if configured is None:
+        return normalize_materialization_group_by(None)
+    return normalize_materialization_group_by(configured.group_by)
+
+
+def _planned_run_from_manifest(item: Mapping[str, Any]):
+    from acmm.runtime.planner import planned_run
+
+    return planned_run(
+        run_index=item["run_index"],
+        subject_id=item["subject_id"],
+        scenario_id=item["scenario_id"],
+        repetition=item["repetition"],
+    )
 
 
 def _logical_run_id(campaign_id: str, run_spec: Mapping[str, Any]) -> str:

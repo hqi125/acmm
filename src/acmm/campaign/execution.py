@@ -15,7 +15,9 @@ from jsonschema import Draft202012Validator
 
 from acmm.campaign.model import campaign_artifact, campaign_error
 from acmm.runtime.planner import (
+    build_materialization_slices,
     experiment_plan,
+    normalize_materialization_group_by,
     planned_run,
     select_planned_runs,
 )
@@ -204,6 +206,32 @@ def frozen_campaign_plan(artifact: campaign_artifact) -> experiment_plan:
         runs=runs,
     )
 
+
+
+def frozen_campaign_materialization_group_by(
+    artifact: campaign_artifact,
+) -> tuple[str, ...]:
+    if artifact.manifest.get("schema_version") == "0.1":
+        return normalize_materialization_group_by(None)
+    materialization = artifact.manifest["design"]["materialization"]
+    return normalize_materialization_group_by(
+        tuple(materialization["group_by"])
+    )
+
+
+def order_campaign_runs_for_execution(
+    artifact: campaign_artifact,
+    runs: tuple[planned_run, ...],
+) -> tuple[planned_run, ...]:
+    if not runs:
+        return ()
+    subject_order = tuple(artifact.manifest["design"]["subjects"])
+    slices = build_materialization_slices(
+        runs,
+        subject_order=subject_order,
+        group_by=frozen_campaign_materialization_group_by(artifact),
+    )
+    return tuple(run for item in slices for run in item.runs)
 
 def select_campaign_runs(
     artifact: campaign_artifact,

@@ -24,6 +24,7 @@ from acmm.campaign.execution import (
     create_campaign_execution_context,
     eligible_campaign_runs,
     inspect_campaign_status,
+    order_campaign_runs_for_execution,
     select_campaign_runs,
 )
 from acmm_infra.profiles.common import default_runtime_root
@@ -274,6 +275,7 @@ def _campaign_execute_locked(args: argparse.Namespace, artifact) -> int:
     )
     status = inspect_campaign_status(artifact)
     eligible = eligible_campaign_runs(artifact, selected, status)
+    eligible = order_campaign_runs_for_execution(artifact, eligible)
 
     if reconciliation.locally_reconciled_execution_ids:
         print(
@@ -439,6 +441,11 @@ def _print_preview(preview) -> None:
     print(f"  scenarios:       {len(preview.scenario_ids)}")
     print(f"  repetitions:     {preview.repetitions}")
     print(f"  logical runs:    {preview.run_count}")
+    print(
+        "  materialization: "
+        + ",".join(preview.materialization_group_by)
+        + f" ({preview.materialization_count} slice(s))"
+    )
 
 
 __all__ = ["register_campaign_commands"]

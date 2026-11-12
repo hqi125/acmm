@@ -17,6 +17,7 @@ from acmm.runtime.interfaces import (
 class execution_registry:
     subject_adapters: dict[str, subject_adapter] = field(default_factory=dict)
     lifecycle: runtime_execution_lifecycle | None = None
+    materialization_group_by: tuple[str, ...] = ("run_index",)
     admission_controller: runtime_subject_admission_controller | None = None
     fixtures: dict[str, environment_fixture] = field(default_factory=dict)
     evaluators: dict[str, opportunity_evaluator] = field(default_factory=dict)

@@ -15,6 +15,7 @@ from acmm.experiment_api import EXPERIMENT_RUNTIME_API_VERSION
 from acmm.integration_api import EXPERIMENT_INTEGRATION_API_VERSION
 from acmm.experiment_package.model import (
     experiment_analysis_component,
+    experiment_campaign_materialization,
     experiment_integration_component,
     experiment_integration_secret,
     experiment_package,
@@ -92,6 +93,7 @@ def load_experiment_package(
         manifest.get("integrations"),
     )
     analysis = _load_analysis_components(root, manifest.get("analysis"))
+    campaign_materialization = _load_campaign_materialization(manifest.get("campaign"))
 
     return experiment_package(
         root=root,
@@ -105,6 +107,7 @@ def load_experiment_package(
         runtime=runtime,
         integrations=integrations,
         analysis=analysis,
+        campaign_materialization=campaign_materialization,
         contract_warnings=contract_validation.warnings,
     )
 
@@ -196,6 +199,31 @@ def _contract_experiment_id(contract: Mapping[str, Any]) -> str:
 
     return experiment_id
 
+
+
+def _load_campaign_materialization(
+    data: Any,
+) -> experiment_campaign_materialization | None:
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise experiment_package_error("campaign must be a mapping.")
+    materialization = data.get("materialization")
+    if materialization is None:
+        return None
+    if not isinstance(materialization, dict):
+        raise experiment_package_error("campaign.materialization must be a mapping.")
+    group_by = materialization.get("group_by")
+    if not isinstance(group_by, list) or not group_by:
+        raise experiment_package_error(
+            "campaign.materialization.group_by must be a non-empty sequence."
+        )
+    normalized = tuple(str(item) for item in group_by)
+    if len(normalized) != len(set(normalized)):
+        raise experiment_package_error(
+            "campaign.materialization.group_by must not contain duplicates."
+        )
+    return experiment_campaign_materialization(group_by=normalized)
 
 def _load_package_secrets(data: Any) -> tuple[experiment_package_secret, ...]:
     if data is None:

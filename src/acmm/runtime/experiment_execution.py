@@ -14,8 +14,15 @@ import yaml
 
 from acmm.runtime.execution import execute_planned_run, finalize_executed_run
 from acmm.runtime.execution_manifest import EXPERIMENT_EXECUTION_SCHEMA_VERSION
-from acmm.runtime.planner import build_experiment_plan, planned_run
+from acmm.runtime.planner import (
+    build_experiment_plan,
+    build_materialization_slices,
+    materialization_key_for_run,
+    planned_run,
+)
 from acmm.runtime.interfaces import (
+    runtime_materialization_context,
+    runtime_materialization_finalization,
     runtime_run_context,
     runtime_run_finalization,
     runtime_session_context,
@@ -193,7 +200,21 @@ def execute_experiment(
     execution_id = make_execution_id()
     plan = build_experiment_plan(contract)
     selected_runs = _select_runs(plan.runs, run_indices)
+    materialization_slices = build_materialization_slices(
+        selected_runs,
+        subject_order=tuple(subject["id"] for subject in contract["subjects"]),
+        group_by=registry.materialization_group_by,
+    )
+    selected_runs = tuple(
+        run
+        for materialization in materialization_slices
+        for run in materialization.runs
+    )
     selected_run_indices = tuple(run.run_index for run in selected_runs)
+    materialization_runs_by_key = {
+        materialization.key: materialization.runs
+        for materialization in materialization_slices
+    }
     subject_llm_baselines = _selected_subject_llm_baselines(
         selected_runs,
         registry,
@@ -253,6 +274,121 @@ def execute_experiment(
             {"execution_id": execution_id},
         )
 
+    materialization_initialize = (
+        getattr(registry.lifecycle, "materialization_initialize", None)
+        if registry.lifecycle is not None
+        else None
+    )
+    materialization_finalize = (
+        getattr(registry.lifecycle, "materialization_finalize", None)
+        if registry.lifecycle is not None
+        else None
+    )
+    active_materialization_context: runtime_materialization_context | None = None
+    active_materialization_handle = None
+    materialization_observable = (
+        tuple(registry.materialization_group_by) != ("run_index",)
+        or callable(materialization_initialize)
+        or callable(materialization_finalize)
+    )
+
+    def begin_materialization(key: str) -> None:
+        nonlocal active_materialization_context, active_materialization_handle
+        runs = materialization_runs_by_key[key]
+        context = runtime_materialization_context(
+            experiment_id=experiment_id,
+            execution_id=execution_id,
+            key=key,
+            selected_run_indices=tuple(run.run_index for run in runs),
+            subject_ids=tuple(dict.fromkeys(run.subject_id for run in runs)),
+            scenario_ids=tuple(dict.fromkeys(run.scenario_id for run in runs)),
+            repetitions=tuple(dict.fromkeys(run.repetition for run in runs)),
+            session_dir=str(session_dir),
+            progress=report,
+        )
+        if materialization_observable:
+            emit(
+                "materialization_initialize_started",
+                {
+                    "key": key,
+                    "selected_run_indices": list(context.selected_run_indices),
+                },
+            )
+        handle = None
+        if callable(materialization_initialize):
+            handle = materialization_initialize(
+                lifecycle_session_handle,
+                context,
+            )
+        active_materialization_context = context
+        active_materialization_handle = handle
+        if materialization_observable:
+            emit(
+                "materialization_initialized",
+                {
+                    "key": key,
+                    "selected_run_indices": list(context.selected_run_indices),
+                },
+            )
+            report(
+                f"Materialization {key}: "
+                f"{len(context.selected_run_indices)} selected run(s)."
+            )
+
+    def finish_materialization(
+        *,
+        completed: bool,
+        interrupted: bool,
+        detail: str | None = None,
+        suppress_errors: bool = False,
+    ) -> None:
+        nonlocal active_materialization_context, active_materialization_handle
+        context = active_materialization_context
+        handle = active_materialization_handle
+        if context is None:
+            return
+        try:
+            result = None
+            if callable(materialization_finalize):
+                result = materialization_finalize(
+                    lifecycle_session_handle,
+                    context,
+                    handle,
+                    runtime_materialization_finalization(
+                        completed=completed,
+                        interrupted=interrupted,
+                        detail=detail,
+                    ),
+                )
+            if materialization_observable:
+                emit(
+                    "materialization_finalized",
+                    {
+                        "key": context.key,
+                        "completed": completed,
+                        "interrupted": interrupted,
+                        "result": dict(result) if isinstance(result, Mapping) else {},
+                    },
+                )
+        except Exception as exc:
+            if materialization_observable:
+                emit(
+                    "materialization_finalization_failed",
+                    {
+                        "key": context.key,
+                        "detail": str(exc) or exc.__class__.__name__,
+                    },
+                )
+            if not suppress_errors:
+                raise
+            report(
+                "WARNING: Materialization finalization failed for "
+                f"{context.key}: {exc}"
+            )
+        finally:
+            active_materialization_context = None
+            active_materialization_handle = None
+
     provider_usage_started = _begin_provider_usage_monitor(
         provider_usage_monitor,
         report,
@@ -279,6 +415,21 @@ def execute_experiment(
 
     try:
         for selected_position, planned in enumerate(selected_runs):
+            materialization_key = materialization_key_for_run(
+                planned,
+                registry.materialization_group_by,
+            )
+            if (
+                active_materialization_context is None
+                or active_materialization_context.key != materialization_key
+            ):
+                if active_materialization_context is not None:
+                    finish_materialization(
+                        completed=True,
+                        interrupted=False,
+                    )
+                begin_materialization(materialization_key)
+
             active_planned = planned
             active_attempts = []
             active_selected_run_id = None
@@ -322,6 +473,8 @@ def execute_experiment(
                     scenario_id=planned.scenario_id,
                     repetition=planned.repetition,
                     attempt=attempt_number,
+                    materialization_key=materialization_key,
+                    materialization_handle=active_materialization_handle,
                     progress=report,
                 )
                 executed = execute_planned_run(
@@ -467,6 +620,12 @@ def execute_experiment(
                 )
                 wait(inter_run_delay_seconds)
 
+        if active_materialization_context is not None:
+            finish_materialization(
+                completed=True,
+                interrupted=False,
+            )
+
         ended_at = clock()
         provider_usage = _finish_provider_usage_monitor(
             provider_usage_monitor,
@@ -524,6 +683,12 @@ def execute_experiment(
             f"{len(slots)} selected run(s) resolved."
         )
     except KeyboardInterrupt:
+        finish_materialization(
+            completed=False,
+            interrupted=True,
+            detail="keyboard_interrupt",
+            suppress_errors=True,
+        )
         ended_at = clock()
         emit(
             "execution_interrupted",
@@ -614,6 +779,12 @@ def execute_experiment(
         )
         raise experiment_execution_interrupted(result) from None
     except Exception as exc:
+        finish_materialization(
+            completed=False,
+            interrupted=False,
+            detail=str(exc) or exc.__class__.__name__,
+            suppress_errors=True,
+        )
         emit(
             "execution_failed",
             {

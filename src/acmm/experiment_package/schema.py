@@ -13,6 +13,7 @@ _SCHEMA_FILES = {
     "0.1": "experiment-package-v0.1.schema.json",
     "0.2": "experiment-package-v0.2.schema.json",
     "0.3": "experiment-package-v0.3.schema.json",
+    "0.4": "experiment-package-v0.4.schema.json",
 }
 
 

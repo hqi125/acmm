@@ -244,6 +244,30 @@ class runtime_session_context:
 
 
 @dataclass(frozen=True)
+class runtime_materialization_context:
+    experiment_id: str
+    execution_id: str
+    key: str
+    selected_run_indices: tuple[int, ...]
+    subject_ids: tuple[str, ...]
+    scenario_ids: tuple[str, ...]
+    repetitions: tuple[int, ...]
+    session_dir: str
+    progress: Callable[[str], None] | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+
+
+@dataclass(frozen=True)
+class runtime_materialization_finalization:
+    completed: bool
+    interrupted: bool
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
 class runtime_run_context:
     execution_id: str
     run_index: int
@@ -251,6 +275,12 @@ class runtime_run_context:
     scenario_id: str
     repetition: int
     attempt: int
+    materialization_key: str | None = None
+    materialization_handle: Any = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
     progress: Callable[[str], None] | None = field(
         default=None,
         compare=False,
@@ -295,6 +325,24 @@ class runtime_execution_recovery(Protocol):
         self,
         context: runtime_execution_recovery_context,
     ) -> runtime_execution_recovery_result:
+        ...
+
+
+class runtime_materialization_lifecycle(Protocol):
+    def materialization_initialize(
+        self,
+        session_handle: Any,
+        context: runtime_materialization_context,
+    ) -> Any:
+        ...
+
+    def materialization_finalize(
+        self,
+        session_handle: Any,
+        context: runtime_materialization_context,
+        handle: Any,
+        outcome: runtime_materialization_finalization,
+    ) -> Mapping[str, Any] | None:
         ...
 
 

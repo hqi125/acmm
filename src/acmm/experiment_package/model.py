@@ -47,6 +47,11 @@ class experiment_analysis_component:
 
 
 @dataclass(frozen=True)
+class experiment_campaign_materialization:
+    group_by: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class experiment_package:
     root: Path
     schema_version: str
@@ -59,4 +64,5 @@ class experiment_package:
     runtime: experiment_runtime_component | None
     integrations: tuple[experiment_integration_component, ...]
     analysis: tuple[experiment_analysis_component, ...]
+    campaign_materialization: experiment_campaign_materialization | None
     contract_warnings: tuple[validation_issue, ...]
