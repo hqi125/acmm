@@ -853,11 +853,15 @@ class fake_runtime_lifecycle:
         self.events: list[tuple] = []
 
     def session_initialize(self, context):
+        if context.progress is not None:
+            context.progress("Pacing: synthetic session provider wait, idling ~3s.")
         self.events.append(("session_initialize", context.execution_id))
         return {"session": context.execution_id}
 
     def run_prepare(self, session_handle, context, scenario, reset):
         del reset
+        if context.progress is not None:
+            context.progress("Pacing: synthetic provider wait, idling ~5s.")
         self.events.append(
             (
                 "run_prepare",
@@ -959,6 +963,39 @@ def test_runtime_lifecycle_finalizes_run_only_after_persistence(tmp_path: Path) 
     )
     assert finalization == {"ok": True, "result": {"persisted": True}}
 
+
+
+def test_runtime_lifecycle_can_report_progress_through_run_context(tmp_path: Path) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    lifecycle = fake_runtime_lifecycle()
+    base = _registry(adapter)
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+    messages: list[str] = []
+
+    execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=registry,
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        sleep=lambda _: None,
+        max_attempts_per_run=1,
+        run_indices=(0,),
+        progress=messages.append,
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+    )
+
+    assert "Pacing: synthetic session provider wait, idling ~3s." in messages
+    assert "Pacing: synthetic provider wait, idling ~5s." in messages
 
 def test_execute_experiment_emits_durable_lifecycle_events_and_supports_session_parent(
     tmp_path: Path,

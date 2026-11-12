@@ -218,14 +218,14 @@ Basic point estimates:
 
 ```text
 Rscript analysis/r/scripts/analyze_export.R \
-    exports/<experiment_id>/execution_<execution_id>
+    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id>
 ```
 
 Hierarchical uncertainty analysis:
 
 ```text
 Rscript analysis/r/scripts/analyze_uncertainty.R \
-    exports/<experiment_id>/execution_<execution_id> \
+    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id> \
     2000 \
     12345 \
     0.95
@@ -239,7 +239,7 @@ Dimension-score analysis:
 
 ```text
 Rscript analysis/r/scripts/analyze_dimensions.R \
-    exports/<experiment_id>/execution_<execution_id>
+    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id>
 ```
 
 This reports arithmetic, geometric, harmonic, and minimum `S_D` point values separately for the
@@ -249,7 +249,7 @@ Dimension-score hierarchical uncertainty:
 
 ```text
 Rscript analysis/r/scripts/analyze_dimension_uncertainty.R \
-    exports/<experiment_id>/execution_<execution_id> \
+    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id> \
     2000 \
     12345 \
     0.95
@@ -259,11 +259,11 @@ General availability analysis:
 
 ```text
 Rscript analysis/r/scripts/analyze_availability.R \
-    exports/<experiment_id>/execution_<execution_id> \
+    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id> \
     2000 \
     12345 \
     0.95 \
-    exports/<experiment_id>/execution_<execution_id>/analysis_output \
+    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id>/analysis_output \
     --population-policy=available-valid
 ```
 
@@ -295,7 +295,7 @@ orchestration tool:
 
 ```text
 python tools/analyze_execution.py \
-    results/<experiment_id>/execution_<execution_id>
+    ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
 ```
 
 No population option is required for routine use. The wrapper first attempts the strict population

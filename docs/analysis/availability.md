@@ -156,7 +156,7 @@ For an execution with missing selected planned slots, use:
 
 ```text
 python tools/analyze_execution.py \
-    results/<experiment_id>/execution_<execution_id>
+    ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
 ```
 
 The ordinary compliance analyses remain conditional on the observed valid population. The separate

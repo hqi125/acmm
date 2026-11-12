@@ -231,6 +231,7 @@ def execute_experiment(
         execution_id=execution_id,
         selected_run_indices=selected_run_indices,
         session_dir=str(session_dir),
+        progress=report,
     )
 
     # Publish the durable session boundary before package lifecycle initialization.
@@ -321,6 +322,7 @@ def execute_experiment(
                     scenario_id=planned.scenario_id,
                     repetition=planned.repetition,
                     attempt=attempt_number,
+                    progress=report,
                 )
                 executed = execute_planned_run(
                     contract=contract,

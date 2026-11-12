@@ -236,6 +236,11 @@ class runtime_session_context:
     execution_id: str
     selected_run_indices: tuple[int, ...]
     session_dir: str
+    progress: Callable[[str], None] | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -246,6 +251,11 @@ class runtime_run_context:
     scenario_id: str
     repetition: int
     attempt: int
+    progress: Callable[[str], None] | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True)

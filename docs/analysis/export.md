@@ -11,13 +11,13 @@ The source execution remains canonical. CSV files are downstream interchange art
 ## Command
 
 ```text
-acmm export results/<experiment_id>/execution_<execution_id>
+acmm export ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
 ```
 
 By default the export is published under:
 
 ```text
-exports/<experiment_id>/execution_<execution_id>/
+~/acmm_generated/exports/<experiment_id>/execution_<execution_id>/
 ├── runs.csv
 ├── judgments.csv
 └── export_manifest.yaml

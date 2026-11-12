@@ -370,6 +370,160 @@ def test_docker_mode_keeps_fixture_handle_private_and_exports_same_session() -> 
     ]
 
 
+
+
+def test_nonzero_exit_after_complete_final_response_is_accepted() -> None:
+    def runner(command, **kwargs):
+        del kwargs
+
+        if "sessions" in command and "export" in command:
+            session = {
+                "id": "session-123",
+                "model": "nemotron-3-nano:30b-cloud",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": SCENARIO["task"]["prompt"],
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "The result is 100.",
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "[IMPORTANT: Background process proc-1 exited "
+                            "with exit code 128.]"
+                        ),
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call-after-final",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_magic_number",
+                                    "arguments": "{}",
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call-after-final",
+                        "name": "get_magic_number",
+                        "content": json.dumps({"magic_number": 87}),
+                    },
+                ],
+            }
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=json.dumps(session) + "\n",
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=1,
+            stdout="The result is 100.\n",
+            stderr="session_id: session-123\n",
+        )
+
+    result = hermes_adapter(runner=runner).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.failure is None
+    assert result.termination == "agent_completed"
+    assert result.subject_provenance is not None
+    configuration = result.subject_provenance["configuration"]
+    assert configuration["hermes_process_returncode"] == 1
+    assert configuration["hermes_nonzero_exit_accepted"] is True
+    assert result.evidence[3].content == b"The result is 100."
+
+
+def test_provider_retry_exhaustion_is_invalid_provider_error() -> None:
+    def runner(command, **kwargs):
+        del kwargs
+
+        if "sessions" in command and "export" in command:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=_session_export(
+                    final_response=(
+                        "API call failed after 3 retries: "
+                        "HTTP 500: Internal Server Error"
+                    )
+                ),
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=1,
+            stdout=(
+                "API call failed after 3 retries: "
+                "HTTP 500: Internal Server Error\n"
+            ),
+            stderr="session_id: session-123\n",
+        )
+
+    result = hermes_adapter(runner=runner).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.termination == "provider_error"
+    assert result.failure is not None
+    assert result.failure.kind == "hermes_provider_error"
+    assert "HTTP 500" in result.failure.message
+    assert result.subject_provenance is not None
+    assert (
+        result.subject_provenance["configuration"]["hermes_process_returncode"]
+        == 1
+    )
+
+
+def test_nonzero_exit_without_final_response_remains_harness_error() -> None:
+    def runner(command, **kwargs):
+        del kwargs
+
+        if "sessions" in command and "export" in command:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=_session_export(final_response=""),
+                stderr="",
+            )
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=1,
+            stdout="",
+            stderr="session_id: session-123\n",
+        )
+
+    result = hermes_adapter(runner=runner).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.termination == "harness_error"
+    assert result.failure is not None
+    assert result.failure.kind == "hermes_run_failed"
+
+
 def test_run_budget_exhaustion_is_valid_agent_timeout() -> None:
     def runner(command, **kwargs):
         del kwargs

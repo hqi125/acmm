@@ -534,10 +534,12 @@ See `docs/runtime/execution.md` for the execution boundary and failure semantics
 
 ## Result persistence
 
+Generated artifacts default to `~/acmm_generated`. Set `ACMM_GENERATED_ROOT` to move the entire generated-artifact tree without changing individual commands. Immediate execution results live under the `results/` namespace, analysis exports under `exports/`, and durable campaigns use the same generated root. Explicit command-line output-root options still override these defaults.
+
 `persist_executed_run()` writes an in-memory execution result into:
 
 ```text
-results/<experiment_id>/run_<run_index>_<run_id>/
+~/acmm_generated/results/<experiment_id>/run_<run_index>_<run_id>/
 ```
 
 Each published directory contains `run_record.yaml` and the evidence artifacts referenced
@@ -559,7 +561,7 @@ See `docs/runtime/persistence.md` for the exact storage layout and durability bo
 `execute_experiment()` stores one execution session under:
 
 ```text
-results/<experiment_id>/execution_<execution_id>/
+~/acmm_generated/results/<experiment_id>/execution_<execution_id>/
 ```
 
 The session snapshots the exact Contract bytes before running any selected planned slots. By
@@ -588,13 +590,13 @@ See `docs/runtime/experiment_execution.md` for the acquisition and retry semanti
 A completed execution can now be projected into deterministic downstream analysis tables:
 
 ```text
-acmm export results/<experiment_id>/execution_<execution_id>
+acmm export ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
 ```
 
 The default output is separate from canonical results:
 
 ```text
-exports/<experiment_id>/execution_<execution_id>/
+~/acmm_generated/exports/<experiment_id>/execution_<execution_id>/
 ├── runs.csv
 ├── judgments.csv
 └── export_manifest.yaml
@@ -643,7 +645,7 @@ For routine end-to-end processing of one completed execution, use:
 
 ```text
 python tools/analyze_execution.py \
-    results/<experiment_id>/execution_<execution_id>
+    ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
 ```
 
 The wrapper performs or reuses the deterministic CSV export, then resolves the compliance
@@ -726,8 +728,8 @@ status lines. For example:
 ```text
 acmm run apparatus list
 acmm run apparatus exec initialize
-acmm run apparatus cleanup --execution results/<experiment-id>/<execution-id> --preview
-acmm run apparatus cleanup --execution results/<experiment-id>/<execution-id>
+acmm run apparatus cleanup --execution ~/acmm_generated/results/<experiment-id>/<execution-id> --preview
+acmm run apparatus cleanup --execution ~/acmm_generated/results/<experiment-id>/<execution-id>
 ```
 
 Engineering apparatus actions are intentionally distinct from the typed scientific runtime lifecycle. Packages
@@ -853,8 +855,8 @@ See `infrastructure/README.md`, `docs/integration/agent_integration.md`, and the
 Completed executions remain exportable and analyzable independently of package ownership:
 
 ```text
-acmm export results/<experiment-id>/execution_<uuid>
-python tools/analyze_execution.py results/<experiment-id>/execution_<uuid>
+acmm export ~/acmm_generated/results/<experiment-id>/execution_<uuid>
+python tools/analyze_execution.py ~/acmm_generated/results/<experiment-id>/execution_<uuid>
 ```
 
 The general analysis pipeline owns normalized export, availability, requirement estimates,

@@ -14,6 +14,8 @@ import time
 from typing import Any, Mapping, Sequence
 import uuid
 
+from acmm.generated_paths import default_results_root
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SESSION_PATTERN = re.compile(r"^\s*session:\s+(.+?)\s*$", re.MULTILINE)
@@ -591,10 +593,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--results-root",
-        default="results",
+        default=str(default_results_root()),
         help=(
             "Execution result root passed to acmm run; qualification metadata is "
-            "stored underneath it (default: results)."
+            f"stored underneath it (default: {default_results_root()})."
         ),
     )
     parser.add_argument(

@@ -125,7 +125,7 @@ def test_parser_defaults_to_repeated_engineering_smoke() -> None:
     assert args.cold_start is False
     assert args.run_timeout_seconds == 120.0
     assert args.startup_timeout_seconds == 120.0
-    assert args.results_root == "results"
+    assert args.results_root == str(qualification.default_results_root())
 
 
 def test_expected_agent_version_uses_manager_profile() -> None:

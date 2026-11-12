@@ -42,6 +42,7 @@ from acmm.experiment_package import (
 )
 from acmm.experiment_package.cli import register_experiment_package_commands
 from acmm.environment_cli import register_environment_commands
+from acmm.generated_paths import default_exports_root, default_results_root
 from acmm.campaign.cli import register_campaign_commands
 from acmm.secret_bindings import secret_binding_error
 from acmm.secret_bindings.cli import register_secret_commands
@@ -2091,8 +2092,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument(
         "--results-root",
-        default="results",
-        help="Result root directory (default: results).",
+        default=str(default_results_root()),
+        help=(
+            "Result root directory "
+            f"(default: {default_results_root()})."
+        ),
     )
     run_parser.add_argument(
         "--max-attempts-per-run",
@@ -2122,8 +2126,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     export_parser.add_argument(
         "--output-root",
-        default="exports",
-        help="Analysis export root directory (default: exports).",
+        default=str(default_exports_root()),
+        help=(
+            "Analysis export root directory "
+            f"(default: {default_exports_root()})."
+        ),
     )
     export_parser.add_argument(
         "--record-schema",

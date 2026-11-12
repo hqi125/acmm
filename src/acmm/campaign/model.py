@@ -15,6 +15,7 @@ import uuid
 from jsonschema import Draft202012Validator
 
 from acmm.experiment_package.model import experiment_package
+from acmm.generated_paths import default_generated_root
 from acmm.experiment_package.provenance import package_provenance
 from acmm.experiment_package.staging import (
     open_staged_experiment_package,
@@ -25,7 +26,6 @@ from acmm.runtime.planner import build_experiment_plan
 
 CAMPAIGN_SCHEMA_VERSION = "0.1"
 _CAMPAIGN_SCHEMA_NAME = "campaign-v0.1.schema.json"
-_DEFAULT_GENERATED_ROOT = Path("~/acmm_generated")
 
 
 class campaign_error(ValueError):
@@ -50,13 +50,6 @@ class campaign_artifact:
     path: Path
     manifest_path: Path
     manifest: Mapping[str, Any]
-
-
-def default_generated_root() -> Path:
-    configured = os.getenv("ACMM_GENERATED_ROOT")
-    if configured:
-        return Path(configured).expanduser().resolve()
-    return _DEFAULT_GENERATED_ROOT.expanduser().resolve()
 
 
 def build_campaign_preview(package: experiment_package) -> campaign_preview:

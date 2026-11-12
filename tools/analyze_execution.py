@@ -28,6 +28,7 @@ from acmm.analysis.workbook import (
     analysis_workbook_error,
     build_analysis_workbook,
 )
+from acmm.generated_paths import default_exports_root
 
 
 BOOTSTRAP_REPLICATES = 2000
@@ -41,7 +42,7 @@ STRICT_POLICY = "strict"
 AVAILABLE_VALID_POLICY = "available-valid"
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_EXPORT_ROOT = _REPO_ROOT / "exports"
+_EXPORT_ROOT = default_exports_root()
 _R_SCRIPT_ROOT = _REPO_ROOT / "analysis" / "r" / "scripts"
 _AVAILABILITY_SCRIPT_NAME = "analyze_availability.R"
 

@@ -16,6 +16,7 @@ from acmm.adapters.hermes import hermes_adapter, hermes_adapter_config
 from acmm.adapters.open_webui import open_webui_adapter
 from acmm.adapters.open_webui_api import open_webui_runtime_api_client
 from acmm.runtime.interfaces import adapter_execution_result, subject_adapter
+from acmm.generated_paths import default_results_root
 from acmm_infra.cohort import inspect_cohort, resolve_deployed_cohort
 from acmm_infra.common import infrastructure_error
 from acmm_infra.profiles.common import default_repo_root, default_runtime_root
@@ -426,8 +427,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--results-root",
-        default="results",
-        help="Root for engineering qualification artifacts. Default: results.",
+        default=str(default_results_root()),
+        help=(
+            "Root for engineering qualification artifacts. "
+            f"Default: {default_results_root()}."
+        ),
     )
     parser.add_argument(
         "--startup-timeout-seconds",

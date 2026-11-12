@@ -163,9 +163,11 @@ class hermes_adapter:
             )
 
         if completed.returncode != 0:
+            final_response = _final_response_text(parsed.evidence)
             termination_kind = _termination_from_failed_process(
                 completed,
                 parsed.session,
+                final_response,
             )
 
             if termination_kind in {"timeout", "max_steps"}:
@@ -176,10 +178,43 @@ class hermes_adapter:
                         subject,
                         parsed.model,
                         session_id,
+                        process_returncode=completed.returncode,
                     ),
                 )
 
-            detail = completed.stderr.strip()
+            detail = _failed_process_detail(completed, parsed.session)
+
+            if termination_kind == "provider_error":
+                return adapter_execution_result(
+                    termination="provider_error",
+                    evidence=parsed.evidence,
+                    subject_provenance=_subject_provenance(
+                        subject,
+                        parsed.model,
+                        session_id,
+                        process_returncode=completed.returncode,
+                    ),
+                    failure=execution_failure(
+                        kind="hermes_provider_error",
+                        message=(
+                            detail
+                            or "Hermes model/provider request failed after retries."
+                        ),
+                    ),
+                )
+
+            if final_response:
+                return adapter_execution_result(
+                    termination="agent_completed",
+                    evidence=parsed.evidence,
+                    subject_provenance=_subject_provenance(
+                        subject,
+                        parsed.model,
+                        session_id,
+                        process_returncode=completed.returncode,
+                        accepted_nonzero_exit=True,
+                    ),
+                )
 
             return adapter_execution_result(
                 termination="harness_error",
@@ -188,6 +223,7 @@ class hermes_adapter:
                     subject,
                     parsed.model,
                     session_id,
+                    process_returncode=completed.returncode,
                 ),
                 failure=execution_failure(
                     kind="hermes_run_failed",
@@ -363,6 +399,7 @@ def _process_timeout(
 def _termination_from_failed_process(
     completed: subprocess.CompletedProcess[str],
     session: Mapping[str, Any] | None,
+    final_response: str = "",
 ) -> str:
     parts = [
         completed.stderr,
@@ -381,6 +418,9 @@ def _termination_from_failed_process(
             if value is not None:
                 parts.append(str(value))
 
+    if final_response:
+        parts.append(final_response)
+
     detail = " ".join(parts).lower()
 
     if (
@@ -397,7 +437,66 @@ def _termination_from_failed_process(
     ):
         return "timeout"
 
+    if _contains_provider_failure(detail):
+        return "provider_error"
+
     return "harness_error"
+
+
+
+
+def _contains_provider_failure(detail: str) -> bool:
+    return bool(
+        re.search(
+            r"api call failed after\s+\d+\s+retries?:\s*http\s+(?:429|5\d\d)\b",
+            detail,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _failed_process_detail(
+    completed: subprocess.CompletedProcess[str],
+    session: Mapping[str, Any] | None,
+) -> str:
+    parts: list[str] = []
+
+    for value in (completed.stdout, completed.stderr):
+        text = value.strip()
+        if text:
+            parts.append(text)
+
+    if session is not None:
+        for key in (
+            "end_reason",
+            "failure_reason",
+            "error",
+            "status",
+        ):
+            value = session.get(key)
+            if value is not None:
+                parts.append(str(value))
+
+    return "\n".join(parts).strip()
+
+
+def _final_response_text(
+    evidence: tuple[Any, ...],
+) -> str:
+    for artifact in evidence:
+        if getattr(artifact, "id", None) != "final_response":
+            continue
+
+        content = getattr(artifact, "content", b"")
+        if isinstance(content, bytes):
+            try:
+                return content.decode("utf-8").strip()
+            except UnicodeDecodeError:
+                return ""
+
+        return str(content).strip()
+
+    return ""
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -416,6 +515,9 @@ def _subject_provenance(
     subject: dict[str, Any],
     actual_model: str | None,
     session_id: str | None,
+    *,
+    process_returncode: int | None = None,
+    accepted_nonzero_exit: bool = False,
 ) -> dict[str, Any]:
     agent = dict(subject["agent"])
     model = dict(subject["model"])
@@ -426,6 +528,12 @@ def _subject_provenance(
 
     if session_id is not None:
         configuration["hermes_session_id"] = session_id
+
+    if process_returncode is not None:
+        configuration["hermes_process_returncode"] = process_returncode
+
+    if accepted_nonzero_exit:
+        configuration["hermes_nonzero_exit_accepted"] = True
 
     return {
         "agent": agent,
