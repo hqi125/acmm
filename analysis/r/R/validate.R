@@ -291,9 +291,10 @@ acmm_validate_run_table <- function(runs, binding)
         "A scientifically valid unselected retry is not permitted.",
         "acmm_integrity_error"
     )
+    invalidOnlyTerminations <- c("provider_error", "harness_error")
     acmm_assert(
-        all(runs$termination != "harness_error" | runs$validity == "invalid"),
-        "harness_error termination must be invalid.",
+        all(!(runs$termination %in% invalidOnlyTerminations) | runs$validity == "invalid"),
+        "provider_error and harness_error terminations must be invalid.",
         "acmm_integrity_error"
     )
 

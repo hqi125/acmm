@@ -40,6 +40,7 @@ def contract_sha256() -> str:
     [
         "successful_execution.yaml",
         "invalid_execution.yaml",
+        "provider_error_execution.yaml",
     ],
 )
 def test_valid_run_records_pass(
@@ -94,6 +95,26 @@ def test_invalid_run_records_report_expected_error(
 
     assert not result.is_valid
     assert expected_code in {issue.code for issue in result.errors}
+
+
+def test_provider_error_requires_invalid_validity(
+    schema: dict,
+    contract: dict,
+    contract_sha256: str,
+) -> None:
+    record = load_run_record(VALID_DIR / "provider_error_execution.yaml")
+    record["execution"]["validity"] = "valid"
+    record["execution"].pop("failure", None)
+
+    result = validate_run_record(
+        record,
+        schema,
+        contract,
+        expected_contract_sha256=contract_sha256,
+    )
+
+    assert not result.is_valid
+    assert "schema_violation" in {issue.code for issue in result.errors}
 
 
 def test_invalid_execution_can_have_no_evidence_or_judgments(

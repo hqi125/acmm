@@ -131,6 +131,7 @@
             "agent_completed",
             "max_steps",
             "timeout",
+            "provider_error",
             "harness_error"
           ]
         },
@@ -186,7 +187,10 @@
           "if": {
             "properties": {
               "termination": {
-                "const": "harness_error"
+                "enum": [
+                  "provider_error",
+                  "harness_error"
+                ]
               }
             },
             "required": [

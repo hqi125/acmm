@@ -141,7 +141,10 @@ validity = invalid
 failure  = diagnostic information
 ```
 
-A subject-adapter failure may preserve partial captured evidence.
+A subject-adapter failure may preserve partial captured evidence. When the adapter
+exhausts retries against its model/provider, the canonical termination is
+`provider_error`; this termination is always invalid and therefore never contributes
+agent compliance evidence.
 
 If an evaluator fails after subject interaction completed, the Run Record preserves the
 observed interaction termination while marking the execution invalid. For example:

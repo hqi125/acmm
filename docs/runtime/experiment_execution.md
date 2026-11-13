@@ -233,6 +233,10 @@ validity    = valid
 
 is real experimental behavior, so it is selected and not retried.
 
+Provider retry exhaustion is represented as `termination = provider_error` with
+`validity = invalid`, so it follows the same retry/unresolved-slot rule rather than being
+misclassified as agent behavior.
+
 If every allowed attempt is invalid, the planned slot remains unresolved. The completion
 manifest records its run index in `unresolved_run_indices`.
 

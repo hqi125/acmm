@@ -64,6 +64,7 @@ acmmTerminationValues <- c(
     "agent_completed",
     "max_steps",
     "timeout",
+    "provider_error",
     "harness_error"
 )
 

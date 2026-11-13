@@ -936,6 +936,12 @@ assert_true(
 )
 
 
+assert_true(
+    "provider_error" %in% acmmTerminationValues,
+    "provider_error is missing from the canonical analysis termination vocabulary."
+)
+
+
 availabilityRuns <- data.frame(
     run_index = c(0, 1, 1, 2, 3),
     attempt = c(1, 1, 2, 1, 1),

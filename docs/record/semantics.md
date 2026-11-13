@@ -72,10 +72,13 @@ The termination vocabulary is:
 agent_completed
 max_steps
 timeout
+provider_error
 harness_error
 ```
 
-`harness_error` requires `invalid` validity.
+`provider_error` and `harness_error` require `invalid` validity. `provider_error`
+means the subject adapter exhausted retries against its model/provider after the run
+had begun; it is an availability failure rather than agent compliance evidence.
 
 An invalid run must contain failure information. A valid run must not.
 
