@@ -45,6 +45,7 @@ One call to `execute_experiment()` creates one execution session:
     └── execution_<execution_id>/
         ├── contract.yaml
         ├── experiment_execution.yaml
+        ├── execution_resource_usage.yaml   # when the package provides a resource governor
         ├── execution_summary.txt
         └── runs/
             ├── run_<run_index>_<run_id>/
@@ -174,6 +175,17 @@ execution.pacing.inter_run_delay_seconds
 
 The delay is deterministic rather than randomized. This keeps provider-facing request
 bursts conservative while preserving straightforward experimental reproducibility.
+
+
+## External resource usage admission
+
+An Experiment Package may provide a resource governor for provider-aware execution admission and usage measurement. The hook lives below execution entry points in `execute_experiment()`: immediate `acmm run` executions and Campaign executions therefore receive the same behavior without duplicating CLI policy.
+
+Before each materialization slice, Core supplies the package with the materialization identity plus prior canonical resource-usage records discovered from sibling execution sessions. The package may wait before admitting the slice. After materialization finalization, the package returns the measured resource delta. Core persists both records in `execution_resource_usage.yaml`.
+
+The schema intentionally leaves provider-specific admission and usage payloads open. Core guarantees only the durable envelope: execution identity/status, history-artifact references, materialization key/run indices, admission record, and observed usage record. A GitHub package may reason in rate-limit headers and content requests; another package can expose completely different resource dimensions without adding provider semantics to Core.
+
+Cold start does not require a researcher-supplied baseline. If no canonical history exists, the package receives an empty history and is expected to use live provider state and its safe request-level behavior. Once one materialization completes, its measured usage is available to later slices in the same execution and later executions.
 
 ## Provider usage observability
 

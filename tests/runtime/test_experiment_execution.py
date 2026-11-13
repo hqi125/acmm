@@ -20,6 +20,8 @@ from acmm.runtime.interfaces import (
     execution_failure,
     judgment_result,
     prepared_environment,
+    runtime_resource_admission,
+    runtime_resource_governor_session,
 )
 from acmm.runtime.registry import execution_registry
 from acmm.runtime.result_store import result_write_error
@@ -1120,3 +1122,99 @@ def test_materialization_hooks_wrap_subject_major_slice(tmp_path: Path) -> None:
     assert event_names.count("materialization_initialize_started") == 1
     assert event_names.count("materialization_initialized") == 1
     assert event_names.count("materialization_finalized") == 1
+
+
+class fake_execution_resource_governor:
+    def __init__(self) -> None:
+        self.history_counts: list[int] = []
+        self.events: list[tuple[object, ...]] = []
+
+    def execution_initialize(self, context):
+        self.history_counts.append(len(context.history_records))
+        return runtime_resource_governor_session(
+            handle={"execution_id": context.execution_id},
+            record={"id": "synthetic_resource_governor", "history_count": len(context.history_records)},
+        )
+
+    def materialization_admit(self, session_handle, context):
+        self.events.append(("admit", context.key, context.selected_run_indices))
+        return runtime_resource_admission(
+            handle={"key": context.key},
+            record={"status": "admitted", "forecast": {"requests": 7}},
+        )
+
+    def materialization_finalize(self, session_handle, context, admission_handle, outcome):
+        self.events.append(("finalize", context.key, outcome.completed, outcome.interrupted))
+        return {
+            "completed": outcome.completed,
+            "interrupted": outcome.interrupted,
+            "sample": {"requests": 5},
+        }
+
+
+def test_resource_governor_is_execution_level_and_reuses_prior_usage_history(tmp_path: Path) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    lifecycle = fake_materialized_runtime_lifecycle()
+    governor = fake_execution_resource_governor()
+    base = _registry(adapter)
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        resource_governor=governor,
+        materialization_group_by=("scenario_id",),
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+
+    first = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=registry,
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        sleep=lambda _: None,
+        max_attempts_per_run=1,
+        now=_clock(),
+        execution_id_factory=lambda: "20000000-0000-4000-8000-000000000001",
+        run_id_factory=_run_id_factory(),
+    )
+    first_usage = yaml.safe_load(
+        (first.session_dir / "execution_resource_usage.yaml").read_text(encoding="utf-8")
+    )
+    assert first_usage["execution"]["status"] == "completed"
+    assert first_usage["governor"]["id"] == "synthetic_resource_governor"
+    assert first_usage["history_artifacts"] == []
+    assert first_usage["materializations"] == [
+        {
+            "key": "scenario_id=synthetic_plus_13",
+            "selected_run_indices": [0, 1, 2, 3, 4],
+            "admission": {"status": "admitted", "forecast": {"requests": 7}},
+            "usage": {
+                "completed": True,
+                "interrupted": False,
+                "sample": {"requests": 5},
+            },
+        }
+    ]
+
+    second = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=registry,
+        results_root=tmp_path,
+        harness_version="0.1.0",
+        sleep=lambda _: None,
+        max_attempts_per_run=1,
+        now=_clock(),
+        execution_id_factory=lambda: "20000000-0000-4000-8000-000000000002",
+        run_id_factory=_run_id_factory(),
+    )
+    second_usage = yaml.safe_load(
+        (second.session_dir / "execution_resource_usage.yaml").read_text(encoding="utf-8")
+    )
+    assert governor.history_counts == [0, 1]
+    assert second_usage["history_artifacts"] == [
+        str(first.session_dir / "execution_resource_usage.yaml")
+    ]

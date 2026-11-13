@@ -244,6 +244,7 @@ def compose_execution_registry(
     return execution_registry(
         subject_adapters=dict(subject_adapters),
         lifecycle=runtime.lifecycle,
+        resource_governor=runtime.resource_governor,
         materialization_group_by=tuple(materialization_group_by),
         admission_controller=admission_controller,
         fixtures=dict(runtime.fixtures),
@@ -392,6 +393,18 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
                 "Runtime materialization lifecycle must provide both callable "
                 "materialization_initialize() and materialization_finalize(), or neither."
             )
+
+    if runtime.resource_governor is not None:
+        for method_name in (
+            "execution_initialize",
+            "materialization_admit",
+            "materialization_finalize",
+        ):
+            if not callable(getattr(runtime.resource_governor, method_name, None)):
+                raise experiment_runtime_error(
+                    "Runtime resource governor does not provide callable "
+                    f"{method_name}()."
+                )
 
     if runtime.recovery is not None:
         if not callable(getattr(runtime.recovery, "reconcile", None)):

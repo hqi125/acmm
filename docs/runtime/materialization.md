@@ -37,6 +37,35 @@ The returned materialization handle is passed read-only through each `runtime_ru
 
 Implementing only one materialization hook is invalid. Packages that do not implement either hook remain compatible.
 
+
+## Execution resource governance
+
+Materialization is also the generic admission boundary for expensive external resources. An Experiment Package may attach an optional execution resource governor to its runtime. Core invokes that governor inside `execute_experiment()` before `materialization_initialize()`, so the behavior is independent of whether execution was entered through `acmm run`, `acmm campaign`, or a future entry point that delegates to the same execution service.
+
+The resource governor is deliberately separate from the materialization lifecycle:
+
+```text
+resource admission
+        |
+        v
+materialization_initialize
+        |
+        v
+subject-major logical runs
+        |
+        v
+materialization_finalize
+        |
+        v
+resource usage finalization
+```
+
+Core does not interpret provider-specific limits. The package decides how to forecast and wait; Core only provides the durable boundary and persists the package's admission/usage records.
+
+When a resource governor is active, the execution session contains `execution_resource_usage.yaml`, validated against `execution-resource-usage-v0.1.schema.json`. The artifact is written incrementally after admission and after materialization finalization, so a later interruption does not erase an already observed admission decision or completed usage measurement. Prior canonical usage artifacts in the same execution history are supplied to the next execution automatically.
+
+A package may treat a first slice with no empirical history as a cold start. Core does not require a special CLI baseline argument and does not fabricate a usage estimate; the package can rely on live provider state and its existing request-level safety policy, then use the first measured materialization as future history.
+
 ## Failure semantics
 
 Materialization finalization is called when Core leaves a completed slice and also during interruption/failure cleanup. Packages remain responsible for provider-specific taint, forensic capture, restoration, and resource retirement.

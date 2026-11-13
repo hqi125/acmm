@@ -22,6 +22,9 @@ from acmm.runtime.planner import (
 )
 from acmm.runtime.interfaces import (
     runtime_materialization_context,
+    runtime_resource_admission,
+    runtime_resource_execution_context,
+    runtime_resource_governor_session,
     runtime_materialization_finalization,
     runtime_run_context,
     runtime_run_finalization,
@@ -31,6 +34,12 @@ from acmm.runtime.interfaces import (
 from acmm.runtime.provider_usage import execution_provider_usage_monitor
 from acmm.runtime.registry import execution_registry
 from acmm.runtime.result_store import persist_executed_run_to
+from acmm.runtime.resource_usage import (
+    EXECUTION_RESOURCE_USAGE_FILENAME,
+    EXECUTION_RESOURCE_USAGE_SCHEMA_VERSION,
+    discover_execution_resource_usage_history,
+    write_execution_resource_usage,
+)
 
 
 @dataclass(frozen=True)
@@ -274,6 +283,53 @@ def execute_experiment(
             {"execution_id": execution_id},
         )
 
+    resource_usage_path = session_dir / EXECUTION_RESOURCE_USAGE_FILENAME
+    resource_governor_session: runtime_resource_governor_session | None = None
+    resource_usage_document: dict[str, Any] | None = None
+    active_resource_admission: runtime_resource_admission | None = None
+    if registry.resource_governor is not None:
+        history = discover_execution_resource_usage_history(
+            session_dir.parent,
+            exclude_session=session_dir,
+        )
+        resource_context = runtime_resource_execution_context(
+            experiment_id=experiment_id,
+            execution_id=execution_id,
+            selected_run_indices=selected_run_indices,
+            session_dir=str(session_dir),
+            history_artifacts=tuple(str(item.path) for item in history),
+            history_records=tuple(item.document for item in history),
+            progress=report,
+        )
+        resource_governor_session = registry.resource_governor.execution_initialize(
+            resource_context
+        )
+        if not isinstance(resource_governor_session, runtime_resource_governor_session):
+            raise TypeError(
+                "Runtime resource governor execution_initialize() must return "
+                "runtime_resource_governor_session."
+            )
+        resource_usage_document = {
+            "schema_version": EXECUTION_RESOURCE_USAGE_SCHEMA_VERSION,
+            "execution": {
+                "id": execution_id,
+                "experiment_id": experiment_id,
+                "status": "running",
+                "selected_run_indices": list(selected_run_indices),
+                "package_sha256": (
+                    str(package_provenance.get("sha256"))
+                    if isinstance(package_provenance, Mapping)
+                    and package_provenance.get("sha256") is not None
+                    else None
+                ),
+                "detail": None,
+            },
+            "governor": dict(resource_governor_session.record),
+            "history_artifacts": [str(item.path) for item in history],
+            "materializations": [],
+        }
+        write_execution_resource_usage(resource_usage_path, resource_usage_document)
+
     materialization_initialize = (
         getattr(registry.lifecycle, "materialization_initialize", None)
         if registry.lifecycle is not None
@@ -294,6 +350,7 @@ def execute_experiment(
 
     def begin_materialization(key: str) -> None:
         nonlocal active_materialization_context, active_materialization_handle
+        nonlocal active_resource_admission
         runs = materialization_runs_by_key[key]
         context = runtime_materialization_context(
             experiment_id=experiment_id,
@@ -312,6 +369,46 @@ def execute_experiment(
                 {
                     "key": key,
                     "selected_run_indices": list(context.selected_run_indices),
+                },
+            )
+        active_resource_admission = None
+        if registry.resource_governor is not None:
+            assert resource_governor_session is not None
+            emit(
+                "resource_admission_started",
+                {
+                    "key": key,
+                    "selected_run_indices": list(context.selected_run_indices),
+                },
+            )
+            admission = registry.resource_governor.materialization_admit(
+                resource_governor_session.handle,
+                context,
+            )
+            if not isinstance(admission, runtime_resource_admission):
+                raise TypeError(
+                    "Runtime resource governor materialization_admit() must return "
+                    "runtime_resource_admission."
+                )
+            active_resource_admission = admission
+            assert resource_usage_document is not None
+            resource_usage_document["materializations"].append(
+                {
+                    "key": key,
+                    "selected_run_indices": list(context.selected_run_indices),
+                    "admission": dict(admission.record),
+                    "usage": None,
+                }
+            )
+            write_execution_resource_usage(
+                resource_usage_path,
+                resource_usage_document,
+            )
+            emit(
+                "resource_admitted",
+                {
+                    "key": key,
+                    "record": dict(admission.record),
                 },
             )
         handle = None
@@ -343,6 +440,7 @@ def execute_experiment(
         suppress_errors: bool = False,
     ) -> None:
         nonlocal active_materialization_context, active_materialization_handle
+        nonlocal active_resource_admission
         context = active_materialization_context
         handle = active_materialization_handle
         if context is None:
@@ -359,6 +457,44 @@ def execute_experiment(
                         interrupted=interrupted,
                         detail=detail,
                     ),
+                )
+            if registry.resource_governor is not None:
+                assert resource_governor_session is not None
+                assert active_resource_admission is not None
+                usage = registry.resource_governor.materialization_finalize(
+                    resource_governor_session.handle,
+                    context,
+                    active_resource_admission.handle,
+                    runtime_materialization_finalization(
+                        completed=completed,
+                        interrupted=interrupted,
+                        detail=detail,
+                    ),
+                )
+                if not isinstance(usage, Mapping):
+                    raise TypeError(
+                        "Runtime resource governor materialization_finalize() must "
+                        "return a mapping."
+                    )
+                assert resource_usage_document is not None
+                for item in reversed(resource_usage_document["materializations"]):
+                    if item["key"] == context.key and item["usage"] is None:
+                        item["usage"] = dict(usage)
+                        break
+                else:
+                    raise RuntimeError(
+                        f"Resource usage materialization '{context.key}' is missing."
+                    )
+                write_execution_resource_usage(
+                    resource_usage_path,
+                    resource_usage_document,
+                )
+                emit(
+                    "resource_usage_recorded",
+                    {
+                        "key": context.key,
+                        "usage": dict(usage),
+                    },
                 )
             if materialization_observable:
                 emit(
@@ -388,6 +524,7 @@ def execute_experiment(
         finally:
             active_materialization_context = None
             active_materialization_handle = None
+            active_resource_admission = None
 
     provider_usage_started = _begin_provider_usage_monitor(
         provider_usage_monitor,
@@ -627,6 +764,13 @@ def execute_experiment(
             )
 
         ended_at = clock()
+        if resource_usage_document is not None:
+            resource_usage_document["execution"]["status"] = "completed"
+            resource_usage_document["execution"]["detail"] = None
+            write_execution_resource_usage(
+                resource_usage_path,
+                resource_usage_document,
+            )
         provider_usage = _finish_provider_usage_monitor(
             provider_usage_monitor,
             provider_usage_started,
@@ -690,6 +834,13 @@ def execute_experiment(
             suppress_errors=True,
         )
         ended_at = clock()
+        if resource_usage_document is not None:
+            resource_usage_document["execution"]["status"] = "interrupted"
+            resource_usage_document["execution"]["detail"] = "keyboard_interrupt"
+            write_execution_resource_usage(
+                resource_usage_path,
+                resource_usage_document,
+            )
         emit(
             "execution_interrupted",
             {
@@ -785,6 +936,15 @@ def execute_experiment(
             detail=str(exc) or exc.__class__.__name__,
             suppress_errors=True,
         )
+        if resource_usage_document is not None:
+            resource_usage_document["execution"]["status"] = "failed"
+            resource_usage_document["execution"]["detail"] = (
+                str(exc) or exc.__class__.__name__
+            )
+            write_execution_resource_usage(
+                resource_usage_path,
+                resource_usage_document,
+            )
         emit(
             "execution_failed",
             {

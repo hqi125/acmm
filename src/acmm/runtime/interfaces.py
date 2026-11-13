@@ -244,6 +244,71 @@ class runtime_session_context:
 
 
 @dataclass(frozen=True)
+class runtime_resource_execution_context:
+    experiment_id: str
+    execution_id: str
+    selected_run_indices: tuple[int, ...]
+    session_dir: str
+    history_artifacts: tuple[str, ...] = ()
+    history_records: tuple[Mapping[str, Any], ...] = field(
+        default_factory=tuple,
+        compare=False,
+        repr=False,
+    )
+    progress: Callable[[str], None] | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "history_artifacts", tuple(self.history_artifacts))
+        object.__setattr__(self, "history_records", tuple(self.history_records))
+
+
+@dataclass(frozen=True)
+class runtime_resource_governor_session:
+    handle: Any = field(repr=False)
+    record: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "record", MappingProxyType(dict(self.record)))
+
+
+@dataclass(frozen=True)
+class runtime_resource_admission:
+    handle: Any = field(repr=False)
+    record: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "record", MappingProxyType(dict(self.record)))
+
+
+class runtime_execution_resource_governor(Protocol):
+    def execution_initialize(
+        self,
+        context: runtime_resource_execution_context,
+    ) -> runtime_resource_governor_session:
+        ...
+
+    def materialization_admit(
+        self,
+        session_handle: Any,
+        context: runtime_materialization_context,
+    ) -> runtime_resource_admission:
+        ...
+
+    def materialization_finalize(
+        self,
+        session_handle: Any,
+        context: runtime_materialization_context,
+        admission_handle: Any,
+        outcome: runtime_materialization_finalization,
+    ) -> Mapping[str, Any]:
+        ...
+
+
+@dataclass(frozen=True)
 class runtime_materialization_context:
     experiment_id: str
     execution_id: str

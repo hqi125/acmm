@@ -55,9 +55,13 @@ from acmm.runtime.interfaces import (
     runtime_diagnostic_check,
     runtime_diagnostic_report,
     runtime_execution_lifecycle,
+    runtime_execution_resource_governor,
     runtime_materialization_context,
     runtime_materialization_finalization,
     runtime_materialization_lifecycle,
+    runtime_resource_admission,
+    runtime_resource_execution_context,
+    runtime_resource_governor_session,
     runtime_execution_recovery,
     runtime_execution_recovery_context,
     runtime_execution_recovery_result,
@@ -174,6 +178,7 @@ class experiment_runtime:
     apparatus_actions: Mapping[str, runtime_apparatus_action] = field(default_factory=dict)
     apparatus_cleanup: runtime_apparatus_cleanup | None = None
     recovery: runtime_execution_recovery | None = None
+    resource_governor: runtime_execution_resource_governor | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -240,9 +245,13 @@ __all__ = [
     "runtime_run_finalization",
     "runtime_run_context",
     "runtime_execution_lifecycle",
+    "runtime_execution_resource_governor",
     "runtime_materialization_context",
     "runtime_materialization_finalization",
     "runtime_materialization_lifecycle",
+    "runtime_resource_admission",
+    "runtime_resource_execution_context",
+    "runtime_resource_governor_session",
     "runtime_execution_recovery",
     "runtime_execution_recovery_context",
     "runtime_execution_recovery_result",
