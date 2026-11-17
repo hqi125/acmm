@@ -154,6 +154,68 @@ def test_reconciliation_blocks_started_uncaptured_attempt_and_keeps_unstarted_pe
     assert eligible == (runs[1],)
 
 
+def test_reconciliation_recognizes_safe_failure_manifest(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package, _ = install_test_package(tmp_path, monkeypatch)
+    artifact = create_campaign(
+        package,
+        tmp_path / "generated",
+        campaign_id="campaign-a",
+    )
+    run = frozen_campaign_plan(artifact).runs[0]
+    context = create_campaign_execution_context(
+        artifact,
+        (run,),
+        execution_id="execution-failed",
+    )
+    context.session_dir.mkdir(parents=True)
+    journal = initialize_campaign_execution(context)
+    journal.emit(
+        "subject_execution_started",
+        {"run_index": run.run_index, "attempt": 1},
+    )
+    journal.emit(
+        "attempt_finalized",
+        {"run_index": run.run_index, "attempt": 1},
+    )
+
+    run_dir = context.session_dir / "runs" / "run_000000_attempt-a"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run_record.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "run": {"run_index": run.run_index},
+                "execution": {"validity": "valid"},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (context.session_dir / "experiment_failure.yaml").write_text(
+        "schema_version: '0.1'\nexecution:\n  status: failed\n",
+        encoding="utf-8",
+    )
+
+    reconciled = reconcile_campaign_executions(artifact)
+    manifest = yaml.safe_load(
+        (context.session_dir / "campaign_execution.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    snapshot = inspect_campaign_status(artifact)
+
+    assert reconciled == ("execution-failed",)
+    assert manifest["execution"]["status"] == "failed"
+    assert (
+        manifest["execution"]["experiment_failure_artifact"]
+        == "experiment_failure.yaml"
+    )
+    assert snapshot.runs.observed == 1
+    assert snapshot.executions.failed == 1
+
+
 def test_reconciliation_keeps_pre_exposure_invalid_record_pending(
     tmp_path: Path,
     monkeypatch,

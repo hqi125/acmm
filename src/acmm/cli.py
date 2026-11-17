@@ -69,6 +69,7 @@ from acmm.runtime.diagnostics import (
 )
 from acmm.runtime.experiment_execution import (
     execute_experiment,
+    experiment_execution_failed,
     experiment_execution_interrupted,
     experiment_execution_result,
     experiment_interruption_result,
@@ -1201,12 +1202,15 @@ def _run_experiment(
         if not lease.initially_running and not lease.started_by_acmm
     ]
     if stopped_resources:
+        cleanup_errors = cleanup_runtime_resources()
         print(
             "ERROR: Integration resource(s) are stopped: "
             + ", ".join(stopped_resources)
             + "; rerun with --start-if-needed.",
             file=sys.stderr,
         )
+        for error in cleanup_errors:
+            print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
         return 2
 
     try:
@@ -1633,6 +1637,27 @@ def _run_experiment(
                 else None
             ),
         )
+    except experiment_execution_failed as exc:
+        capture_runtime_log(active_subject_id[0])
+        cleanup_errors = cleanup_runtime_resources()
+        result = exc.result
+        if campaign_context is not None:
+            finalize_campaign_execution_failure(
+                campaign_context,
+                detail=result.detail,
+            )
+        print(
+            "ERROR: Experiment execution stopped safely after an unrecoverable "
+            f"error: {result.detail}",
+            file=sys.stderr,
+        )
+        print(
+            f"ERROR: Failure record: {result.failure_path}",
+            file=sys.stderr,
+        )
+        for error in cleanup_errors:
+            print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
+        return 2
     except experiment_execution_interrupted as exc:
         capture_runtime_log(active_subject_id[0])
         cleanup_errors = cleanup_runtime_resources()
@@ -1673,6 +1698,26 @@ def _run_experiment(
                 detail=str(exc) or exc.__class__.__name__,
             )
         print(f"ERROR: Experiment execution failed: {exc}", file=sys.stderr)
+        for error in cleanup_errors:
+            print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
+        return 2
+    except Exception as exc:
+        # Last-resort CLI safety boundary.  Runtime/package exceptions should
+        # normally be converted into experiment_execution_failed with a durable
+        # failure manifest, but an unexpected exception must still release
+        # ACMM-started subject and integration resources before returning.
+        capture_runtime_log(active_subject_id[0])
+        cleanup_errors = cleanup_runtime_resources()
+        detail = str(exc) or exc.__class__.__name__
+        if campaign_context is not None:
+            finalize_campaign_execution_failure(
+                campaign_context,
+                detail=detail,
+            )
+        print(
+            f"ERROR: Unexpected experiment execution failure: {detail}",
+            file=sys.stderr,
+        )
         for error in cleanup_errors:
             print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
         return 2

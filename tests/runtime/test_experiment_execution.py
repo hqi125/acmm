@@ -11,6 +11,7 @@ import acmm.runtime.experiment_execution as experiment_execution_module
 from acmm.contract.loader import load_contract
 from acmm.runtime.experiment_execution import (
     execute_experiment,
+    experiment_execution_failed,
     experiment_execution_interrupted,
 )
 from acmm.runtime.interfaces import (
@@ -557,9 +558,9 @@ def test_persistence_failure_leaves_session_without_completion_manifest(
     )
 
     with pytest.raises(
-        result_write_error,
+        experiment_execution_failed,
         match="simulated persistence failure",
-    ):
+    ) as captured:
         execute_experiment(
             contract=contract,
             contract_path=CONTRACT_PATH,
@@ -578,8 +579,19 @@ def test_persistence_failure_leaves_session_without_completion_manifest(
         / f"execution_{EXECUTION_ID}"
     )
 
+    assert captured.value.result.failure_path == (
+        session_dir / "experiment_failure.yaml"
+    )
     assert (session_dir / "contract.yaml").is_file()
+    assert (session_dir / "experiment_failure.yaml").is_file()
     assert not (session_dir / "experiment_execution.yaml").exists()
+
+    failure = yaml.safe_load(
+        (session_dir / "experiment_failure.yaml").read_text(encoding="utf-8")
+    )
+    assert failure["execution"]["status"] == "failed"
+    assert failure["execution"]["failed_run_index"] == 1
+    assert failure["execution"]["failure_detail"] == "simulated persistence failure"
 
     persisted_runs = list((session_dir / "runs").glob("run_*"))
     assert len(persisted_runs) == 1
@@ -973,6 +985,78 @@ def test_runtime_lifecycle_finalizes_run_only_after_persistence(tmp_path: Path) 
     )
     assert finalization == {"ok": True, "result": {"persisted": True}}
 
+
+
+class failing_finalize_runtime_lifecycle(fake_runtime_lifecycle):
+    def run_finalize(
+        self,
+        session_handle,
+        context,
+        scenario,
+        handle,
+        reset,
+        outcome,
+    ):
+        del scenario, handle, reset
+        result_path = Path(outcome.result_path) if outcome.result_path else None
+        self.events.append(
+            (
+                "run_finalize",
+                session_handle["session"],
+                context.run_index,
+                outcome.persisted,
+                bool(result_path and result_path.is_dir()),
+            )
+        )
+        raise RuntimeError("synthetic finalization failure")
+
+
+def test_runtime_lifecycle_finalization_failure_is_persisted_and_session_closes(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    lifecycle = failing_finalize_runtime_lifecycle()
+    base = _registry(adapter)
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+
+    with pytest.raises(experiment_execution_failed) as captured:
+        execute_experiment(
+            contract=contract,
+            contract_path=CONTRACT_PATH,
+            registry=registry,
+            results_root=tmp_path,
+            harness_version="0.1.0",
+            sleep=lambda _: None,
+            max_attempts_per_run=1,
+            run_indices=(0,),
+            now=_clock(),
+            execution_id_factory=lambda: EXECUTION_ID,
+            run_id_factory=_run_id_factory(),
+        )
+
+    result = captured.value.result
+    assert result.failed_run_index == 0
+    assert result.failed_attempt == 1
+    assert "synthetic finalization failure" in result.detail
+    assert len(result.slots) == 1
+    assert len(result.slots[0].attempts) == 1
+    persisted = result.slots[0].attempts[0].result_path
+    assert persisted.is_dir()
+    assert (persisted / "run_record.yaml").is_file()
+    assert result.failure_path.is_file()
+    manifest = yaml.safe_load(result.failure_path.read_text(encoding="utf-8"))
+    assert manifest["execution"]["status"] == "failed"
+    assert manifest["execution"]["failed_run_index"] == 0
+    assert manifest["execution"]["persisted_attempt_count"] == 1
+    assert lifecycle.events[-1][0] == "session_finalize"
+    assert lifecycle.events[-1][-1] is False
 
 
 def test_runtime_lifecycle_can_report_progress_through_run_context(tmp_path: Path) -> None:

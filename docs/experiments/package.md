@@ -118,8 +118,10 @@ immediately as `[step/total]` messages while preserving the package-owned action
 
 A runtime may also expose typed apparatus cleanup. `acmm run apparatus cleanup --execution <path>` passes one
 persisted execution directory to the package cleanup implementation; `--preview` requests verification without
-mutation. Core owns only the generic command/result contract. The package must derive its quarantine targets from
-the execution evidence and enforce external-system identity/safety checks before deletion.
+mutation. Cleanup may target completed (`experiment_execution.yaml`), interrupted
+(`experiment_interruption.yaml`), or safely failed (`experiment_failure.yaml`) executions. Core owns only the
+generic command/result contract. The package must derive its quarantine targets from the execution evidence and
+enforce external-system identity/safety checks before deletion.
 
 Free-form apparatus actions are separate from the optional typed execution lifecycle. A package lifecycle may
 implement `session_initialize`, `run_prepare`, `run_observe`, `run_finalize`, and `session_finalize`. Core

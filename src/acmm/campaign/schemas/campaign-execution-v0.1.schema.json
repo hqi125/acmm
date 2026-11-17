@@ -81,6 +81,10 @@
         "experiment_interruption_artifact": {
           "type": "string",
           "minLength": 1
+        },
+        "experiment_failure_artifact": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

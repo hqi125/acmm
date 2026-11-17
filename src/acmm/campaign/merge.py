@@ -264,9 +264,11 @@ def _collect_accepted_observations(
         if not isinstance(legacy_name, str):
             legacy_name = execution.get("experiment_interruption_artifact")
         if not isinstance(legacy_name, str):
+            legacy_name = execution.get("experiment_failure_artifact")
+        if not isinstance(legacy_name, str):
             raise campaign_error(
                 f"Campaign execution '{campaign_execution_path}' records observed runs "
-                "without an execution/interruption artifact."
+                "without an execution/interruption/failure artifact."
             )
         legacy_path = _safe_session_artifact(session_dir, legacy_name)
         legacy = _load_yaml_mapping(legacy_path, "source execution manifest")

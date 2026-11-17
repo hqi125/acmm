@@ -84,13 +84,19 @@ execution_<id>/ with experiment_execution.yaml
 execution_<id>/ with experiment_interruption.yaml
     = explicitly interrupted session
 
-execution_<id>/ without either manifest
-    = incomplete session caused by an unhandled orchestration/persistence failure
+execution_<id>/ with experiment_failure.yaml
+    = execution stopped safely after an unrecoverable orchestration/lifecycle failure
+
+execution_<id>/ without any execution/interruption/failure manifest
+    = setup failed before durable execution finalization was available
 ```
 
-Already persisted per-run directories inside an interrupted or incomplete session remain
+Already persisted per-run directories inside an interrupted or failed session remain
 individually useful Run Records. The absence of the completion manifest prevents the partial
-session from silently appearing complete. Ctrl+C writes `experiment_interruption.yaml` with
+session from silently appearing complete. `experiment_failure.yaml` records the selected, started,
+resolved, unresolved, and not-started indices plus the active failed run/attempt and every attempt
+that had already been durably persisted before the lifecycle failure. Ctrl+C writes
+`experiment_interruption.yaml` with
 the selected, resolved, unfinished, and not-started run indices plus the interrupted run/attempt
 when one was active. Resume/continuation is intentionally unsupported so a later acquisition is
 always a new execution session.
@@ -186,6 +192,27 @@ Before each materialization slice, Core supplies the package with the materializ
 The schema intentionally leaves provider-specific admission and usage payloads open. Core guarantees only the durable envelope: execution identity/status, history-artifact references, materialization key/run indices, admission record, and observed usage record. A GitHub package may reason in rate-limit headers and content requests; another package can expose completely different resource dimensions without adding provider semantics to Core.
 
 Cold start does not require a researcher-supplied baseline. If no canonical history exists, the package receives an empty history and is expected to use live provider state and its safe request-level behavior. Once one materialization completes, its measured usage is available to later slices in the same execution and later executions.
+
+## Provider Pressure transport gate delivery
+
+When a package exposes provider-transport classification, Core may publish an authenticated local
+Provider Pressure transport gate for external transports such as a governed MCP server. The gate is
+part of the control plane rather than the provider data plane: the external transport asks Core for
+admission before dispatch and reports the provider result afterward.
+
+The gate uses persistent HTTP/1.1 connections and defines delivery idempotency explicitly.
+`request_id` is the idempotency key for `/v1/admit` and `/v1/cancel`; a repeated admission or
+cancellation with the same payload returns the original response rather than admitting or observing
+the action twice. For `/v1/feedback`, `(request_id, attempt)` is the idempotency key. A repeated
+semantically identical feedback message
+returns the original recovery/result response without repeating recovery actuation or result
+observation. Reusing either key with a different payload fails closed. Completed control records are
+kept only for the active logical run and are discarded when that run deactivates.
+
+This permits a transport to retry a lost control-plane delivery without retrying the provider action
+itself. In particular, an MCP transport may safely redeliver `/v1/feedback` after a connection-level
+failure while preserving the separate rule that ambiguous provider mutations are never
+automatically replayed.
 
 ## Provider usage observability
 
@@ -389,7 +416,10 @@ as an experiment-selection mechanism.
 
 
 Ctrl+C exits with status 130 after persisting an interruption manifest and a human-readable
-summary when an execution session has already started. No completion manifest is written.
+summary when an execution session has already started. An unrecoverable execution/lifecycle error
+after session creation writes `experiment_failure.yaml`, best-effort finalizes pressure/lifecycle
+state, and returns through the CLI cleanup boundary with status 2 instead of exposing a package
+traceback. No completion manifest is written in either case.
 
 ## Current boundaries
 

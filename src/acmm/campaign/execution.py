@@ -376,6 +376,7 @@ def finalize_campaign_execution(
         manifest["execution"]["detail"] = detail
     legacy_manifest = getattr(result, "manifest_path", None)
     interruption_manifest = getattr(result, "interruption_path", None)
+    failure_manifest = getattr(result, "failure_path", None)
     if legacy_manifest is not None:
         manifest["execution"]["experiment_execution_artifact"] = str(
             Path(legacy_manifest).relative_to(context.session_dir)
@@ -383,6 +384,10 @@ def finalize_campaign_execution(
     if interruption_manifest is not None:
         manifest["execution"]["experiment_interruption_artifact"] = str(
             Path(interruption_manifest).relative_to(context.session_dir)
+        )
+    if failure_manifest is not None:
+        manifest["execution"]["experiment_failure_artifact"] = str(
+            Path(failure_manifest).relative_to(context.session_dir)
         )
     manifest["outcomes"] = {
         "observed_run_ids": observed_ids,
@@ -605,6 +610,9 @@ def _reconcile_one_execution(
     elif (session_dir / "experiment_interruption.yaml").is_file():
         state = "interrupted"
         manifest["execution"]["experiment_interruption_artifact"] = "experiment_interruption.yaml"
+    elif (session_dir / "experiment_failure.yaml").is_file():
+        state = "failed"
+        manifest["execution"]["experiment_failure_artifact"] = "experiment_failure.yaml"
     else:
         state = "interrupted_unclean"
 

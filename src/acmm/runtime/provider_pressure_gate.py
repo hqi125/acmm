@@ -41,6 +41,12 @@ class _admission:
     action: runtime_provider_pressure_transport_action
     decision_id: str
     features: Mapping[str, float]
+    admit_fingerprint: str
+    admit_response: Mapping[str, Any]
+    feedback_responses: dict[int, tuple[str, Mapping[str, Any]]]
+    cancel_fingerprint: str | None = None
+    cancel_response: Mapping[str, Any] | None = None
+    terminal: bool = False
 
 
 class provider_pressure_transport_gate:
@@ -48,7 +54,10 @@ class provider_pressure_transport_gate:
 
     The bridge is provider-neutral.  The package model classifies transport requests
     and provider responses; Core owns admission, recovery actuation and result
-    correlation.  The control file is deliberately separate from the HTTP endpoint so
+    correlation.  request_id and (request_id, attempt) are idempotency keys for
+    admission/cancellation and feedback delivery, respectively, so control-plane response loss can
+    be retried without duplicating provider-pressure state transitions.  The control
+    file is deliberately separate from the HTTP endpoint so
     long-lived transports can discover whether an execution currently owns the gate.
     """
 
@@ -78,7 +87,8 @@ class provider_pressure_transport_gate:
         gate = self
 
         class _handler(BaseHTTPRequestHandler):
-            server_version = "ACMMProviderPressureGate/0.1"
+            server_version = "ACMMProviderPressureGate/0.2"
+            protocol_version = "HTTP/1.1"
 
             def log_message(self, format: str, *args: object) -> None:  # noqa: A003
                 return
@@ -161,10 +171,12 @@ class provider_pressure_transport_gate:
 
     def _handle(self, handler: BaseHTTPRequestHandler) -> None:
         if handler.headers.get("Authorization", "") != "Bearer " + self._token:
+            handler.close_connection = True
             self._json(handler, HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
             return
         length = _safe_int(handler.headers.get("Content-Length"))
         if length < 0 or length > _MAX_BODY_BYTES:
+            handler.close_connection = True
             self._json(handler, HTTPStatus.BAD_REQUEST, {"error": "invalid body size"})
             return
         try:
@@ -199,6 +211,7 @@ class provider_pressure_transport_gate:
 
     def _admit(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         request_id = _required_text(payload, "request_id")
+        fingerprint = _payload_fingerprint(payload)
         request = runtime_provider_pressure_transport_request(
             plane=_required_text(payload, "plane"),
             method=_required_text(payload, "method").upper(),
@@ -210,6 +223,13 @@ class provider_pressure_transport_gate:
             active = self._active
             if active is None:
                 raise _gate_unavailable("provider pressure gate has no active run")
+            existing = self._admissions.get(request_id)
+            if existing is not None:
+                if existing.admit_fingerprint != fingerprint:
+                    raise _gate_unavailable(
+                        "provider pressure request id was reused with a different admission payload"
+                    )
+                return dict(existing.admit_response)
             classify = getattr(self._session.model, "transport_action", None)
             if not callable(classify):
                 raise _gate_unavailable(
@@ -229,27 +249,43 @@ class provider_pressure_transport_gate:
             decision_id = str(admitted.record.get("decision_id") or "")
             if not decision_id:
                 raise RuntimeError("Provider Pressure admission did not produce a decision id.")
-            self._admissions[request_id] = _admission(
-                context=active.context,
-                request=request,
-                action=action,
-                decision_id=decision_id,
-                features=MappingProxyType(dict(action.workload.features)),
-            )
-            return {
+            response = {
                 "schema_version": _GATE_SCHEMA_VERSION,
                 "request_id": request_id,
                 "action_id": action.action_id,
                 "decision_id": decision_id,
                 "admission": dict(admitted.record),
             }
+            self._admissions[request_id] = _admission(
+                context=active.context,
+                request=request,
+                action=action,
+                decision_id=decision_id,
+                features=MappingProxyType(dict(action.workload.features)),
+                admit_fingerprint=fingerprint,
+                admit_response=MappingProxyType(dict(response)),
+                feedback_responses={},
+            )
+            return response
 
     def _feedback(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         request_id = _required_text(payload, "request_id")
+        attempt = _feedback_attempt(payload)
+        fingerprint = _payload_fingerprint(payload)
         with self._lock:
             admission = self._admissions.get(request_id)
             if admission is None:
                 raise _gate_unavailable("unknown provider pressure request id")
+            cached = admission.feedback_responses.get(attempt)
+            if cached is not None:
+                cached_fingerprint, cached_response = cached
+                if cached_fingerprint != fingerprint:
+                    raise _gate_unavailable(
+                        "provider pressure feedback attempt was reused with a different payload"
+                    )
+                return dict(cached_response)
+            if admission.terminal:
+                raise _gate_unavailable("provider pressure request is already terminal")
             response = runtime_provider_pressure_transport_response(
                 status=_optional_status(payload.get("status")),
                 headers={str(k): str(v) for k, v in _mapping(payload.get("headers")).items()},
@@ -290,7 +326,7 @@ class provider_pressure_transport_gate:
                         },
                     ),
                 )
-                return {
+                result = {
                     "schema_version": _GATE_SCHEMA_VERSION,
                     "request_id": request_id,
                     "action_id": admission.action.action_id,
@@ -298,13 +334,20 @@ class provider_pressure_transport_gate:
                     "retry": bool(recovery.retry),
                     "recovery": dict(admitted.record),
                 }
+                admission.feedback_responses[attempt] = (
+                    fingerprint,
+                    MappingProxyType(dict(result)),
+                )
+                if not recovery.retry:
+                    admission.terminal = True
+                return result
 
             outcome = (
                 "failure"
                 if response.error or (response.status is not None and response.status >= 400)
                 else "success"
             )
-            result = self._engine.action_result_observe(
+            observed = self._engine.action_result_observe(
                 self._session,
                 admission.context,
                 runtime_provider_pressure_action_result_event(
@@ -323,23 +366,37 @@ class provider_pressure_transport_gate:
                     },
                 ),
             )
-            self._admissions.pop(request_id, None)
-            return {
+            result = {
                 "schema_version": _GATE_SCHEMA_VERSION,
                 "request_id": request_id,
                 "action_id": admission.action.action_id,
                 "decision_id": admission.decision_id,
                 "retry": False,
-                "result": dict(result),
+                "result": dict(observed),
             }
+            admission.feedback_responses[attempt] = (
+                fingerprint,
+                MappingProxyType(dict(result)),
+            )
+            admission.terminal = True
+            return result
 
     def _cancel(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         request_id = _required_text(payload, "request_id")
+        fingerprint = _payload_fingerprint(payload)
         with self._lock:
-            admission = self._admissions.pop(request_id, None)
+            admission = self._admissions.get(request_id)
             if admission is None:
                 raise _gate_unavailable("unknown provider pressure request id")
-            result = self._engine.action_result_observe(
+            if admission.cancel_response is not None:
+                if admission.cancel_fingerprint != fingerprint:
+                    raise _gate_unavailable(
+                        "provider pressure cancellation was reused with a different payload"
+                    )
+                return dict(admission.cancel_response)
+            if admission.terminal:
+                raise _gate_unavailable("provider pressure request is already terminal")
+            observed = self._engine.action_result_observe(
                 self._session,
                 admission.context,
                 runtime_provider_pressure_action_result_event(
@@ -355,11 +412,15 @@ class provider_pressure_transport_gate:
                     },
                 ),
             )
-            return {
+            result = {
                 "schema_version": _GATE_SCHEMA_VERSION,
                 "request_id": request_id,
-                "result": dict(result),
+                "result": dict(observed),
             }
+            admission.cancel_fingerprint = fingerprint
+            admission.cancel_response = MappingProxyType(dict(result))
+            admission.terminal = True
+            return result
 
     @staticmethod
     def _json(
@@ -388,6 +449,25 @@ def _required_text(value: Mapping[str, Any], key: str) -> str:
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _payload_fingerprint(value: Mapping[str, Any]) -> str:
+    return json.dumps(
+        dict(value),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _feedback_attempt(value: Mapping[str, Any]) -> int:
+    raw = _mapping(value.get("metadata")).get("attempt", 0)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError("Provider Pressure gate feedback attempt is invalid.")
+    attempt = int(raw)
+    if float(raw) != float(attempt) or attempt < 0:
+        raise ValueError("Provider Pressure gate feedback attempt is invalid.")
+    return attempt
 
 
 def _optional_status(value: Any) -> int | None:

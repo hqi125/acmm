@@ -144,11 +144,66 @@ class experiment_interruption_result:
         )
 
 
+@dataclass(frozen=True)
+class experiment_failure_result:
+    execution_id: str
+    experiment_id: str
+    contract_sha256: str
+    session_dir: Path
+    failure_path: Path
+    contract_run_count: int
+    selected_run_indices: tuple[int, ...]
+    started_at: datetime
+    ended_at: datetime
+    slots: tuple[slot_execution, ...]
+    failed_run_index: int | None
+    failed_attempt: int | None
+    detail: str
+
+    @property
+    def resolved_run_indices(self) -> tuple[int, ...]:
+        return tuple(
+            slot.planned.run_index
+            for slot in self.slots
+            if slot.is_resolved
+        )
+
+    @property
+    def unresolved_run_indices(self) -> tuple[int, ...]:
+        resolved = set(self.resolved_run_indices)
+        return tuple(
+            run_index
+            for run_index in self.selected_run_indices
+            if run_index not in resolved
+        )
+
+    @property
+    def started_run_indices(self) -> tuple[int, ...]:
+        return tuple(slot.planned.run_index for slot in self.slots)
+
+    @property
+    def not_started_run_indices(self) -> tuple[int, ...]:
+        started = set(self.started_run_indices)
+        return tuple(
+            run_index
+            for run_index in self.selected_run_indices
+            if run_index not in started
+        )
+
+
 class experiment_execution_interrupted(Exception):
     """Raised after a Ctrl+C interruption has been persisted safely."""
 
     def __init__(self, result: experiment_interruption_result) -> None:
         super().__init__("Experiment execution interrupted by Ctrl+C.")
+        self.result = result
+
+
+class experiment_execution_failed(Exception):
+    """Raised after an unrecoverable execution failure has been persisted safely."""
+
+    def __init__(self, result: experiment_failure_result) -> None:
+        super().__init__(result.detail)
         self.result = result
 
 
@@ -1077,6 +1132,20 @@ def execute_experiment(
                     },
                 )
 
+                run_id = executed.record["run"]["id"]
+                attempt = run_attempt(
+                    attempt=attempt_number,
+                    run_id=run_id,
+                    validity=execution["validity"],
+                    termination=execution["termination"],
+                    result_path=result_path,
+                )
+                # Preserve a durably persisted attempt even if trusted environment
+                # finalization subsequently fails.  A failure manifest can then
+                # distinguish "scientific evidence exists" from "the execution
+                # session could not safely continue."
+                active_attempts.append(attempt)
+
                 try:
                     finalization = finalize_executed_run(
                         executed,
@@ -1114,16 +1183,6 @@ def execute_experiment(
                     },
                 )
 
-                run_id = executed.record["run"]["id"]
-
-                attempt = run_attempt(
-                    attempt=attempt_number,
-                    run_id=run_id,
-                    validity=execution["validity"],
-                    termination=execution["termination"],
-                    result_path=result_path,
-                )
-                active_attempts.append(attempt)
                 active_attempt_number = None
 
                 if execution["validity"] == "valid":
@@ -1320,15 +1379,21 @@ def execute_experiment(
         _write_yaml_atomically(interruption_path, interruption)
 
         if registry.lifecycle is not None:
-            registry.lifecycle.session_finalize(
-                lifecycle_session_handle,
-                lifecycle_session_context,
-                runtime_session_finalization(
-                    completed=False,
-                    interrupted=True,
-                    detail="keyboard_interrupt",
-                ),
-            )
+            try:
+                registry.lifecycle.session_finalize(
+                    lifecycle_session_handle,
+                    lifecycle_session_context,
+                    runtime_session_finalization(
+                        completed=False,
+                        interrupted=True,
+                        detail="keyboard_interrupt",
+                    ),
+                )
+            except Exception as exc:
+                report(
+                    "WARNING: Runtime lifecycle session finalization failed after "
+                    f"Ctrl+C: {exc}"
+                )
 
         result = experiment_interruption_result(
             execution_id=execution_id,
@@ -1356,17 +1421,23 @@ def execute_experiment(
         )
         raise experiment_execution_interrupted(result) from None
     except Exception as exc:
+        detail = str(exc) or exc.__class__.__name__
+        failed_run_index = (
+            active_planned.run_index
+            if active_planned is not None
+            else None
+        )
+        failed_attempt = active_attempt_number
+
         finish_materialization(
             completed=False,
             interrupted=False,
-            detail=str(exc) or exc.__class__.__name__,
+            detail=detail,
             suppress_errors=True,
         )
         if resource_usage_document is not None:
             resource_usage_document["execution"]["status"] = "failed"
-            resource_usage_document["execution"]["detail"] = (
-                str(exc) or exc.__class__.__name__
-            )
+            resource_usage_document["execution"]["detail"] = detail
             write_execution_resource_usage(
                 resource_usage_path,
                 resource_usage_document,
@@ -1375,7 +1446,7 @@ def execute_experiment(
             completed=False,
             resolved=active_selected_run_id is not None,
             attempts=tuple(active_attempts),
-            detail=str(exc) or exc.__class__.__name__,
+            detail=detail,
             suppress_errors=True,
         )
         finish_pressure_execution("failed", suppress_errors=True)
@@ -1383,11 +1454,13 @@ def execute_experiment(
             "execution_failed",
             {
                 "execution_id": execution_id,
-                "run_index": (active_planned.run_index if active_planned is not None else None),
-                "attempt": active_attempt_number,
-                "detail": str(exc) or exc.__class__.__name__,
+                "run_index": failed_run_index,
+                "attempt": failed_attempt,
+                "detail": detail,
             },
         )
+
+        session_finalize_error = None
         if registry.lifecycle is not None:
             try:
                 registry.lifecycle.session_finalize(
@@ -1396,12 +1469,86 @@ def execute_experiment(
                     runtime_session_finalization(
                         completed=False,
                         interrupted=False,
-                        detail=str(exc) or exc.__class__.__name__,
+                        detail=detail,
                     ),
                 )
-            except Exception:
-                pass
-        raise
+            except Exception as finalize_exc:
+                session_finalize_error = (
+                    str(finalize_exc) or finalize_exc.__class__.__name__
+                )
+                report(
+                    "WARNING: Runtime lifecycle session finalization failed after "
+                    f"execution error: {session_finalize_error}"
+                )
+
+        ended_at = clock()
+        provider_usage = _finish_provider_usage_monitor(
+            provider_usage_monitor,
+            provider_usage_started,
+            report,
+        )
+        failure_slots = list(slots)
+        if active_planned is not None:
+            failure_slots.append(
+                slot_execution(
+                    planned=active_planned,
+                    attempts=tuple(active_attempts),
+                    selected_run_id=active_selected_run_id,
+                )
+            )
+
+        failure_detail = detail
+        if session_finalize_error is not None:
+            failure_detail += (
+                "; lifecycle session finalization warning: "
+                + session_finalize_error
+            )
+
+        failure_path = session_dir / "experiment_failure.yaml"
+        failure_manifest = _build_failure_manifest(
+            execution_id=execution_id,
+            experiment_id=experiment_id,
+            contract_sha256=contract_sha256,
+            harness_version=harness_version,
+            started_at=started_at,
+            ended_at=ended_at,
+            max_attempts_per_run=max_attempts_per_run,
+            inter_run_delay_seconds=inter_run_delay_seconds,
+            contract_run_count=plan.run_count,
+            selected_run_indices=selected_run_indices,
+            subject_llm_baselines=subject_llm_baselines,
+            package_provenance=package_provenance,
+            deployment_reconciliation=deployment_reconciliation,
+            provider_usage=provider_usage,
+            slots=tuple(failure_slots),
+            failed_run_index=failed_run_index,
+            failed_attempt=failed_attempt,
+            detail=failure_detail,
+            session_dir=session_dir,
+        )
+        _write_yaml_atomically(failure_path, failure_manifest)
+
+        result = experiment_failure_result(
+            execution_id=execution_id,
+            experiment_id=experiment_id,
+            contract_sha256=contract_sha256,
+            session_dir=session_dir,
+            failure_path=failure_path,
+            contract_run_count=plan.run_count,
+            selected_run_indices=selected_run_indices,
+            started_at=started_at,
+            ended_at=ended_at,
+            slots=tuple(failure_slots),
+            failed_run_index=failed_run_index,
+            failed_attempt=failed_attempt,
+            detail=failure_detail,
+        )
+        report(
+            f"Execution {execution_id} failed safely after "
+            f"{len(result.resolved_run_indices)}/{len(selected_runs)} selected "
+            f"run(s) resolved. Failure record: {failure_path.name}."
+        )
+        raise experiment_execution_failed(result) from None
 
     return experiment_execution_result(
         execution_id=execution_id,
@@ -1509,6 +1656,86 @@ def _selected_subject_llm_baselines(
         if isinstance(baseline_id, str) and baseline_id:
             result[planned.subject_id] = baseline_id
     return result
+
+
+def _build_failure_manifest(
+    execution_id: str,
+    experiment_id: str,
+    contract_sha256: str,
+    harness_version: str,
+    started_at: datetime,
+    ended_at: datetime,
+    max_attempts_per_run: int,
+    inter_run_delay_seconds: float,
+    contract_run_count: int,
+    selected_run_indices: tuple[int, ...],
+    subject_llm_baselines: dict[str, str],
+    package_provenance: Mapping[str, str | None] | None,
+    deployment_reconciliation: Mapping[str, object] | None,
+    provider_usage: Mapping[str, object] | None,
+    slots: tuple[slot_execution, ...],
+    failed_run_index: int | None,
+    failed_attempt: int | None,
+    detail: str,
+    session_dir: Path,
+) -> dict:
+    resolved = tuple(
+        slot.planned.run_index
+        for slot in slots
+        if slot.is_resolved
+    )
+    started = tuple(slot.planned.run_index for slot in slots)
+    resolved_set = set(resolved)
+    started_set = set(started)
+    unresolved = tuple(
+        run_index
+        for run_index in selected_run_indices
+        if run_index not in resolved_set
+    )
+    not_started = tuple(
+        run_index
+        for run_index in selected_run_indices
+        if run_index not in started_set
+    )
+
+    execution = {
+        "id": execution_id,
+        "experiment_id": experiment_id,
+        "contract_sha256": contract_sha256,
+        "harness_version": harness_version,
+        "subject_llm_baselines": dict(subject_llm_baselines),
+        "status": "failed",
+        "failure_kind": "unrecoverable_execution_error",
+        "failure_detail": detail,
+        "started_at": _format_timestamp(started_at),
+        "failed_at": _format_timestamp(ended_at),
+        "max_attempts_per_run": max_attempts_per_run,
+        "pacing": {
+            "inter_run_delay_seconds": inter_run_delay_seconds,
+        },
+        "contract_run_count": contract_run_count,
+        "selected_run_indices": list(selected_run_indices),
+        "selected_run_count": len(selected_run_indices),
+        "started_run_indices": list(started),
+        "resolved_run_indices": list(resolved),
+        "unresolved_run_indices": list(unresolved),
+        "not_started_run_indices": list(not_started),
+        "failed_run_index": failed_run_index,
+        "failed_attempt": failed_attempt,
+        "persisted_attempt_count": sum(
+            len(slot.attempts)
+            for slot in slots
+        ),
+    }
+    _attach_package_provenance(execution, package_provenance)
+    _attach_deployment_reconciliation(execution, deployment_reconciliation)
+    _attach_provider_usage(execution, provider_usage)
+
+    return {
+        "schema_version": EXPERIMENT_EXECUTION_SCHEMA_VERSION,
+        "execution": execution,
+        "slots": _build_slot_records(slots, session_dir),
+    }
 
 
 def _build_interruption_manifest(
