@@ -22,15 +22,30 @@ from acmm.runtime.planner import (
 )
 from acmm.runtime.interfaces import (
     runtime_materialization_context,
+    runtime_materialization_run,
     runtime_resource_admission,
     runtime_resource_execution_context,
     runtime_resource_governor_session,
+    runtime_resource_subject_slice_context,
     runtime_materialization_finalization,
     runtime_run_context,
     runtime_run_finalization,
     runtime_session_context,
     runtime_session_finalization,
 )
+from acmm.runtime.provider_pressure import (
+    provider_pressure_engine,
+    provider_pressure_execution_session,
+    provider_pressure_run_admission,
+    runtime_provider_pressure_action_result_event,
+    runtime_provider_pressure_execution_context,
+    runtime_provider_pressure_run_context,
+    runtime_provider_pressure_run_outcome,
+    runtime_provider_pressure_pacing_event,
+    runtime_provider_pressure_recovery_event,
+    runtime_provider_pressure_workload,
+)
+from acmm.runtime.provider_pressure_gate import provider_pressure_transport_gate
 from acmm.runtime.provider_usage import execution_provider_usage_monitor
 from acmm.runtime.registry import execution_registry
 from acmm.runtime.result_store import persist_executed_run_to
@@ -158,6 +173,7 @@ def execute_experiment(
     provider_usage_monitor: execution_provider_usage_monitor | None = None,
     session_parent: str | Path | None = None,
     event_sink: Callable[[str, Mapping[str, object]], None] | None = None,
+    capture_environment_snapshots: bool = False,
 ) -> experiment_execution_result:
     """
     Execute every selected planned slot in one experiment execution session.
@@ -236,6 +252,11 @@ def execute_experiment(
         Path(session_parent) / f"execution_{execution_id}"
         if session_parent is not None
         else Path(results_root) / experiment_id / f"execution_{execution_id}"
+    )
+
+    generated_root = _infer_generated_root(
+        Path(results_root),
+        Path(session_parent) if session_parent is not None else None,
     )
 
     if session_dir.exists():
@@ -324,11 +345,73 @@ def execute_experiment(
                 ),
                 "detail": None,
             },
-            "governor": dict(resource_governor_session.record),
+            "governor": {
+                **dict(resource_governor_session.record),
+                "subject_slices": [],
+            },
             "history_artifacts": [str(item.path) for item in history],
             "materializations": [],
         }
         write_execution_resource_usage(resource_usage_path, resource_usage_document)
+
+    pressure_engine: provider_pressure_engine | None = None
+    pressure_session: provider_pressure_execution_session | None = None
+    active_pressure_admission: provider_pressure_run_admission | None = None
+    pressure_gate: provider_pressure_transport_gate | None = None
+    if registry.provider_pressure_model is not None:
+        pressure_engine = provider_pressure_engine(
+            registry.provider_pressure_model,
+            sleep=wait,
+            now=clock,
+        )
+        pressure_context = runtime_provider_pressure_execution_context(
+            experiment_id=experiment_id,
+            execution_id=execution_id,
+            selected_run_indices=selected_run_indices,
+            session_dir=str(session_dir),
+            generated_root=str(generated_root),
+            package_sha256=(
+                str(package_provenance.get("sha256"))
+                if isinstance(package_provenance, Mapping)
+                and package_provenance.get("sha256") is not None
+                else None
+            ),
+            progress=report,
+        )
+        pressure_session = pressure_engine.execution_initialize(pressure_context)
+        emit(
+            "provider_pressure_initialized",
+            {
+                "provider_id": pressure_session.identity.provider_id,
+                "model_id": pressure_session.identity.model_id,
+                "historical_replays": list(
+                    pressure_session.applied_historical_sources
+                ),
+            },
+        )
+        gate_configuration = getattr(
+            registry.provider_pressure_model,
+            "transport_gate_configuration",
+            None,
+        )
+        if callable(gate_configuration):
+            configuration = gate_configuration(pressure_context)
+            if configuration is not None:
+                pressure_gate = provider_pressure_transport_gate(
+                    pressure_engine,
+                    pressure_session,
+                    configuration,
+                )
+                pressure_gate.start()
+                emit(
+                    "provider_pressure_gate_started",
+                    {
+                        "bind_host": configuration.bind_host,
+                        "bind_port": configuration.bind_port,
+                        "advertised_url": configuration.advertised_url,
+                        "control_path": configuration.control_path,
+                    },
+                )
 
     materialization_initialize = (
         getattr(registry.lifecycle, "materialization_initialize", None)
@@ -342,6 +425,7 @@ def execute_experiment(
     )
     active_materialization_context: runtime_materialization_context | None = None
     active_materialization_handle = None
+    active_resource_subject_slice_key: tuple[str, str] | None = None
     materialization_observable = (
         tuple(registry.materialization_group_by) != ("run_index",)
         or callable(materialization_initialize)
@@ -350,8 +434,9 @@ def execute_experiment(
 
     def begin_materialization(key: str) -> None:
         nonlocal active_materialization_context, active_materialization_handle
-        nonlocal active_resource_admission
+        nonlocal active_resource_admission, active_resource_subject_slice_key
         runs = materialization_runs_by_key[key]
+        active_resource_subject_slice_key = None
         context = runtime_materialization_context(
             experiment_id=experiment_id,
             execution_id=execution_id,
@@ -361,6 +446,15 @@ def execute_experiment(
             scenario_ids=tuple(dict.fromkeys(run.scenario_id for run in runs)),
             repetitions=tuple(dict.fromkeys(run.repetition for run in runs)),
             session_dir=str(session_dir),
+            runs=tuple(
+                runtime_materialization_run(
+                    run_index=run.run_index,
+                    subject_id=run.subject_id,
+                    scenario_id=run.scenario_id,
+                    repetition=run.repetition,
+                )
+                for run in runs
+            ),
             progress=report,
         )
         if materialization_observable:
@@ -440,7 +534,7 @@ def execute_experiment(
         suppress_errors: bool = False,
     ) -> None:
         nonlocal active_materialization_context, active_materialization_handle
-        nonlocal active_resource_admission
+        nonlocal active_resource_admission, active_resource_subject_slice_key
         context = active_materialization_context
         handle = active_materialization_handle
         if context is None:
@@ -525,6 +619,84 @@ def execute_experiment(
             active_materialization_context = None
             active_materialization_handle = None
             active_resource_admission = None
+            active_resource_subject_slice_key = None
+
+    def finish_pressure_run(
+        *,
+        completed: bool,
+        resolved: bool,
+        attempts: tuple[run_attempt, ...],
+        detail: str | None = None,
+        suppress_errors: bool = False,
+    ) -> None:
+        nonlocal active_pressure_admission
+        if (
+            pressure_engine is None
+            or pressure_session is None
+            or active_pressure_admission is None
+        ):
+            return
+        try:
+            pressure_engine.run_finalize(
+                pressure_session,
+                active_pressure_admission,
+                runtime_provider_pressure_run_outcome(
+                    completed=completed,
+                    resolved=resolved,
+                    attempt_count=len(attempts),
+                    terminations=tuple(item.termination for item in attempts),
+                    detail=detail,
+                ),
+            )
+            emit(
+                "provider_pressure_run_observed",
+                {
+                    "run_index": active_pressure_admission.context.run_index,
+                    "completed": completed,
+                    "resolved": resolved,
+                },
+            )
+        except Exception as exc:
+            if not suppress_errors:
+                raise
+            report(
+                "WARNING: Provider Pressure run observation failed: "
+                f"{exc}"
+            )
+        finally:
+            if pressure_gate is not None:
+                pressure_gate.deactivate()
+            active_pressure_admission = None
+
+    def finish_pressure_execution(
+        status: str,
+        *,
+        suppress_errors: bool = False,
+    ) -> None:
+        if pressure_engine is None or pressure_session is None:
+            return
+        try:
+            snapshot_path = pressure_engine.execution_finalize(
+                pressure_session,
+                status=status,
+            )
+            emit(
+                "provider_pressure_snapshot_exported",
+                {
+                    "status": status,
+                    "path": str(snapshot_path),
+                },
+            )
+        except Exception as exc:
+            if not suppress_errors:
+                raise
+            report(
+                "WARNING: Provider Pressure trajectory export failed: "
+                f"{exc}"
+            )
+        finally:
+            if pressure_gate is not None:
+                pressure_gate.close()
 
     provider_usage_started = _begin_provider_usage_monitor(
         provider_usage_monitor,
@@ -567,10 +739,119 @@ def execute_experiment(
                     )
                 begin_materialization(materialization_key)
 
+            if registry.resource_governor is not None:
+                subject_slice_admit = getattr(
+                    registry.resource_governor,
+                    "subject_slice_admit",
+                    None,
+                )
+                subject_slice_key = (materialization_key, planned.subject_id)
+                if (
+                    callable(subject_slice_admit)
+                    and active_resource_subject_slice_key != subject_slice_key
+                ):
+                    assert resource_governor_session is not None
+                    assert active_materialization_context is not None
+                    subject_runs = tuple(
+                        run
+                        for run in active_materialization_context.runs
+                        if run.subject_id == planned.subject_id
+                    )
+                    subject_context = runtime_resource_subject_slice_context(
+                        experiment_id=experiment_id,
+                        execution_id=execution_id,
+                        materialization_key=materialization_key,
+                        subject_id=planned.subject_id,
+                        selected_run_indices=tuple(
+                            run.run_index for run in subject_runs
+                        ),
+                        scenario_ids=tuple(
+                            dict.fromkeys(run.scenario_id for run in subject_runs)
+                        ),
+                        repetitions=tuple(
+                            dict.fromkeys(run.repetition for run in subject_runs)
+                        ),
+                        session_dir=str(session_dir),
+                        progress=report,
+                    )
+                    admission = subject_slice_admit(
+                        resource_governor_session.handle,
+                        subject_context,
+                    )
+                    if not isinstance(admission, runtime_resource_admission):
+                        raise TypeError(
+                            "Runtime resource governor subject_slice_admit() must "
+                            "return runtime_resource_admission."
+                        )
+                    assert resource_usage_document is not None
+                    governor_record = resource_usage_document.get("governor")
+                    if not isinstance(governor_record, dict):
+                        raise RuntimeError(
+                            "Execution resource governor record is unavailable."
+                        )
+                    slices = governor_record.setdefault("subject_slices", [])
+                    if not isinstance(slices, list):
+                        raise RuntimeError(
+                            "Execution resource subject-slice record is malformed."
+                        )
+                    slices.append(
+                        {
+                            "materialization_key": materialization_key,
+                            "subject_id": planned.subject_id,
+                            "selected_run_indices": list(
+                                subject_context.selected_run_indices
+                            ),
+                            "admission": dict(admission.record),
+                        }
+                    )
+                    write_execution_resource_usage(
+                        resource_usage_path, resource_usage_document
+                    )
+                    emit(
+                        "resource_subject_slice_admitted",
+                        {
+                            "materialization_key": materialization_key,
+                            "subject_id": planned.subject_id,
+                            "record": dict(admission.record),
+                        },
+                    )
+                    active_resource_subject_slice_key = subject_slice_key
+
             active_planned = planned
             active_attempts = []
             active_selected_run_id = None
             active_attempt_number = None
+
+            if pressure_engine is not None and pressure_session is not None:
+                pressure_run_context = runtime_provider_pressure_run_context(
+                    experiment_id=experiment_id,
+                    execution_id=execution_id,
+                    run_index=planned.run_index,
+                    subject_id=planned.subject_id,
+                    scenario_id=planned.scenario_id,
+                    repetition=planned.repetition,
+                    materialization_key=materialization_key,
+                    session_dir=str(session_dir),
+                    progress=report,
+                )
+                active_pressure_admission = pressure_engine.run_admit(
+                    pressure_session,
+                    pressure_run_context,
+                )
+                emit(
+                    "provider_pressure_run_admitted",
+                    dict(active_pressure_admission.record),
+                )
+                if pressure_gate is not None:
+                    pressure_gate.activate(active_pressure_admission.context)
+                    emit(
+                        "provider_pressure_gate_activated",
+                        {
+                            "run_index": planned.run_index,
+                            "subject_id": planned.subject_id,
+                            "scenario_id": planned.scenario_id,
+                        },
+                    )
 
             emit(
                 "logical_run_started",
@@ -603,6 +884,131 @@ def execute_experiment(
                     },
                 )
 
+                pressure_action = None
+                pressure_pacing = None
+                pressure_recovery = None
+                pressure_action_result = None
+                pressure_checkpoint = None
+                if (
+                    pressure_engine is not None
+                    and pressure_session is not None
+                    and active_pressure_admission is not None
+                ):
+                    pressure_context_for_action = active_pressure_admission.context
+
+                    def pressure_action(
+                        action_id: str,
+                        features: Mapping[str, float],
+                        metadata: Mapping[str, object],
+                        *,
+                        _pressure_context=pressure_context_for_action,
+                    ) -> Mapping[str, object]:
+                        admitted = pressure_engine.action_admit(
+                            pressure_session,
+                            _pressure_context,
+                            action_id=action_id,
+                            workload=runtime_provider_pressure_workload(
+                                features=features,
+                                metadata=metadata,
+                            ),
+                        )
+                        emit(
+                            "provider_pressure_action_admitted",
+                            dict(admitted.record),
+                        )
+                        return dict(admitted.record)
+
+                    def pressure_pacing(
+                        reason: str,
+                        duration_seconds: float,
+                        action_id: str,
+                        features: Mapping[str, float],
+                        metadata: Mapping[str, object],
+                        *,
+                        _pressure_context=pressure_context_for_action,
+                    ) -> Mapping[str, object]:
+                        event = runtime_provider_pressure_pacing_event(
+                            source="runtime",
+                            reason=reason,
+                            duration_seconds=float(duration_seconds),
+                            action_id=action_id,
+                            features=features,
+                            metadata=metadata,
+                        )
+                        observation = pressure_engine.pacing_observe(
+                            pressure_session,
+                            _pressure_context,
+                            event,
+                        )
+                        record = {
+                            "reason": event.reason,
+                            "duration_seconds": event.duration_seconds,
+                            "action_id": event.action_id,
+                            "features": dict(event.features),
+                            "signal_count": len(observation.signals),
+                            "metadata": dict(event.metadata),
+                        }
+                        emit("provider_pressure_runtime_pacing", record)
+                        return record
+
+                    def pressure_recovery(
+                        kind: str,
+                        duration_seconds: float,
+                        recommendation_source: str,
+                        action_id: str,
+                        decision_id: str | None,
+                        features: Mapping[str, float],
+                        metadata: Mapping[str, object],
+                        *,
+                        _pressure_context=pressure_context_for_action,
+                    ) -> Mapping[str, object]:
+                        event = runtime_provider_pressure_recovery_event(
+                            kind=kind,
+                            wait_seconds=float(duration_seconds),
+                            recommendation_source=recommendation_source,
+                            action_id=action_id,
+                            decision_id=decision_id,
+                            features=features,
+                            metadata=metadata,
+                        )
+                        admitted = pressure_engine.recovery_actuate(
+                            pressure_session,
+                            _pressure_context,
+                            event,
+                        )
+                        record = dict(admitted.record)
+                        emit("provider_pressure_recovery_actuated", record)
+                        return record
+
+                    def pressure_action_result(
+                        outcome: str,
+                        action_id: str,
+                        decision_id: str | None,
+                        features: Mapping[str, float],
+                        metadata: Mapping[str, object],
+                        *,
+                        _pressure_context=pressure_context_for_action,
+                    ) -> Mapping[str, object]:
+                        event = runtime_provider_pressure_action_result_event(
+                            outcome=outcome,
+                            action_id=action_id,
+                            decision_id=decision_id,
+                            features=features,
+                            metadata=metadata,
+                        )
+                        record = pressure_engine.action_result_observe(
+                            pressure_session,
+                            _pressure_context,
+                            event,
+                        )
+                        rendered = dict(record)
+                        emit("provider_pressure_action_result", rendered)
+                        return rendered
+
+                    # Compatibility alias for packages that still call the v0.3
+                    # checkpoint API. New packages should use pressure_action.
+                    pressure_checkpoint = pressure_action
+
                 lifecycle_run_context = runtime_run_context(
                     execution_id=execution_id,
                     run_index=planned.run_index,
@@ -610,9 +1016,15 @@ def execute_experiment(
                     scenario_id=planned.scenario_id,
                     repetition=planned.repetition,
                     attempt=attempt_number,
+                    capture_environment_snapshots=capture_environment_snapshots,
                     materialization_key=materialization_key,
                     materialization_handle=active_materialization_handle,
                     progress=report,
+                    pressure_action=pressure_action,
+                    pressure_pacing=pressure_pacing,
+                    pressure_recovery=pressure_recovery,
+                    pressure_action_result=pressure_action_result,
+                    pressure_checkpoint=pressure_checkpoint,
                 )
                 executed = execute_planned_run(
                     contract=contract,
@@ -747,6 +1159,11 @@ def execute_experiment(
                     "resolved": bool(slots[-1].is_resolved),
                 },
             )
+            finish_pressure_run(
+                completed=True,
+                resolved=bool(slots[-1].is_resolved),
+                attempts=tuple(slots[-1].attempts),
+            )
 
             has_next_selected_run = selected_position + 1 < len(selected_runs)
 
@@ -771,6 +1188,7 @@ def execute_experiment(
                 resource_usage_path,
                 resource_usage_document,
             )
+        finish_pressure_execution("completed")
         provider_usage = _finish_provider_usage_monitor(
             provider_usage_monitor,
             provider_usage_started,
@@ -841,6 +1259,14 @@ def execute_experiment(
                 resource_usage_path,
                 resource_usage_document,
             )
+        finish_pressure_run(
+            completed=False,
+            resolved=active_selected_run_id is not None,
+            attempts=tuple(active_attempts),
+            detail="keyboard_interrupt",
+            suppress_errors=True,
+        )
+        finish_pressure_execution("interrupted", suppress_errors=True)
         emit(
             "execution_interrupted",
             {
@@ -945,6 +1371,14 @@ def execute_experiment(
                 resource_usage_path,
                 resource_usage_document,
             )
+        finish_pressure_run(
+            completed=False,
+            resolved=active_selected_run_id is not None,
+            attempts=tuple(active_attempts),
+            detail=str(exc) or exc.__class__.__name__,
+            suppress_errors=True,
+        )
+        finish_pressure_execution("failed", suppress_errors=True)
         emit(
             "execution_failed",
             {
@@ -980,6 +1414,25 @@ def execute_experiment(
         ended_at=ended_at,
         slots=tuple(slots),
     )
+
+
+def _infer_generated_root(
+    results_root: Path,
+    session_parent: Path | None,
+) -> Path:
+    if session_parent is not None:
+        parent = Path(session_parent).expanduser().resolve()
+        if (
+            parent.name == "executions"
+            and parent.parent.name.startswith("campaign_")
+            and len(parent.parents) >= 3
+        ):
+            return parent.parents[2]
+        return parent
+    root = Path(results_root).expanduser().resolve()
+    if root.name == "results":
+        return root.parent
+    return root
 
 
 def _write_run_finalization(
@@ -1333,6 +1786,11 @@ def _remove_empty_session(
 
     if runs_dir.exists():
         runs_dir.rmdir()
+
+    generated_root = _infer_generated_root(
+        Path(results_root),
+        Path(session_parent) if session_parent is not None else None,
+    )
 
     if session_dir.exists():
         session_dir.rmdir()

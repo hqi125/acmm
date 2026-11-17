@@ -427,3 +427,27 @@ def test_open_webui_adapter_omits_tool_ids_when_no_mcp_server_is_available() -> 
 
     assert result.failure is None
     assert "tool_ids" not in client.completion_payload
+
+
+def test_open_webui_empty_completed_final_response_remains_scientifically_valid() -> None:
+    client = fake_open_webui_client()
+    original_get_chat = client.get_chat
+
+    def blank_final(token, chat_id):
+        value = original_get_chat(token, chat_id)
+        assistant_id = value["chat"]["history"]["currentId"]
+        value["chat"]["history"]["messages"][assistant_id]["content"] = ""
+        return value
+
+    client.get_chat = blank_final
+    result = open_webui_adapter(client).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.failure is None
+    assert result.termination == "agent_completed"
+    assert result.evidence[-1].id == "final_response"
+    assert result.evidence[-1].content == b""

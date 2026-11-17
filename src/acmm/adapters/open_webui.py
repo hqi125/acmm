@@ -418,16 +418,6 @@ def _parse_completed_chat(
         ),
     )
 
-    if require_final_response and not final_response:
-        return _parsed_chat(
-            evidence=evidence,
-            subject_provenance=provenance,
-            failure=execution_failure(
-                kind="missing_final_response",
-                message="Open WebUI completed the chat without final assistant text.",
-            ),
-        )
-
     return _parsed_chat(
         evidence=evidence,
         subject_provenance=provenance,

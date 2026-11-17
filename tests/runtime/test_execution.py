@@ -171,6 +171,14 @@ class provider_error_interpreter:
             and context.output.startswith("Failed to ")
         )
 
+    def annotations(self, context: tool_result_interpretation_context):
+        if self.detects_error(context):
+            return {
+                "acmm_error_origin": "apparatus",
+                "acmm_error_kind": "synthetic_provider_wrapper_failure",
+            }
+        return {}
+
 
 class observed_fixture:
     def __init__(self) -> None:
@@ -581,8 +589,11 @@ def test_integration_can_promote_plain_text_tool_failure_without_adapter_couplin
     tool_results = json.loads(artifacts["tool_results"].content)
     conversation = json.loads(artifacts["conversation"].content)
     assert tool_results[0]["is_error"] is True
+    assert tool_results[0]["acmm_error_origin"] == "apparatus"
+    assert tool_results[0]["acmm_error_kind"] == "synthetic_provider_wrapper_failure"
     assert conversation["messages"][0]["is_error"] is True
     assert conversation["messages"][0]["status"] == "failed"
+    assert conversation["messages"][0]["acmm_error_origin"] == "apparatus"
 
 
 def test_runtime_subject_admission_wraps_subject_execution_before_observation() -> None:

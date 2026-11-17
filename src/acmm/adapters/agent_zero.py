@@ -312,16 +312,6 @@ def _parse_run(
         ),
     )
 
-    if require_final_response and not final_response:
-        return _parsed_run(
-            evidence=evidence,
-            subject_provenance=provenance,
-            failure=execution_failure(
-                kind="missing_final_response",
-                message="Agent Zero completed the run without final response text.",
-            ),
-        )
-
     return _parsed_run(
         evidence=evidence,
         subject_provenance=provenance,

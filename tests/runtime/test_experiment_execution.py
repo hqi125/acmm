@@ -24,6 +24,14 @@ from acmm.runtime.interfaces import (
     runtime_resource_governor_session,
 )
 from acmm.runtime.registry import execution_registry
+from acmm.runtime.provider_pressure import (
+    runtime_provider_pressure_identity,
+    runtime_provider_pressure_observation,
+    runtime_provider_pressure_pacing_event,
+    runtime_provider_pressure_policy,
+    runtime_provider_pressure_signal,
+    runtime_provider_pressure_workload,
+)
 from acmm.runtime.result_store import result_write_error
 
 
@@ -1048,6 +1056,10 @@ class fake_materialized_runtime_lifecycle(fake_runtime_lifecycle):
                 session_handle["session"],
                 context.key,
                 context.selected_run_indices,
+                tuple(
+                    (run.run_index, run.subject_id, run.scenario_id, run.repetition)
+                    for run in context.runs
+                ),
             )
         )
         return {"materialization": context.key}
@@ -1114,6 +1126,13 @@ def test_materialization_hooks_wrap_subject_major_slice(tmp_path: Path) -> None:
     )
     assert initialize[2] == "scenario_id=synthetic_plus_13"
     assert initialize[3] == (0, 1, 2, 3, 4)
+    assert initialize[4] == (
+        (0, "hermes_gpt_oss120b", "synthetic_plus_13", 1),
+        (1, "hermes_gpt_oss120b", "synthetic_plus_13", 2),
+        (2, "hermes_gpt_oss120b", "synthetic_plus_13", 3),
+        (3, "hermes_gpt_oss120b", "synthetic_plus_13", 4),
+        (4, "hermes_gpt_oss120b", "synthetic_plus_13", 5),
+    )
     finalize = next(
         event for event in lifecycle.events if event[0] == "materialization_finalize"
     )
@@ -1141,6 +1160,20 @@ class fake_execution_resource_governor:
         return runtime_resource_admission(
             handle={"key": context.key},
             record={"status": "admitted", "forecast": {"requests": 7}},
+        )
+
+    def subject_slice_admit(self, session_handle, context):
+        self.events.append(
+            (
+                "subject_slice_admit",
+                context.materialization_key,
+                context.subject_id,
+                context.selected_run_indices,
+            )
+        )
+        return runtime_resource_admission(
+            handle={"subject_id": context.subject_id},
+            record={"status": "admitted", "scope": "subject_slice"},
         )
 
     def materialization_finalize(self, session_handle, context, admission_handle, outcome):
@@ -1185,6 +1218,20 @@ def test_resource_governor_is_execution_level_and_reuses_prior_usage_history(tmp
     )
     assert first_usage["execution"]["status"] == "completed"
     assert first_usage["governor"]["id"] == "synthetic_resource_governor"
+    assert first_usage["governor"]["subject_slices"] == [
+        {
+            "materialization_key": "scenario_id=synthetic_plus_13",
+            "subject_id": "hermes_gpt_oss120b",
+            "selected_run_indices": [0, 1, 2, 3, 4],
+            "admission": {"status": "admitted", "scope": "subject_slice"},
+        }
+    ]
+    assert (
+        "subject_slice_admit",
+        "scenario_id=synthetic_plus_13",
+        "hermes_gpt_oss120b",
+        (0, 1, 2, 3, 4),
+    ) in governor.events
     assert first_usage["history_artifacts"] == []
     assert first_usage["materializations"] == [
         {
@@ -1218,3 +1265,252 @@ def test_resource_governor_is_execution_level_and_reuses_prior_usage_history(tmp
     assert second_usage["history_artifacts"] == [
         str(first.session_dir / "execution_resource_usage.yaml")
     ]
+
+
+class _execution_pressure_model:
+    def identity(self, context):
+        return runtime_provider_pressure_identity(
+            provider_id="example",
+            scope_id="scope",
+            model_id="test_model",
+            model_version="0.1",
+            model_definition_sha256="c" * 64,
+        )
+
+    def policy(self, context):
+        return runtime_provider_pressure_policy(
+            punishment_increment=1.0,
+            reward_decrement=0.1,
+            base_delay_seconds=5.0,
+            max_delay_seconds=60.0,
+        )
+
+    def historical_replay(self, context):
+        return (
+            runtime_provider_pressure_observation(
+                source_kind="historical_replay",
+                source_execution_id="old",
+                signals=(
+                    runtime_provider_pressure_signal(
+                        kind="punishment",
+                        count=1,
+                        features={"operation.create": 1.0},
+                    ),
+                ),
+            ),
+        )
+
+    def run_workload(self, context):
+        return runtime_provider_pressure_workload(
+            features={"operation.create": 1.0}
+        )
+
+    def run_measurement_start(self, context):
+        return context.run_index
+
+    def pacing_observe(self, context, event):
+        return runtime_provider_pressure_observation(
+            source_kind="live_execution",
+            source_execution_id=context.execution_id,
+        )
+
+    def run_observe(self, context, measurement_handle, outcome):
+        assert measurement_handle == context.run_index
+        return runtime_provider_pressure_observation(
+            source_kind="live_execution",
+            source_execution_id=context.execution_id,
+            signals=(
+                runtime_provider_pressure_signal(
+                    kind="reward",
+                    count=1,
+                    features={"operation.create": 1.0},
+                ),
+            ),
+        )
+
+
+def test_execute_experiment_uses_pph_below_execution_entry_point(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    registry = _registry(adapter)
+    registry = execution_registry(
+        subject_adapters=registry.subject_adapters,
+        provider_pressure_model=_execution_pressure_model(),
+        fixtures=registry.fixtures,
+        evaluators=registry.evaluators,
+        subject_configuration_overlays=registry.subject_configuration_overlays,
+    )
+    waits: list[float] = []
+    generated = tmp_path / "generated"
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=registry,
+        results_root=generated / "results",
+        harness_version="test",
+        run_indices=(0,),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        now=_clock(),
+        sleep=waits.append,
+    )
+
+    assert result.slots[0].is_resolved
+    assert waits == []
+    trajectory = list((generated / "provider_pressure").rglob("*.yaml"))
+    names = {path.name for path in trajectory}
+    assert "profile-state.yaml" in names
+    assert "trajectory-index.yaml" in names
+    snapshots = [path for path in trajectory if path.parent.name == "trajectory"]
+    assert len(snapshots) == 3
+
+
+def test_provider_pressure_generated_root_is_shared_between_run_and_campaign(
+    tmp_path: Path,
+) -> None:
+    generated = tmp_path / "generated"
+    assert experiment_execution_module._infer_generated_root(
+        generated / "results",
+        None,
+    ) == generated.resolve()
+    assert experiment_execution_module._infer_generated_root(
+        generated / "ignored-results-root",
+        generated / "github_mcp_project_workspace_v1" / "campaign_demo" / "executions",
+    ) == generated.resolve()
+
+
+def test_execute_experiment_exposes_pph_action_and_runtime_pacing_to_lifecycle(
+    tmp_path: Path,
+) -> None:
+    class action_pressure_model(_execution_pressure_model):
+        def historical_replay(self, context):
+            return (
+                runtime_provider_pressure_observation(
+                    source_kind="historical_replay",
+                    source_execution_id="old-action",
+                    signals=(
+                        runtime_provider_pressure_signal(
+                            kind="punishment",
+                            count=1,
+                            features={"operation.repository.create": 1.0},
+                        ),
+                    ),
+                ),
+            )
+
+        def run_workload(self, context):
+            return runtime_provider_pressure_workload(features={})
+
+        def pacing_observe(self, context, event):
+            return runtime_provider_pressure_observation(
+                source_kind="live_execution",
+                source_execution_id=context.execution_id,
+                signals=(
+                    runtime_provider_pressure_signal(
+                        kind="punishment",
+                        count=1,
+                        pressure_duration_seconds=event.duration_seconds,
+                        features=event.features,
+                    ),
+                ) if event.reason == "provider_secondary_pressure" else (),
+            )
+
+        def recovery_observe(self, context, event):
+            return runtime_provider_pressure_observation(
+                source_kind="live_execution",
+                source_execution_id=context.execution_id,
+                signals=(
+                    runtime_provider_pressure_signal(
+                        kind="punishment",
+                        count=1,
+                        pressure_duration_seconds=event.underprediction_seconds,
+                        features=event.features,
+                    ),
+                ) if event.underprediction_seconds > 0 else (),
+            )
+
+    class action_lifecycle(fake_runtime_lifecycle):
+        def run_prepare(self, session_handle, context, scenario, reset):
+            assert context.pressure_action is not None
+            assert context.pressure_pacing is not None
+            assert context.pressure_recovery is not None
+            assert context.pressure_action_result is not None
+            record = context.pressure_action(
+                "repository.create",
+                {"operation.repository.create": 1.0},
+                {"test": True},
+            )
+            self.events.append(("action", record["action_id"], record["reason"]))
+            feedback = context.pressure_pacing(
+                "provider_secondary_pressure",
+                60.0,
+                "repository.create",
+                {"operation.repository.create": 1.0},
+                {"test": True},
+            )
+            self.events.append(("pacing", feedback["reason"], feedback["signal_count"]))
+            recovery = context.pressure_recovery(
+                "secondary",
+                20.0,
+                "retry_after",
+                "repository.create",
+                str(record["decision_id"]),
+                {"operation.repository.create": 1.0},
+                {"test": True, "recovery_attempt": 1},
+            )
+            self.events.append(
+                (
+                    "recovery",
+                    recovery["underprediction_seconds"],
+                    recovery["signal_count"],
+                )
+            )
+            action_result = context.pressure_action_result(
+                "success",
+                "repository.create",
+                str(record["decision_id"]),
+                {"operation.repository.create": 1.0},
+                {"test": True},
+            )
+            self.events.append(
+                ("action_result", action_result["outcome"], action_result["decision_id"])
+            )
+            return super().run_prepare(session_handle, context, scenario, reset)
+
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    lifecycle = action_lifecycle()
+    base = _registry(adapter)
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        provider_pressure_model=action_pressure_model(),
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+    waits: list[float] = []
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=registry,
+        results_root=tmp_path / "generated" / "results",
+        harness_version="test",
+        run_indices=(0,),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        now=_clock(),
+        sleep=waits.append,
+    )
+
+    assert result.slots[0].is_resolved
+    assert 5.0 in waits
+    assert 20.0 in waits
+    assert any(event[:2] == ("action", "repository.create") for event in lifecycle.events)
+    assert any(event[:2] == ("pacing", "provider_secondary_pressure") for event in lifecycle.events)
+    assert any(event[:2] == ("recovery", 15.0) for event in lifecycle.events)
+    assert any(event[:2] == ("action_result", "success") for event in lifecycle.events)

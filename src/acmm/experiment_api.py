@@ -37,6 +37,27 @@ from acmm.secret_bindings import (
     resolve_secret,
     secret_binding_key,
 )
+from acmm.runtime.provider_pressure import (
+    runtime_provider_pressure_action_result_event,
+    runtime_provider_pressure_app_suspension,
+    runtime_provider_pressure_app_policy,
+    runtime_provider_pressure_transport_response,
+    runtime_provider_pressure_transport_request,
+    runtime_provider_pressure_transport_recovery,
+    runtime_provider_pressure_transport_action,
+    runtime_provider_pressure_gate_configuration,
+    runtime_provider_pressure_execution_context,
+    runtime_provider_pressure_identity,
+    runtime_provider_pressure_model,
+    runtime_provider_pressure_observation,
+    runtime_provider_pressure_pacing_event,
+    runtime_provider_pressure_policy,
+    runtime_provider_pressure_recovery_event,
+    runtime_provider_pressure_run_context,
+    runtime_provider_pressure_run_outcome,
+    runtime_provider_pressure_signal,
+    runtime_provider_pressure_workload,
+)
 from acmm.runtime.interfaces import (
     apparatus_action_progress,
     apparatus_action_result,
@@ -59,9 +80,11 @@ from acmm.runtime.interfaces import (
     runtime_materialization_context,
     runtime_materialization_finalization,
     runtime_materialization_lifecycle,
+    runtime_materialization_run,
     runtime_resource_admission,
     runtime_resource_execution_context,
     runtime_resource_governor_session,
+    runtime_resource_subject_slice_context,
     runtime_execution_recovery,
     runtime_execution_recovery_context,
     runtime_execution_recovery_result,
@@ -83,6 +106,7 @@ class experiment_runtime_context:
     package_root: Path
     package_secret_ids: tuple[str, ...] = ()
     integration_secret_ids: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    integration_state_roots: Mapping[str, Path] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "package_secret_ids", tuple(self.package_secret_ids))
@@ -94,6 +118,15 @@ class experiment_runtime_context:
             self,
             "integration_secret_ids",
             MappingProxyType(normalized),
+        )
+        roots = {
+            str(integration_id): Path(root).expanduser().resolve()
+            for integration_id, root in self.integration_state_roots.items()
+        }
+        object.__setattr__(
+            self,
+            "integration_state_roots",
+            MappingProxyType(roots),
         )
 
     def resolve_resource(
@@ -179,6 +212,7 @@ class experiment_runtime:
     apparatus_cleanup: runtime_apparatus_cleanup | None = None
     recovery: runtime_execution_recovery | None = None
     resource_governor: runtime_execution_resource_governor | None = None
+    provider_pressure_model: runtime_provider_pressure_model | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -245,13 +279,34 @@ __all__ = [
     "runtime_run_finalization",
     "runtime_run_context",
     "runtime_execution_lifecycle",
+    "runtime_provider_pressure_action_result_event",
+    "runtime_provider_pressure_app_suspension",
+    "runtime_provider_pressure_app_policy",
+    "runtime_provider_pressure_transport_response",
+    "runtime_provider_pressure_transport_request",
+    "runtime_provider_pressure_transport_recovery",
+    "runtime_provider_pressure_transport_action",
+    "runtime_provider_pressure_gate_configuration",
+    "runtime_provider_pressure_execution_context",
+    "runtime_provider_pressure_identity",
+    "runtime_provider_pressure_model",
+    "runtime_provider_pressure_observation",
+    "runtime_provider_pressure_pacing_event",
+    "runtime_provider_pressure_policy",
+    "runtime_provider_pressure_recovery_event",
+    "runtime_provider_pressure_run_context",
+    "runtime_provider_pressure_run_outcome",
+    "runtime_provider_pressure_signal",
+    "runtime_provider_pressure_workload",
     "runtime_execution_resource_governor",
     "runtime_materialization_context",
     "runtime_materialization_finalization",
     "runtime_materialization_lifecycle",
+    "runtime_materialization_run",
     "runtime_resource_admission",
     "runtime_resource_execution_context",
     "runtime_resource_governor_session",
+    "runtime_resource_subject_slice_context",
     "runtime_execution_recovery",
     "runtime_execution_recovery_context",
     "runtime_execution_recovery_result",

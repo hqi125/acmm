@@ -70,6 +70,16 @@ def load_staged_experiment_runtime(
             )
             for component in package.integrations
         },
+        integration_state_roots={
+            integration.integration_id: (
+                package.root.resolve().parents[2]
+                / "integration-resources"
+                / package.experiment_id
+                / integration.integration_id
+                / package.package_sha256
+            )
+            for integration in package.integrations
+        },
     )
     module_name = _runtime_module_name(package)
     module = _load_runtime_module(
@@ -245,6 +255,7 @@ def compose_execution_registry(
         subject_adapters=dict(subject_adapters),
         lifecycle=runtime.lifecycle,
         resource_governor=runtime.resource_governor,
+        provider_pressure_model=runtime.provider_pressure_model,
         materialization_group_by=tuple(materialization_group_by),
         admission_controller=admission_controller,
         fixtures=dict(runtime.fixtures),
@@ -393,6 +404,21 @@ def _validate_runtime_contributions(runtime: experiment_runtime) -> None:
                 "Runtime materialization lifecycle must provide both callable "
                 "materialization_initialize() and materialization_finalize(), or neither."
             )
+
+    if runtime.provider_pressure_model is not None:
+        for method_name in (
+            "identity",
+            "policy",
+            "historical_replay",
+            "run_workload",
+            "run_measurement_start",
+            "run_observe",
+        ):
+            if not callable(getattr(runtime.provider_pressure_model, method_name, None)):
+                raise experiment_runtime_error(
+                    "Runtime Provider Pressure model does not provide callable "
+                    f"{method_name}()."
+                )
 
     if runtime.resource_governor is not None:
         for method_name in (

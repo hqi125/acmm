@@ -166,6 +166,24 @@ revision ran. Current provenance includes:
 A mismatch is a preflight failure. ACMM does not silently reinterpret one installed package revision
 as another.
 
+## Runtime subject admission
+
+An integration may bind run-scoped subject authority after the package runtime has prepared the
+environment and before the subject receives the task. Core owns only generic orchestration: it calls
+ordered integration `admit()` hooks, retains their opaque handles, and revokes completed admissions in
+reverse order. Provider-specific credential semantics remain inside the integration.
+
+An integration `admit()` hook is **failure-atomic for its own side effects**. If it creates, binds, or
+otherwise changes external authority and then raises before returning a handle, the integration must
+undo or safely terminate that authority itself. Core can unwind handles returned by earlier
+integrations, but it cannot revoke a handle that was never returned. A failed cleanup must remain a
+hard admission failure rather than being hidden by local fallback behavior.
+
+Revocation semantics are capability-oriented rather than transport-specific: an integration may end
+usable subject authority by removing local configuration, revoking provider authority, or both, as
+long as its package contract records the distinction truthfully and fails closed when the promised
+boundary cannot be established.
+
 ## Evidence boundary
 
 Capability integrations configure how the subject receives a capability; adapters remain responsible

@@ -400,3 +400,8 @@ Experiment-level execution intentionally keeps these boundaries:
   repetition directly;
 - experiment runtime implementations come only from verified installed packages, while subject
   adapters remain qualified through the core subject catalog.
+
+
+## Diagnostic environment snapshot request
+
+`--capture-environment-snapshots` is a generic lifecycle hint. Package-defined snapshotting may add provider traffic and is disabled by default.

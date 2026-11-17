@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acmm.local/schemas/provider-pressure-index-v0.1.schema.json",
+  "title": "ACMM Provider Pressure Trajectory Index v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "identity", "latest_sequence", "latest_snapshot", "latest_snapshot_sha256", "snapshots"],
+  "properties": {
+    "schema_version": {"const": "0.1"},
+    "identity": {"type": "object"},
+    "latest_sequence": {"type": "integer", "minimum": -1},
+    "latest_snapshot": {"type": ["string", "null"]},
+    "latest_snapshot_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "snapshots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sequence", "path", "created_at", "source_kind", "source_execution_id", "snapshot_sha256", "parent_sha256"],
+        "properties": {
+          "sequence": {"type": "integer", "minimum": 0},
+          "path": {"type": "string", "minLength": 1},
+          "created_at": {"type": "string", "minLength": 1},
+          "source_kind": {"enum": ["bootstrap", "historical_replay", "live_execution"]},
+          "source_execution_id": {"type": "string", "minLength": 1},
+          "snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "parent_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    }
+  }
+}

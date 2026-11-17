@@ -44,6 +44,7 @@ def test_run_command_accepts_repeated_run_indices() -> None:
     assert args.subject is None
     assert args.preview is False
     assert args.capture_runtime_logs is False
+    assert args.capture_environment_snapshots is False
 
 
 def test_run_command_parses_ranges_subjects_and_preview() -> None:
@@ -58,6 +59,7 @@ def test_run_command_parses_ranges_subjects_and_preview() -> None:
             "open_webui_nemotron30b",
             "--preview",
             "--capture-runtime-logs",
+            "--capture-environment-snapshots",
         ]
     )
 
@@ -65,6 +67,7 @@ def test_run_command_parses_ranges_subjects_and_preview() -> None:
     assert args.subject == ["open_webui_nemotron30b"]
     assert args.preview is True
     assert args.capture_runtime_logs is True
+    assert args.capture_environment_snapshots is True
 
 
 def test_run_command_parses_subject_relative_run_index() -> None:

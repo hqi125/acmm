@@ -1612,6 +1612,9 @@ def _run_experiment(
             ),
             package_provenance=_execution_package_provenance(package),
             provider_usage_monitor=provider_usage_monitor,
+            capture_environment_snapshots=bool(
+                getattr(args, "capture_environment_snapshots", False)
+            ),
             deployment_reconciliation=(
                 {
                     "permitted": bool(args.apply_if_needed),
@@ -2109,6 +2112,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "Capture sanitized timestamped per-subject container logs into the "
             "execution result directory. Diagnostic capture is best-effort and "
             "is not used for compliance adjudication."
+        ),
+    )
+    run_parser.add_argument(
+        "--capture-environment-snapshots",
+        action="store_true",
+        help=(
+            "Ask the Experiment Package lifecycle to capture diagnostic pre/post "
+            "environment snapshots for each selected run. Capture is package-defined, "
+            "best-effort only when the package says so, and may perturb provider traffic; "
+            "leave it disabled for final scientific acquisition."
         ),
     )
     run_parser.add_argument(

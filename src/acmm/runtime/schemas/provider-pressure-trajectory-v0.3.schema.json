@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acmm.local/schemas/provider-pressure-trajectory-v0.3.schema.json",
+  "title": "ACMM Provider Pressure Trajectory Snapshot v0.3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "snapshot",
+    "identity",
+    "source_metadata",
+    "profile_before",
+    "learning_delta",
+    "profile_after"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.3"
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "created_at",
+        "source_kind",
+        "source_execution_id",
+        "execution_status",
+        "parent_sha256",
+        "snapshot_sha256"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "created_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_kind": {
+          "enum": [
+            "bootstrap",
+            "historical_replay",
+            "live_execution"
+          ]
+        },
+        "source_execution_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parent_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "snapshot_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "identity": {
+      "$ref": "#/$defs/identity"
+    },
+    "source_metadata": {
+      "type": "object"
+    },
+    "profile_before": {
+      "$ref": "#/$defs/profileProjection"
+    },
+    "learning_delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signals",
+        "decisions"
+      ],
+      "properties": {
+        "signals": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "profile_after": {
+      "$ref": "#/$defs/profileProjection"
+    }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_id",
+        "scope_id",
+        "model_id",
+        "model_version",
+        "model_definition_sha256"
+      ],
+      "properties": {
+        "provider_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_definition_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "profileProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "updated_at",
+        "features",
+        "totals"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "features": {
+          "type": "object"
+        },
+        "totals": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

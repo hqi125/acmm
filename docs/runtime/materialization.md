@@ -33,7 +33,7 @@ A runtime lifecycle may optionally implement both:
 - `materialization_initialize(session_handle, context)`;
 - `materialization_finalize(session_handle, context, handle, outcome)`.
 
-The returned materialization handle is passed read-only through each `runtime_run_context` in the slice. Existing `run_prepare`, `run_observe`, and `run_finalize` hooks remain the per-run evidence boundary.
+The returned materialization handle is passed read-only through each `runtime_run_context` in the slice. The initialization context also carries the frozen logical-run manifest for that slice (`run_index`, `subject_id`, `scenario_id`, and `repetition`) so a package can materialize one workspace for many planned observations without inventing per-run infrastructure resources. Existing `run_prepare`, `run_observe`, and `run_finalize` hooks remain the per-run evidence boundary.
 
 Implementing only one materialization hook is invalid. Packages that do not implement either hook remain compatible.
 

@@ -56,6 +56,15 @@ An invalid run indicates that the execution itself cannot be trusted scientifica
 invalid run
 ```
 
+Validity follows the Evaluability Boundary Principle: preserve aggressively, adjudicate
+cautiously, and exclude exceptionally. A recorded agent/tool/provider failure does not by
+itself make a run invalid when the evidence boundary, authoritative observations, and
+provenance remain trustworthy. Invalidity is reserved for failures that make the scientific
+observation materially untrustworthy or incomplete at the declared evaluation boundary.
+The v0.1 adapter-level `provider_error` and `harness_error` terminations still represent
+that coarse incomplete-boundary declaration; ordinary tool/provider errors observed inside
+an otherwise completed run do not inherit that status merely because they are errors.
+
 Invalid-run judgments, if present, are diagnostic only and must be excluded from ACMM
 quantification.
 
@@ -78,7 +87,10 @@ harness_error
 
 `provider_error` and `harness_error` require `invalid` validity. `provider_error`
 means the subject adapter exhausted retries against its model/provider after the run
-had begun; it is an availability failure rather than agent compliance evidence.
+had begun; it is an availability failure rather than agent compliance evidence. A
+subject that completes its execution but emits no final assistant text is still a valid
+scientific observation: the empty response is agent behavior for downstream Goal,
+Obligation, Fidelity, and Recovery adjudication rather than a harness failure.
 
 An invalid run must contain failure information. A valid run must not.
 
@@ -98,6 +110,11 @@ For a valid run, every opportunity declared by the scenario must have exactly on
 Invalid runs may contain zero or partial judgments.
 
 `compliant` and `violation` judgments must cite at least one evidence artifact.
+
+Tool-result records may carry namespaced interpretation annotations supplied by an
+integration. These annotations preserve attribution facts such as an apparatus-originated
+transport/runtime failure without changing the raw tool output. They are evidence metadata,
+not an automatic execution-validity decision.
 
 ## Evidence manifest
 

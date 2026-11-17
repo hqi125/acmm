@@ -136,6 +136,15 @@ def register_campaign_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Capture sanitized per-subject runtime logs into the campaign execution.",
     )
     execute_parser.add_argument(
+        "--capture-environment-snapshots",
+        action="store_true",
+        help=(
+            "Ask the Experiment Package lifecycle to capture diagnostic pre/post "
+            "environment snapshots for each run. This may add provider traffic and is "
+            "intended for validation/debugging rather than final scientific acquisition."
+        ),
+    )
+    execute_parser.add_argument(
         "--startup-max-attempts",
         type=int,
         default=3,

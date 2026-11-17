@@ -168,6 +168,15 @@ class tool_result_error_interpreter(Protocol):
     ) -> bool:
         ...
 
+    # Optional at runtime. Implementations may attach namespaced interpretation
+    # metadata to normalized failed tool results. Core preserves the annotations
+    # but does not interpret integration- or provider-specific values.
+    def annotations(
+        self,
+        context: tool_result_interpretation_context,
+    ) -> Mapping[str, Any]:
+        ...
+
 
 class subject_profile_integration(Protocol):
     def compose_profile(
@@ -190,6 +199,13 @@ class subject_manager_integration(Protocol):
 
 
 class subject_runtime_admission_integration(Protocol):
+    """Bind and revoke run-scoped subject authority.
+
+    ``admit()`` must be failure-atomic for its own side effects. Core can unwind
+    handles returned by earlier integrations, but it cannot revoke an admission
+    that raises before returning its handle.
+    """
+
     def admit(
         self,
         context: subject_integration_context,

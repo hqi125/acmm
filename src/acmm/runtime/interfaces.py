@@ -267,6 +267,23 @@ class runtime_resource_execution_context:
 
 
 @dataclass(frozen=True)
+class runtime_resource_subject_slice_context:
+    experiment_id: str
+    execution_id: str
+    materialization_key: str
+    subject_id: str
+    selected_run_indices: tuple[int, ...]
+    scenario_ids: tuple[str, ...]
+    repetitions: tuple[int, ...]
+    session_dir: str
+    progress: Callable[[str], None] | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+
+
+@dataclass(frozen=True)
 class runtime_resource_governor_session:
     handle: Any = field(repr=False)
     record: Mapping[str, Any] = field(default_factory=dict)
@@ -309,6 +326,14 @@ class runtime_execution_resource_governor(Protocol):
 
 
 @dataclass(frozen=True)
+class runtime_materialization_run:
+    run_index: int
+    subject_id: str
+    scenario_id: str
+    repetition: int
+
+
+@dataclass(frozen=True)
 class runtime_materialization_context:
     experiment_id: str
     execution_id: str
@@ -318,6 +343,7 @@ class runtime_materialization_context:
     scenario_ids: tuple[str, ...]
     repetitions: tuple[int, ...]
     session_dir: str
+    runs: tuple[runtime_materialization_run, ...] = ()
     progress: Callable[[str], None] | None = field(
         default=None,
         compare=False,
@@ -332,6 +358,30 @@ class runtime_materialization_finalization:
     detail: str | None = None
 
 
+ProviderPressureAction = Callable[
+    [str, Mapping[str, float], Mapping[str, Any]],
+    Mapping[str, Any],
+]
+
+ProviderPressurePacing = Callable[
+    [str, float, str, Mapping[str, float], Mapping[str, Any]],
+    Mapping[str, Any],
+]
+
+ProviderPressureRecovery = Callable[
+    [str, float, str, str, str | None, Mapping[str, float], Mapping[str, Any]],
+    Mapping[str, Any],
+]
+
+ProviderPressureActionResult = Callable[
+    [str, str, str | None, Mapping[str, float], Mapping[str, Any]],
+    Mapping[str, Any],
+]
+
+# Compatibility alias for Experiment Packages built against PPH v0.3 terminology.
+ProviderPressureCheckpoint = ProviderPressureAction
+
+
 @dataclass(frozen=True)
 class runtime_run_context:
     execution_id: str
@@ -340,6 +390,7 @@ class runtime_run_context:
     scenario_id: str
     repetition: int
     attempt: int
+    capture_environment_snapshots: bool = False
     materialization_key: str | None = None
     materialization_handle: Any = field(
         default=None,
@@ -347,6 +398,31 @@ class runtime_run_context:
         repr=False,
     )
     progress: Callable[[str], None] | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+    pressure_action: ProviderPressureAction | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+    pressure_pacing: ProviderPressurePacing | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+    pressure_recovery: ProviderPressureRecovery | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+    pressure_action_result: ProviderPressureActionResult | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
+    pressure_checkpoint: ProviderPressureCheckpoint | None = field(
         default=None,
         compare=False,
         repr=False,

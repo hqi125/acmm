@@ -122,6 +122,12 @@ runtime layer.
 
 ## Valid and invalid executions
 
+Core treats validity as scientific evaluability, not task success. The default assumption is
+that a preserved run is evaluable; invalidity is exceptional and requires a failure that
+undermines the observation/provenance boundary itself. Agent mistakes, rejected tool calls,
+and recoverable external difficulties remain evidence when they can be observed faithfully.
+This is the Evaluability Boundary Principle.
+
 An ordinary agent outcome such as completion, timeout, or maximum-step termination may
 still be scientifically valid.
 

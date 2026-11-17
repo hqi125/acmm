@@ -399,22 +399,28 @@ def _apply_tool_result_error_interpreters(
             if not isinstance(tool_name, str) or not tool_name:
                 continue
 
-            current_is_error = item.get("is_error") is True
-            if current_is_error:
-                continue
-
             context = tool_result_interpretation_context(
                 subject_id=subject_id,
                 tool_name=tool_name,
                 output=output,
             )
-            if not _integration_detects_tool_result_error(interpreters, context):
-                continue
+            detected = _integration_detects_tool_result_error(interpreters, context)
+            if detected and item.get("is_error") is not True:
+                item["is_error"] = True
+                if artifact.channel == "conversation":
+                    item["status"] = "failed"
+                changed = True
 
-            item["is_error"] = True
-            if artifact.channel == "conversation":
-                item["status"] = "failed"
-            changed = True
+            if item.get("is_error") is True:
+                annotations = _integration_tool_result_annotations(
+                    interpreters,
+                    context,
+                )
+                for key, annotation_value in annotations.items():
+                    if item.get(key) == annotation_value:
+                        continue
+                    item[key] = annotation_value
+                    changed = True
 
         if not changed:
             realized.append(artifact)
@@ -454,6 +460,29 @@ def _integration_detects_tool_result_error(
         if detected:
             return True
     return False
+
+
+def _integration_tool_result_annotations(
+    interpreters: tuple[tool_result_error_interpreter, ...],
+    context: tool_result_interpretation_context,
+) -> dict[str, object]:
+    annotations: dict[str, object] = {}
+    for interpreter in interpreters:
+        callback = getattr(interpreter, "annotations", None)
+        if not callable(callback):
+            continue
+        value = callback(context)
+        if not isinstance(value, Mapping):
+            raise TypeError(
+                "Integration tool-result annotations() must return a mapping."
+            )
+        for key, item in value.items():
+            if not isinstance(key, str) or not key.strip():
+                raise TypeError(
+                    "Integration tool-result annotation keys must be non-empty strings."
+                )
+            annotations[key] = item
+    return annotations
 
 
 def _attach_deferred_finalization(

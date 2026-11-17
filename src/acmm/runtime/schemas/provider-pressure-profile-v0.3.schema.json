@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acmm.local/schemas/provider-pressure-profile-v0.3.schema.json",
+  "title": "ACMM Provider Pressure Profile v0.3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "identity",
+    "sequence",
+    "created_at",
+    "updated_at",
+    "features",
+    "totals",
+    "applied_sources"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.3"
+    },
+    "identity": {
+      "$ref": "#/$defs/identity"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/featureState"
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observations",
+        "reward_events",
+        "punishment_events"
+      ],
+      "properties": {
+        "observations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reward_events": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "punishment_events": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "applied_sources": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider_id",
+        "scope_id",
+        "model_id",
+        "model_version",
+        "model_definition_sha256"
+      ],
+      "properties": {
+        "provider_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model_definition_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "featureState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "score",
+        "observations",
+        "rewards",
+        "punishments",
+        "confidence",
+        "recommended_spacing_seconds",
+        "last_checkpoint_at"
+      ],
+      "properties": {
+        "score": {
+          "type": "number",
+          "minimum": 0
+        },
+        "observations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rewards": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "punishments": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "recommended_spacing_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "last_checkpoint_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

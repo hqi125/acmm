@@ -758,3 +758,41 @@ def test_agent_zero_adapter_pairs_model_tool_request_with_host_result() -> None:
     }
     assert calls[2]["input"]["method"] == "get_comments"
     assert all(item["name"] != "response" for item in calls)
+
+
+def test_agent_zero_empty_completed_final_response_remains_scientifically_valid() -> None:
+    client = fake_agent_zero_client()
+
+    def blank_message(
+        api_key,
+        *,
+        context_id,
+        message,
+        agent_profile,
+        lifetime_hours,
+        timeout_seconds,
+    ):
+        assert api_key == "external-key"
+        client.message_calls.append(
+            {
+                "context_id": context_id,
+                "message": message,
+                "agent_profile": agent_profile,
+                "lifetime_hours": lifetime_hours,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        return {"context_id": context_id, "response": ""}
+
+    client.send_message = blank_message
+    result = agent_zero_adapter(client).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.failure is None
+    assert result.termination == "agent_completed"
+    assert result.evidence[-1].id == "final_response"
+    assert result.evidence[-1].content == b""
