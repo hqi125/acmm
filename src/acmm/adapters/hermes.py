@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import re
@@ -11,6 +12,7 @@ from acmm.adapters.hermes_session import parse_hermes_session_export
 
 from acmm.runtime.interfaces import (
     adapter_execution_result,
+    captured_evidence,
     execution_failure,
 )
 
@@ -132,12 +134,18 @@ class hermes_adapter:
             scenario["task"]["prompt"],
             completed.stdout,
             session_id,
+            allow_stdout_final_response=completed.returncode == 0,
+        )
+        evidence = _append_tool_name_repair_evidence(
+            parsed.evidence,
+            completed.stdout,
+            completed.stderr,
         )
 
         if parsed.failure is not None:
             return adapter_execution_result(
                 termination="harness_error",
-                evidence=parsed.evidence,
+                evidence=evidence,
                 subject_provenance=None,
                 failure=parsed.failure,
             )
@@ -147,7 +155,7 @@ class hermes_adapter:
         if parsed.model != expected_model:
             return adapter_execution_result(
                 termination="harness_error",
-                evidence=parsed.evidence,
+                evidence=evidence,
                 subject_provenance=_subject_provenance(
                     subject,
                     parsed.model,
@@ -163,7 +171,7 @@ class hermes_adapter:
             )
 
         if completed.returncode != 0:
-            final_response = _final_response_text(parsed.evidence)
+            final_response = _final_response_text(evidence)
             termination_kind = _termination_from_failed_process(
                 completed,
                 parsed.session,
@@ -173,7 +181,7 @@ class hermes_adapter:
             if termination_kind in {"timeout", "max_steps"}:
                 return adapter_execution_result(
                     termination=termination_kind,
-                    evidence=parsed.evidence,
+                    evidence=evidence,
                     subject_provenance=_subject_provenance(
                         subject,
                         parsed.model,
@@ -185,9 +193,10 @@ class hermes_adapter:
             detail = _failed_process_detail(completed, parsed.session)
 
             if termination_kind == "provider_error":
+                provider_evidence = _downgrade_final_response_evidence(evidence)
                 return adapter_execution_result(
                     termination="provider_error",
-                    evidence=parsed.evidence,
+                    evidence=provider_evidence,
                     subject_provenance=_subject_provenance(
                         subject,
                         parsed.model,
@@ -206,7 +215,7 @@ class hermes_adapter:
             if final_response:
                 return adapter_execution_result(
                     termination="agent_completed",
-                    evidence=parsed.evidence,
+                    evidence=evidence,
                     subject_provenance=_subject_provenance(
                         subject,
                         parsed.model,
@@ -218,7 +227,7 @@ class hermes_adapter:
 
             return adapter_execution_result(
                 termination="harness_error",
-                evidence=parsed.evidence,
+                evidence=evidence,
                 subject_provenance=_subject_provenance(
                     subject,
                     parsed.model,
@@ -236,7 +245,7 @@ class hermes_adapter:
 
         return adapter_execution_result(
             termination="agent_completed",
-            evidence=parsed.evidence,
+            evidence=evidence,
             subject_provenance=_subject_provenance(
                 subject,
                 parsed.model,
@@ -443,6 +452,76 @@ def _termination_from_failed_process(
     return "harness_error"
 
 
+
+
+def _downgrade_final_response_evidence(
+    evidence: tuple[captured_evidence, ...],
+) -> tuple[captured_evidence, ...]:
+    if not any(item.id == "final_response" for item in evidence):
+        return evidence
+
+    realized: list[captured_evidence] = []
+    partial_present = any(item.id == "partial_assistant_text" for item in evidence)
+    for item in evidence:
+        if item.id != "final_response":
+            realized.append(item)
+            continue
+        if item.content and not partial_present:
+            realized.append(
+                captured_evidence(
+                    id="partial_assistant_text",
+                    channel="diagnostic",
+                    artifact="diagnostics/partial_assistant_text.txt",
+                    content=item.content,
+                )
+            )
+            partial_present = True
+
+    return tuple(realized)
+
+
+_TOOL_NAME_REPAIR_PATTERN = re.compile(
+    r"Auto-repaired tool name:\s*['\"]([^'\"]+)['\"]\s*->\s*['\"]([^'\"]+)['\"]",
+    flags=re.IGNORECASE,
+)
+
+
+def _append_tool_name_repair_evidence(
+    evidence: tuple[captured_evidence, ...],
+    stdout: str,
+    stderr: str,
+) -> tuple[captured_evidence, ...]:
+    repairs: list[dict[str, object]] = []
+    ordinal = 0
+
+    for source, text in (("stdout", stdout), ("stderr", stderr)):
+        for original_name, repaired_name in _TOOL_NAME_REPAIR_PATTERN.findall(text):
+            ordinal += 1
+            repairs.append(
+                {
+                    "ordinal": ordinal,
+                    "source": source,
+                    "original_name": original_name,
+                    "repaired_name": repaired_name,
+                }
+            )
+
+    if not repairs:
+        return evidence
+
+    return evidence + (
+        captured_evidence(
+            id="tool_name_repairs",
+            channel="diagnostic",
+            artifact="diagnostics/tool_name_repairs.json",
+            content=_json_bytes(
+                {
+                    "source": "hermes_runtime",
+                    "repairs": repairs,
+                }
+            ),
+        ),
+    )
 
 
 def _contains_provider_failure(detail: str) -> bool:

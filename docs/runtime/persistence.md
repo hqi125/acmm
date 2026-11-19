@@ -44,9 +44,11 @@ results/
 └── runtime_execution_fixture_v1/
     └── run_000000_e3f07c5d-44bc-40c8-bf8a-3c8957489fb2/
         ├── run_record.yaml
-        └── evidence/
-            ├── tool_calls.json
-            └── final_response.txt
+        ├── evidence/
+        │   ├── tool_calls.json
+        │   └── final_response.txt
+        └── diagnostics/
+            └── tool_name_repairs.json
 ```
 
 The run index is zero-padded for convenient lexical ordering. The realized run UUID keeps
@@ -54,13 +56,14 @@ multiple attempts for the same planned slot distinct.
 
 ## Bundle consistency
 
-Before writing anything, the persistence layer verifies that the Run Record evidence
-manifest and the captured artifact bundle agree exactly.
+Before writing anything, the persistence layer verifies that the Run Record evidence and
+diagnostic manifests together agree exactly with the captured artifact bundle.
 
-For every evidence entry:
+For every evidence or diagnostic entry:
 
 - the evidence ID must exist exactly once in memory;
-- the evidence channel must match;
+- the evidence channel must match for Contract evidence; diagnostic entries are bound to the
+  internal `diagnostic` artifact class;
 - the relative artifact path must match;
 - the SHA-256 digest must match the captured bytes.
 

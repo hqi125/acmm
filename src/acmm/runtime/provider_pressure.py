@@ -1067,18 +1067,50 @@ class provider_pressure_engine:
         )
         baseline_mutation = bool(workload.metadata.get("baseline_mutation", False))
         baseline_wait = 0.0
+        request_elapsed: float | None = None
+        mutation_elapsed: float | None = None
+        request_remaining = 0.0
+        mutation_remaining = 0.0
         now = self._now()
         if baseline_request_interval > 0 and session.baseline_last_request_at is not None:
-            elapsed = max(0.0, (now - session.baseline_last_request_at).total_seconds())
-            baseline_wait = max(baseline_wait, baseline_request_interval - elapsed)
+            request_elapsed = max(
+                0.0,
+                (now - session.baseline_last_request_at).total_seconds(),
+            )
+            request_remaining = max(
+                0.0,
+                baseline_request_interval - request_elapsed,
+            )
+            baseline_wait = max(baseline_wait, request_remaining)
         if (
             baseline_mutation
             and baseline_mutation_interval > 0
             and session.baseline_last_mutation_at is not None
         ):
-            elapsed = max(0.0, (now - session.baseline_last_mutation_at).total_seconds())
-            baseline_wait = max(baseline_wait, baseline_mutation_interval - elapsed)
+            mutation_elapsed = max(
+                0.0,
+                (now - session.baseline_last_mutation_at).total_seconds(),
+            )
+            mutation_remaining = max(
+                0.0,
+                baseline_mutation_interval - mutation_elapsed,
+            )
+            baseline_wait = max(baseline_wait, mutation_remaining)
         baseline_wait = max(0.0, baseline_wait)
+
+        if baseline_mutation and baseline_mutation_interval >= baseline_request_interval:
+            spacing_target = baseline_mutation_interval
+            spacing_elapsed = mutation_elapsed
+        else:
+            spacing_target = baseline_request_interval
+            spacing_elapsed = request_elapsed
+
+        if mutation_remaining > request_remaining:
+            spacing_target = baseline_mutation_interval
+            spacing_elapsed = mutation_elapsed
+        elif request_remaining > mutation_remaining:
+            spacing_target = baseline_request_interval
+            spacing_elapsed = request_elapsed
         if baseline_wait > 0:
             pacing = runtime_provider_pressure_pacing_event(
                 source="pph",
@@ -1119,6 +1151,8 @@ class provider_pressure_engine:
             "event_pph_wait_seconds": event_delay,
             "app_suspension_seconds": app_suspension_seconds,
             "baseline_spacing_wait_seconds": baseline_wait,
+            "baseline_spacing_target_seconds": spacing_target,
+            "baseline_spacing_elapsed_seconds": spacing_elapsed,
             "total_admission_wait_seconds": total_wait,
             "recommended_wait_seconds": total_wait,
             "reason": (
@@ -1629,6 +1663,27 @@ class provider_pressure_engine:
                 + _approximate_duration(float(record.get("event_pph_wait_seconds", 0.0) or 0.0))
                 + " baseline="
                 + _approximate_duration(float(record.get("baseline_spacing_wait_seconds", 0.0) or 0.0))
+            )
+        spacing_target = max(
+            0.0,
+            float(record.get("baseline_spacing_target_seconds", 0.0) or 0.0),
+        )
+        if spacing_target > 0:
+            elapsed_value = record.get("baseline_spacing_elapsed_seconds")
+            elapsed_text = (
+                "n/a"
+                if elapsed_value is None
+                else _approximate_duration(max(0.0, float(elapsed_value)))
+            )
+            message += (
+                " spacing target="
+                + _approximate_duration(spacing_target)
+                + " elapsed="
+                + elapsed_text
+                + " remaining="
+                + _approximate_duration(
+                    float(record.get("baseline_spacing_wait_seconds", 0.0) or 0.0)
+                )
             )
         if details:
             message += " [" + details + "]"

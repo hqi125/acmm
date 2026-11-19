@@ -261,12 +261,13 @@ def execute_planned_run(
                 contract["run_protocol"]["reset"],
             )
 
-        interpreted_evidence = interpret_scenario_evidence(scenario, captured)
+        scoring_evidence, _ = _partition_captured_artifacts(captured)
+        interpreted_evidence = interpret_scenario_evidence(scenario, scoring_evidence)
         judgments = _evaluate_opportunities(
             contract,
             subject,
             scenario,
-            captured,
+            scoring_evidence,
             interpreted_evidence,
             registry,
         )
@@ -956,6 +957,7 @@ def _build_record(
             "message": failure.message,
         }
 
+    scoring_evidence, diagnostics = _partition_captured_artifacts(evidence)
     evidence_manifest = [
         {
             "id": item.id,
@@ -963,10 +965,18 @@ def _build_record(
             "artifact": item.artifact,
             "sha256": hashlib.sha256(item.content).hexdigest(),
         }
-        for item in evidence
+        for item in scoring_evidence
+    ]
+    diagnostic_manifest = [
+        {
+            "id": item.id,
+            "artifact": item.artifact,
+            "sha256": hashlib.sha256(item.content).hexdigest(),
+        }
+        for item in diagnostics
     ]
 
-    return {
+    record = {
         "schema_version": "0.1",
         "run": {
             "id": run_id,
@@ -982,6 +992,22 @@ def _build_record(
         "evidence": evidence_manifest,
         "judgments": judgments,
     }
+    if diagnostic_manifest:
+        record["diagnostics"] = diagnostic_manifest
+    return record
+
+
+def _partition_captured_artifacts(
+    artifacts: tuple[captured_evidence, ...],
+) -> tuple[tuple[captured_evidence, ...], tuple[captured_evidence, ...]]:
+    evidence: list[captured_evidence] = []
+    diagnostics: list[captured_evidence] = []
+    for artifact in artifacts:
+        if artifact.channel == "diagnostic":
+            diagnostics.append(artifact)
+        else:
+            evidence.append(artifact)
+    return tuple(evidence), tuple(diagnostics)
 
 
 def _find_by_id(

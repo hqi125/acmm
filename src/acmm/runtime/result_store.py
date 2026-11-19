@@ -80,7 +80,7 @@ def persist_executed_run_to(
     )
 
     try:
-        for manifest_entry in record["evidence"]:
+        for manifest_entry in _artifact_manifest_entries(record):
             artifact = artifacts_by_id[manifest_entry["id"]]
             artifact_path = _artifact_destination(
                 temp_dir,
@@ -127,7 +127,7 @@ def persist_executed_run_to(
 def _validate_bundle_consistency(
     result: executed_run,
 ) -> dict[str, captured_evidence]:
-    manifest = result.record["evidence"]
+    manifest = _artifact_manifest_entries(result.record)
 
     manifest_by_id: dict[str, dict] = {}
     manifest_paths: set[str] = set()
@@ -185,9 +185,10 @@ def _validate_bundle_consistency(
     for evidence_id, entry in manifest_by_id.items():
         artifact = artifacts_by_id[evidence_id]
 
-        if artifact.channel != entry["channel"]:
+        expected_channel = entry.get("channel", "diagnostic")
+        if artifact.channel != expected_channel:
             raise result_write_error(
-                f"Evidence '{evidence_id}' channel does not match the Run Record."
+                f"Artifact '{evidence_id}' channel does not match the Run Record."
             )
 
         if artifact.artifact != entry["artifact"]:
@@ -203,6 +204,12 @@ def _validate_bundle_consistency(
             )
 
     return artifacts_by_id
+
+
+def _artifact_manifest_entries(record: dict) -> list[dict]:
+    entries = list(record.get("evidence", ()))
+    entries.extend(record.get("diagnostics", ()))
+    return entries
 
 
 def _artifact_destination(

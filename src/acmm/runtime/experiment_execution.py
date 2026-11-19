@@ -782,6 +782,90 @@ def execute_experiment(
                 active_resource_subject_slice_key = None
         return succeeded
 
+    def ensure_subject_slice_admission(
+        planned: planned_run,
+        materialization_key: str,
+    ) -> None:
+        nonlocal active_resource_subject_slice_key
+        if registry.resource_governor is None:
+            return
+
+        subject_slice_admit = getattr(
+            registry.resource_governor,
+            "subject_slice_admit",
+            None,
+        )
+        subject_slice_key = (materialization_key, planned.subject_id)
+        if (
+            not callable(subject_slice_admit)
+            or active_resource_subject_slice_key == subject_slice_key
+        ):
+            return
+
+        assert resource_governor_session is not None
+        assert active_materialization_context is not None
+        subject_runs = tuple(
+            run
+            for run in active_materialization_context.runs
+            if run.subject_id == planned.subject_id
+        )
+        subject_context = runtime_resource_subject_slice_context(
+            experiment_id=experiment_id,
+            execution_id=execution_id,
+            materialization_key=materialization_key,
+            subject_id=planned.subject_id,
+            selected_run_indices=tuple(run.run_index for run in subject_runs),
+            scenario_ids=tuple(
+                dict.fromkeys(run.scenario_id for run in subject_runs)
+            ),
+            repetitions=tuple(
+                dict.fromkeys(run.repetition for run in subject_runs)
+            ),
+            session_dir=str(session_dir),
+            progress=report,
+        )
+        admission = subject_slice_admit(
+            resource_governor_session.handle,
+            subject_context,
+        )
+        if not isinstance(admission, runtime_resource_admission):
+            raise TypeError(
+                "Runtime resource governor subject_slice_admit() must return "
+                "runtime_resource_admission."
+            )
+        assert resource_usage_document is not None
+        governor_record = resource_usage_document.get("governor")
+        if not isinstance(governor_record, dict):
+            raise RuntimeError(
+                "Execution resource governor record is unavailable."
+            )
+        slices = governor_record.setdefault("subject_slices", [])
+        if not isinstance(slices, list):
+            raise RuntimeError(
+                "Execution resource subject-slice record is malformed."
+            )
+        slices.append(
+            {
+                "materialization_key": materialization_key,
+                "subject_id": planned.subject_id,
+                "selected_run_indices": list(subject_context.selected_run_indices),
+                "admission": dict(admission.record),
+            }
+        )
+        write_execution_resource_usage(
+            resource_usage_path,
+            resource_usage_document,
+        )
+        emit(
+            "resource_subject_slice_admitted",
+            {
+                "materialization_key": materialization_key,
+                "subject_id": planned.subject_id,
+                "record": dict(admission.record),
+            },
+        )
+        active_resource_subject_slice_key = subject_slice_key
+
     def record_run_recovery(
         planned: planned_run,
         *,
@@ -1087,83 +1171,7 @@ def execute_experiment(
                     wait(inter_run_delay_seconds)
                 continue
 
-            if registry.resource_governor is not None:
-                subject_slice_admit = getattr(
-                    registry.resource_governor,
-                    "subject_slice_admit",
-                    None,
-                )
-                subject_slice_key = (materialization_key, planned.subject_id)
-                if (
-                    callable(subject_slice_admit)
-                    and active_resource_subject_slice_key != subject_slice_key
-                ):
-                    assert resource_governor_session is not None
-                    assert active_materialization_context is not None
-                    subject_runs = tuple(
-                        run
-                        for run in active_materialization_context.runs
-                        if run.subject_id == planned.subject_id
-                    )
-                    subject_context = runtime_resource_subject_slice_context(
-                        experiment_id=experiment_id,
-                        execution_id=execution_id,
-                        materialization_key=materialization_key,
-                        subject_id=planned.subject_id,
-                        selected_run_indices=tuple(
-                            run.run_index for run in subject_runs
-                        ),
-                        scenario_ids=tuple(
-                            dict.fromkeys(run.scenario_id for run in subject_runs)
-                        ),
-                        repetitions=tuple(
-                            dict.fromkeys(run.repetition for run in subject_runs)
-                        ),
-                        session_dir=str(session_dir),
-                        progress=report,
-                    )
-                    admission = subject_slice_admit(
-                        resource_governor_session.handle,
-                        subject_context,
-                    )
-                    if not isinstance(admission, runtime_resource_admission):
-                        raise TypeError(
-                            "Runtime resource governor subject_slice_admit() must "
-                            "return runtime_resource_admission."
-                        )
-                    assert resource_usage_document is not None
-                    governor_record = resource_usage_document.get("governor")
-                    if not isinstance(governor_record, dict):
-                        raise RuntimeError(
-                            "Execution resource governor record is unavailable."
-                        )
-                    slices = governor_record.setdefault("subject_slices", [])
-                    if not isinstance(slices, list):
-                        raise RuntimeError(
-                            "Execution resource subject-slice record is malformed."
-                        )
-                    slices.append(
-                        {
-                            "materialization_key": materialization_key,
-                            "subject_id": planned.subject_id,
-                            "selected_run_indices": list(
-                                subject_context.selected_run_indices
-                            ),
-                            "admission": dict(admission.record),
-                        }
-                    )
-                    write_execution_resource_usage(
-                        resource_usage_path, resource_usage_document
-                    )
-                    emit(
-                        "resource_subject_slice_admitted",
-                        {
-                            "materialization_key": materialization_key,
-                            "subject_id": planned.subject_id,
-                            "record": dict(admission.record),
-                        },
-                    )
-                    active_resource_subject_slice_key = subject_slice_key
+            ensure_subject_slice_admission(planned, materialization_key)
 
             if pressure_engine is not None and pressure_session is not None:
                 pressure_run_context = runtime_provider_pressure_run_context(
@@ -1529,11 +1537,54 @@ def execute_experiment(
                     f"stored={result_path.name}."
                 )
 
-                if (
-                    active_selected_run_id is not None
-                    or materialization_replaced_after_attempt
-                ):
+                if active_selected_run_id is not None:
                     break
+
+                if attempt_number >= max_attempts_per_run:
+                    break
+
+                report(
+                    f"Retry: run {planned.run_index} attempt {attempt_number} was "
+                    f"scientifically invalid ({execution['termination']}); starting "
+                    "the next attempt from a fresh materialization."
+                )
+                emit(
+                    "attempt_retry_rematerialization_started",
+                    {
+                        "run_index": planned.run_index,
+                        "attempt": attempt_number,
+                        "termination": execution["termination"],
+                        "already_retired": materialization_replaced_after_attempt,
+                    },
+                )
+                try:
+                    if active_materialization_context is not None:
+                        finish_materialization(
+                            completed=False,
+                            interrupted=False,
+                            detail=(
+                                "retry_after_invalid_attempt:"
+                                f"run={planned.run_index}:attempt={attempt_number}:"
+                                f"termination={execution['termination']}"
+                            ),
+                        )
+                    begin_materialization(materialization_key)
+                    ensure_subject_slice_admission(planned, materialization_key)
+                except runtime_run_recovery_error as exc:
+                    close_recovered_materialization(
+                        planned,
+                        attempt=attempt_number,
+                        stage="retry_materialization_initialize",
+                        recovery=exc.recovery,
+                    )
+                    break
+                emit(
+                    "attempt_retry_rematerialization_completed",
+                    {
+                        "run_index": planned.run_index,
+                        "next_attempt": attempt_number + 1,
+                    },
+                )
 
             slots.append(
                 slot_execution(

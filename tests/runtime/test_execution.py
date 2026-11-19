@@ -343,6 +343,59 @@ def test_execute_planned_run_builds_valid_run_record() -> None:
     _validate_result(contract, result)
 
 
+def test_diagnostic_artifacts_are_persisted_outside_contract_evidence() -> None:
+    class diagnostic_adapter(fake_adapter):
+        def execute(self, subject, scenario, environment, termination):
+            base = super().execute(subject, scenario, environment, termination)
+            return adapter_execution_result(
+                termination=base.termination,
+                evidence=base.evidence + (
+                    captured_evidence(
+                        id="partial_assistant_text",
+                        channel="diagnostic",
+                        artifact="diagnostics/partial_assistant_text.txt",
+                        content=b"intermediate text",
+                    ),
+                    captured_evidence(
+                        id="tool_name_repairs",
+                        channel="diagnostic",
+                        artifact="diagnostics/tool_name_repairs.json",
+                        content=b'{"repairs":[]}',
+                    ),
+                ),
+                subject_provenance=base.subject_provenance,
+                failure=base.failure,
+            )
+
+    contract = load_contract(CONTRACT_PATH)
+    planned = build_experiment_plan(contract).runs[0]
+    digest = sha256_file(CONTRACT_PATH)
+
+    result = execute_planned_run(
+        contract=contract,
+        planned=planned,
+        contract_sha256=digest,
+        registry=_registry(adapter=diagnostic_adapter()),
+        harness_version="0.1.0",
+        now=_clock(),
+        run_id_factory=lambda: RUN_ID,
+    )
+
+    assert {item["id"] for item in result.record["evidence"]} == {
+        "conversation",
+        "tool_calls",
+        "tool_results",
+        "final_response",
+    }
+    assert [item["id"] for item in result.record["diagnostics"]] == [
+        "partial_assistant_text",
+        "tool_name_repairs",
+    ]
+    assert len(result.artifacts) == 6
+    _validate_result(contract, result)
+
+
+
 def test_timeout_can_be_scientifically_valid() -> None:
     contract = load_contract(CONTRACT_PATH)
     planned = build_experiment_plan(contract).runs[0]

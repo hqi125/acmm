@@ -140,6 +140,14 @@ exactly once. Evidence channels not requested by the Contract are rejected.
 
 Invalid runs may contain only the evidence successfully captured before failure.
 
+## Diagnostic artifacts
+
+Auxiliary runtime diagnostics are recorded separately from Contract evidence under the optional
+`diagnostics` manifest. Each diagnostic entry contains `id`, `artifact`, and `sha256`. Diagnostics
+are preserved for forensic and observability purposes, but they are not evidence channels, do not
+need to be declared by the Experiment Contract, and cannot satisfy or be cited by scored judgments.
+Multiple diagnostic artifacts may coexist in one run.
+
 ## Timestamps
 
 `execution.started_at` and `execution.ended_at` use RFC 3339 / JSON Schema `date-time`

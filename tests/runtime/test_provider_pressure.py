@@ -809,7 +809,9 @@ def test_selected_pph_pacing_is_reported_with_transport_details(tmp_path: Path) 
     assert waits == [2.0]
     assert len(progress) == 2
     assert "mcp.rest.mutation admitted; wait ~0s" in progress[0]
+    assert "spacing target=2s elapsed=n/a remaining=0s" in progress[0]
     assert "mcp.rest.mutation admitted; wait ~2s" in progress[1]
+    assert "spacing target=2s elapsed=0s remaining=2s" in progress[1]
     assert "subject_mcp PATCH /repos/example/demo/contents/file.txt" in progress[1]
     assert "provider-baseline-spacing" in progress[1]
     assert "baseline=2s" in progress[1]

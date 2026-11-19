@@ -20,6 +20,8 @@ def parse_hermes_session_export(
     prompt: str,
     final_stdout: str,
     expected_session_id: str,
+    *,
+    allow_stdout_final_response: bool = True,
 ) -> hermes_session_parse_result:
     sessions: list[dict[str, Any]] = []
 
@@ -105,10 +107,16 @@ def parse_hermes_session_export(
 
     tool_calls, call_names = _normalize_tool_calls(messages)
     tool_results = _normalize_tool_results(messages, call_names)
-    final_response = _last_assistant_text(messages).strip()
+    terminal_response_found, final_response = _terminal_assistant_response(messages)
+    partial_assistant_text = ""
 
-    if not final_response:
-        final_response = final_stdout.strip()
+    if not terminal_response_found:
+        partial_assistant_text = _last_nonterminal_assistant_text(messages).strip()
+        if allow_stdout_final_response:
+            stdout_response = final_stdout.strip()
+            if stdout_response:
+                terminal_response_found = True
+                final_response = stdout_response
 
     model = _optional_string(session.get("model"))
 
@@ -129,7 +137,7 @@ def parse_hermes_session_export(
         "messages": messages,
     }
 
-    evidence = (
+    evidence_items = [
         captured_evidence(
             id="conversation",
             channel="conversation",
@@ -148,13 +156,28 @@ def parse_hermes_session_export(
             artifact="evidence/tool_results.json",
             content=_json_bytes(tool_results),
         ),
-        captured_evidence(
-            id="final_response",
-            channel="final_response",
-            artifact="evidence/final_response.txt",
-            content=final_response.encode("utf-8"),
-        ),
-    )
+    ]
+
+    if terminal_response_found:
+        evidence_items.append(
+            captured_evidence(
+                id="final_response",
+                channel="final_response",
+                artifact="evidence/final_response.txt",
+                content=final_response.encode("utf-8"),
+            )
+        )
+    elif partial_assistant_text:
+        evidence_items.append(
+            captured_evidence(
+                id="partial_assistant_text",
+                channel="diagnostic",
+                artifact="diagnostics/partial_assistant_text.txt",
+                content=partial_assistant_text.encode("utf-8"),
+            )
+        )
+
+    evidence = tuple(evidence_items)
 
     if not _transcript_contains_prompt(messages, prompt):
         return hermes_session_parse_result(
@@ -426,15 +449,50 @@ def _transcript_contains_prompt(
     )
 
 
-def _last_assistant_text(
+def _terminal_assistant_response(
+    messages: list[dict[str, Any]],
+) -> tuple[bool, str]:
+    for message in reversed(messages):
+        if message.get("role") != "assistant":
+            continue
+
+        raw_calls = _json_value(message.get("tool_calls"))
+        has_tool_calls = isinstance(raw_calls, list) and bool(raw_calls)
+        finish_reason = str(message.get("finish_reason") or "").strip().lower()
+        nonterminal_reason = finish_reason in {
+            "tool_calls",
+            "tool_call",
+            "function_call",
+        }
+
+        if has_tool_calls or nonterminal_reason:
+            continue
+
+        return True, _message_content(message.get("content")).strip()
+
+    return False, ""
+
+
+def _last_nonterminal_assistant_text(
     messages: list[dict[str, Any]],
 ) -> str:
     for message in reversed(messages):
         if message.get("role") != "assistant":
             continue
 
-        text = _message_content(message.get("content")).strip()
+        raw_calls = _json_value(message.get("tool_calls"))
+        has_tool_calls = isinstance(raw_calls, list) and bool(raw_calls)
+        finish_reason = str(message.get("finish_reason") or "").strip().lower()
+        nonterminal_reason = finish_reason in {
+            "tool_calls",
+            "tool_call",
+            "function_call",
+        }
 
+        if not has_tool_calls and not nonterminal_reason:
+            continue
+
+        text = _message_content(message.get("content")).strip()
         if text:
             return text
 

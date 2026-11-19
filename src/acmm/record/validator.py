@@ -260,6 +260,68 @@ def _validate_semantics(
                 ),
             )
 
+    diagnostics = record.get("diagnostics", [])
+    diagnostic_ids: dict[str, int] = {}
+    diagnostic_artifacts: dict[str, int] = {}
+    for index, entry in enumerate(diagnostics):
+        diagnostic_id = entry["id"]
+        artifact = entry["artifact"]
+
+        if diagnostic_id in evidence_ids:
+            yield validation_issue(
+                severity="error",
+                code="duplicate_artifact_id",
+                path=f"diagnostics[{index}].id",
+                message=(
+                    f"Diagnostic ID '{diagnostic_id}' duplicates an evidence ID."
+                ),
+            )
+        elif diagnostic_id in diagnostic_ids:
+            yield validation_issue(
+                severity="error",
+                code="duplicate_diagnostic_id",
+                path=f"diagnostics[{index}].id",
+                message=(
+                    f"Diagnostic ID '{diagnostic_id}' duplicates "
+                    f"diagnostics[{diagnostic_ids[diagnostic_id]}].id."
+                ),
+            )
+        else:
+            diagnostic_ids[diagnostic_id] = index
+
+        if artifact in evidence_artifacts:
+            yield validation_issue(
+                severity="error",
+                code="duplicate_artifact_path",
+                path=f"diagnostics[{index}].artifact",
+                message=(
+                    f"Diagnostic artifact path '{artifact}' duplicates an evidence artifact path."
+                ),
+            )
+        elif artifact in diagnostic_artifacts:
+            yield validation_issue(
+                severity="error",
+                code="duplicate_artifact_path",
+                path=f"diagnostics[{index}].artifact",
+                message=(
+                    f"Diagnostic artifact path '{artifact}' duplicates "
+                    f"diagnostics[{diagnostic_artifacts[artifact]}].artifact."
+                ),
+            )
+        else:
+            diagnostic_artifacts[artifact] = index
+
+        if not _is_safe_artifact_path(artifact):
+            yield validation_issue(
+                severity="error",
+                code="unsafe_artifact_path",
+                path=f"diagnostics[{index}].artifact",
+                message=(
+                    "Diagnostic artifact path must be a relative POSIX-style path "
+                    "without '.', '..', empty segments, backslashes, or drive prefixes."
+                ),
+            )
+
     expected_channels = set(contract["evidence_policy"]["capture"])
     actual_channels = set(evidence_channels)
 

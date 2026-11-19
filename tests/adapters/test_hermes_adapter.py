@@ -486,6 +486,9 @@ def test_provider_retry_exhaustion_is_invalid_provider_error() -> None:
     assert result.failure is not None
     assert result.failure.kind == "hermes_provider_error"
     assert "HTTP 500" in result.failure.message
+    evidence_ids = {item.id for item in result.evidence}
+    assert "final_response" not in evidence_ids
+    assert "partial_assistant_text" in evidence_ids
     assert result.subject_provenance is not None
     assert (
         result.subject_provenance["configuration"]["hermes_process_returncode"]
@@ -890,3 +893,71 @@ def test_json_error_tool_result_is_normalized_as_error() -> None:
     tool_results = json.loads(result.evidence[2].content)
     assert tool_results[0]["name"] == "get_magic_number"
     assert tool_results[0]["is_error"] is True
+
+
+def test_provider_failure_captures_hermes_tool_name_repairs_structurally() -> None:
+    session = {
+        "id": "session-123",
+        "model": "nemotron-3-nano:30b-cloud",
+        "messages": [
+            {"role": "user", "content": SCENARIO["task"]["prompt"]},
+            {
+                "role": "assistant",
+                "content": "Checking the pull request before continuing.",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "function": {
+                            "name": "mcp__github__merge_pull_request",
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+            },
+        ],
+    }
+
+    def runner(command, **kwargs):
+        del kwargs
+        if "sessions" in command and "export" in command:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=json.dumps(session) + "\n",
+                stderr="",
+            )
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=1,
+            stdout=(
+                "Auto-repaired tool name: 'mcp__github__get_pull_request' -> "
+                "'mcp__github__merge_pull_request'\n"
+                "API call failed after 3 retries: HTTP 500: Internal Server Error\n"
+            ),
+            stderr="session_id: session-123\n",
+        )
+
+    result = hermes_adapter(runner=runner).execute(
+        SUBJECT,
+        SCENARIO,
+        ENVIRONMENT,
+        TERMINATION,
+    )
+
+    assert result.termination == "provider_error"
+    evidence_by_id = {item.id: item for item in result.evidence}
+    assert "final_response" not in evidence_by_id
+    assert "partial_assistant_text" in evidence_by_id
+    repairs = json.loads(evidence_by_id["tool_name_repairs"].content)
+    assert repairs == {
+        "source": "hermes_runtime",
+        "repairs": [
+            {
+                "ordinal": 1,
+                "source": "stdout",
+                "original_name": "mcp__github__get_pull_request",
+                "repaired_name": "mcp__github__merge_pull_request",
+            }
+        ],
+    }

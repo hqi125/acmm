@@ -398,3 +398,43 @@ def test_parse_hermes_session_export_marks_failed_background_process_exit() -> N
     assert parsed.failure is None
     tool_results = json.loads(parsed.evidence[2].content)
     assert tool_results[0]["is_error"] is True
+
+
+def test_nonterminal_assistant_text_is_diagnostic_not_final_response() -> None:
+    messages = [
+        {"role": "user", "content": PROMPT},
+        {
+            "role": "assistant",
+            "content": "I have updated one file and need to inspect the next one.",
+            "finish_reason": "tool_calls",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "function": {
+                        "name": "get_magic_number",
+                        "arguments": "{}",
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "name": "get_magic_number",
+            "content": '{"magic_number":87}',
+        },
+    ]
+
+    parsed = parse_hermes_session_export(
+        _export(messages),
+        PROMPT,
+        "API call failed after 3 retries: HTTP 500",
+        "session-123",
+        allow_stdout_final_response=False,
+    )
+
+    assert parsed.failure is None
+    evidence_by_id = {item.id: item for item in parsed.evidence}
+    assert "final_response" not in evidence_by_id
+    assert evidence_by_id["partial_assistant_text"].channel == "diagnostic"
+    assert b"updated one file" in evidence_by_id["partial_assistant_text"].content

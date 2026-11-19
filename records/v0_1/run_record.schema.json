@@ -32,6 +32,12 @@
         "$ref": "#/$defs/evidence_entry"
       }
     },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic_entry"
+      }
+    },
     "judgments": {
       "type": "array",
       "items": {
@@ -331,6 +337,26 @@
         },
         "channel": {
           "$ref": "#/$defs/evidence_channel"
+        },
+        "artifact": {
+          "$ref": "#/$defs/nonempty_string"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "diagnostic_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "artifact",
+        "sha256"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
         },
         "artifact": {
           "$ref": "#/$defs/nonempty_string"

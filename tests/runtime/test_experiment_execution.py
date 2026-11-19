@@ -1271,6 +1271,80 @@ def test_valid_run_survives_recoverable_finalization_and_next_run_rematerializes
     assert recovery["materialization_reusable"] is False
 
 
+class retry_rematerialization_lifecycle(fake_runtime_lifecycle):
+    def __init__(self) -> None:
+        super().__init__()
+        self.generation = 0
+        self.prepare_generations: list[tuple[int, int, int]] = []
+
+    def materialization_initialize(self, session_handle, context):
+        del session_handle
+        self.generation += 1
+        self.events.append(("materialization_initialize", context.key, self.generation))
+        return {"generation": self.generation}
+
+    def materialization_finalize(self, session_handle, context, handle, outcome):
+        del session_handle
+        generation = handle["generation"]
+        self.events.append(
+            (
+                "materialization_finalize",
+                context.key,
+                generation,
+                outcome.completed,
+                outcome.detail,
+            )
+        )
+        return {"generation": generation}
+
+    def run_prepare(self, session_handle, context, scenario, reset):
+        self.prepare_generations.append(
+            (context.run_index, context.attempt, context.materialization_handle["generation"])
+        )
+        return super().run_prepare(session_handle, context, scenario, reset)
+
+
+def test_invalid_attempt_retry_uses_fresh_materialization_generation(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    lifecycle = retry_rematerialization_lifecycle()
+    base = _registry(sequence_adapter(invalid_call_numbers={1}))
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        materialization_group_by=("scenario_id",),
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+    messages: list[str] = []
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=registry,
+        results_root=tmp_path,
+        harness_version="test",
+        sleep=lambda _: None,
+        max_attempts_per_run=2,
+        run_indices=(0,),
+        progress=messages.append,
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+    )
+
+    assert result.slots[0].is_resolved is True
+    assert len(result.slots[0].attempts) == 2
+    assert lifecycle.prepare_generations == [(0, 1, 1), (0, 2, 2)]
+    finalized = [event for event in lifecycle.events if event[0] == "materialization_finalize"]
+    assert finalized[0][2:4] == (1, False)
+    assert "retry_after_invalid_attempt" in str(finalized[0][4])
+    assert finalized[1][2:4] == (2, True)
+    assert any("starting the next attempt from a fresh materialization" in item for item in messages)
+
+
 class recoverable_prepare_materialized_lifecycle(recoverable_finalize_materialized_lifecycle):
     def run_prepare(self, session_handle, context, scenario, reset):
         if context.run_index == 0:

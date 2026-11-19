@@ -135,6 +135,31 @@ def test_persist_executed_run_writes_complete_bundle(tmp_path: Path) -> None:
     assert temporary_entries == []
 
 
+def test_persist_executed_run_writes_diagnostic_artifacts(tmp_path: Path) -> None:
+    result = _sample_result()
+    diagnostic = captured_evidence(
+        id="tool_name_repairs",
+        channel="diagnostic",
+        artifact="diagnostics/tool_name_repairs.json",
+        content=b'{"repairs":[]}',
+    )
+    record = copy.deepcopy(result.record)
+    record["diagnostics"] = [
+        {
+            "id": diagnostic.id,
+            "artifact": diagnostic.artifact,
+            "sha256": hashlib.sha256(diagnostic.content).hexdigest(),
+        }
+    ]
+    run_dir = persist_executed_run(
+        executed_run(record=record, artifacts=result.artifacts + (diagnostic,)),
+        tmp_path,
+    )
+
+    assert (run_dir / "diagnostics" / "tool_name_repairs.json").read_bytes() == b'{"repairs":[]}'
+
+
+
 def test_existing_result_directory_is_never_overwritten(
     tmp_path: Path,
 ) -> None:

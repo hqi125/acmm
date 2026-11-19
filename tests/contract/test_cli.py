@@ -45,6 +45,7 @@ def test_run_command_accepts_repeated_run_indices() -> None:
     assert args.preview is False
     assert args.capture_runtime_logs is False
     assert args.capture_environment_snapshots is False
+    assert args.max_attempts_per_run == 2
 
 
 def test_run_command_parses_ranges_subjects_and_preview() -> None:

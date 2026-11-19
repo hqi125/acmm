@@ -2372,10 +2372,10 @@ def _build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--max-attempts-per-run",
         type=int,
-        default=1,
+        default=2,
         help=(
-            "Maximum attempts for an invalid execution of a selected run "
-            "(default: 1)."
+            "Maximum fresh-session attempts for an invalid execution of a "
+            "selected run; retries use a fresh materialization (default: 2)."
         ),
     )
     run_parser.set_defaults(handler=_run_command)
