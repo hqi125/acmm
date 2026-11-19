@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import shutil
+
+import yaml
 
 import pytest
 
@@ -11,6 +14,7 @@ from acmm.campaign.execution import (
     finalize_campaign_execution,
     frozen_campaign_plan,
     initialize_campaign_execution,
+    reconcile_campaign_executions,
 )
 from acmm.campaign.merge import create_campaign_merge, validate_campaign_merge_manifest
 from acmm.campaign.model import campaign_error, create_campaign
@@ -255,6 +259,112 @@ def test_campaign_merge_rejects_symbolic_link_source_manifest(
             merge_id="merge-a",
         )
 
+
+
+def test_campaign_merge_accepts_reconciled_observation_after_finalization_journal_crash(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package, _ = install_test_package(tmp_path, monkeypatch)
+    artifact = create_campaign(
+        package,
+        tmp_path / "generated",
+        campaign_id="campaign-a",
+    )
+    run = frozen_campaign_plan(artifact).runs[0]
+    logical_run_id = artifact.manifest["runs"][0]["run_id"]
+    context = _execute_campaign_runs(artifact, package, (run,), "execution-a")
+
+    # Simulate process loss after the valid Run Record and successful environment
+    # finalization are durable, but before attempt_finalized/top-level completion.
+    events_path = context.session_dir / "campaign_events.jsonl"
+    events = [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    finalization_position = next(
+        index for index, event in enumerate(events) if event.get("event") == "attempt_finalized"
+    )
+    events = events[:finalization_position]
+    events_path.write_text(
+        "".join(json.dumps(event, separators=(",", ":")) + "\n" for event in events),
+        encoding="utf-8",
+    )
+    (context.session_dir / "experiment_execution.yaml").unlink()
+    result_dir = next((context.session_dir / "runs").glob("run_*"))
+    (result_dir / "environment_finalization.yaml").write_text(
+        yaml.safe_dump({"ok": True, "result": {"restored": True}}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    campaign_execution_path = context.session_dir / "campaign_execution.json"
+    campaign_execution = json.loads(campaign_execution_path.read_text(encoding="utf-8"))
+    campaign_execution["execution"]["status"] = "running"
+    campaign_execution["execution"].pop("ended_at", None)
+    campaign_execution["execution"].pop("experiment_execution_artifact", None)
+    campaign_execution["outcomes"] = {
+        "observed_run_ids": [],
+        "pending_run_ids": [logical_run_id],
+    }
+    campaign_execution_path.write_text(
+        json.dumps(campaign_execution, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    reconciled = reconcile_campaign_executions(artifact)
+    assert reconciled == ("execution-a",)
+    reconciled_manifest = json.loads(campaign_execution_path.read_text(encoding="utf-8"))
+    assert reconciled_manifest["execution"]["status"] == "interrupted_unclean"
+    assert reconciled_manifest["outcomes"]["observed_run_ids"] == [logical_run_id]
+
+    merged = create_campaign_merge(
+        artifact,
+        allow_partial=True,
+        merge_id="merge-a",
+    )
+    assert [item["logical_run_id"] for item in merged.manifest["observations"]] == [
+        logical_run_id
+    ]
+
+
+def test_campaign_merge_rejects_tampered_diagnostic_artifact(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package, _ = install_test_package(tmp_path, monkeypatch)
+    artifact = create_campaign(
+        package,
+        tmp_path / "generated",
+        campaign_id="campaign-a",
+    )
+    run = frozen_campaign_plan(artifact).runs[0]
+    context = _execute_campaign_runs(artifact, package, (run,), "execution-a")
+
+    result_dir = next((context.session_dir / "runs").glob("run_*"))
+    diagnostic_path = result_dir / "diagnostics" / "fixture.txt"
+    diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
+    original = b"diagnostic-original"
+    diagnostic_path.write_bytes(original)
+
+    record_path = result_dir / "run_record.yaml"
+    record = yaml.safe_load(record_path.read_text(encoding="utf-8"))
+    record["diagnostics"] = [
+        {
+            "id": "fixture_diagnostic",
+            "artifact": "diagnostics/fixture.txt",
+            "sha256": hashlib.sha256(original).hexdigest(),
+        }
+    ]
+    record_path.write_text(yaml.safe_dump(record, sort_keys=False), encoding="utf-8")
+    diagnostic_path.write_bytes(b"diagnostic-tampered")
+
+    with pytest.raises(campaign_error, match="Diagnostic SHA-256 mismatch"):
+        create_campaign_merge(
+            artifact,
+            allow_partial=True,
+            merge_id="merge-a",
+        )
 
 def test_campaign_merge_v0_1_manifest_remains_valid(tmp_path: Path, monkeypatch) -> None:
     package, _ = install_test_package(tmp_path, monkeypatch)

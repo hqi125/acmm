@@ -263,70 +263,83 @@ def _collect_accepted_observations(
             raise campaign_error(
                 f"Campaign execution '{campaign_execution_path}' references a different campaign."
             )
+        if execution.get("experiment_id") != artifact.experiment_id:
+            raise campaign_error(
+                f"Campaign execution '{campaign_execution_path}' references a different experiment."
+            )
         observed_ids, _ = campaign_execution_outcomes(campaign_execution)
         if not observed_ids:
             continue
 
+        events = read_campaign_events(session_dir / "campaign_events.jsonl").events
+        slots_by_index: dict[int, Mapping[str, Any]] | None = None
         legacy_name = execution.get("experiment_execution_artifact")
         if not isinstance(legacy_name, str):
             legacy_name = execution.get("experiment_interruption_artifact")
         if not isinstance(legacy_name, str):
             legacy_name = execution.get("experiment_failure_artifact")
-        if not isinstance(legacy_name, str):
+        if isinstance(legacy_name, str):
+            legacy_path = _safe_session_artifact(session_dir, legacy_name)
+            legacy = _load_yaml_mapping(legacy_path, "source execution manifest")
+            legacy_execution = legacy.get("execution")
+            if not isinstance(legacy_execution, Mapping):
+                raise campaign_error(
+                    f"Source execution manifest '{legacy_path}' is missing execution metadata."
+                )
+            if legacy_execution.get("id") != execution.get("id"):
+                raise campaign_error(
+                    f"Source execution manifest '{legacy_path}' execution ID does not match "
+                    "its Campaign Execution record."
+                )
+            if legacy_execution.get("experiment_id") != artifact.experiment_id:
+                raise campaign_error(
+                    f"Source execution manifest '{legacy_path}' belongs to a different experiment."
+                )
+            if (
+                legacy_execution.get("contract_sha256")
+                != artifact.manifest["package"]["contract_sha256"]
+            ):
+                raise campaign_error(
+                    f"Source execution manifest '{legacy_path}' Contract SHA-256 does not match "
+                    "the frozen campaign."
+                )
+            package_provenance = legacy_execution.get("package")
+            if not isinstance(package_provenance, Mapping):
+                raise campaign_error(
+                    f"Source execution manifest '{legacy_path}' is missing package provenance."
+                )
+            if package_provenance.get("sha256") != artifact.manifest["package"]["sha256"]:
+                raise campaign_error(
+                    f"Source execution manifest '{legacy_path}' package SHA-256 does not match "
+                    "the frozen campaign."
+                )
+            slots = legacy.get("slots")
+            if not isinstance(slots, list):
+                raise campaign_error(
+                    f"Source execution manifest '{legacy_path}' does not contain slots."
+                )
+            slots_by_index = {}
+            for slot in slots:
+                if not isinstance(slot, Mapping):
+                    raise campaign_error(
+                        f"Source execution manifest '{legacy_path}' has malformed slots."
+                    )
+                index = slot.get("run_index")
+                if not isinstance(index, int) or isinstance(index, bool):
+                    raise campaign_error(
+                        f"Source execution manifest '{legacy_path}' has invalid run_index."
+                    )
+                if index in slots_by_index:
+                    raise campaign_error(
+                        f"Source execution manifest '{legacy_path}' contains duplicate run index {index}."
+                    )
+                slots_by_index[index] = slot
+        elif execution.get("status") != "interrupted_unclean":
             raise campaign_error(
                 f"Campaign execution '{campaign_execution_path}' records observed runs "
-                "without an execution/interruption/failure artifact."
+                "without an execution/interruption/failure artifact or an unclean-interruption proof path."
             )
-        legacy_path = _safe_session_artifact(session_dir, legacy_name)
-        legacy = _load_yaml_mapping(legacy_path, "source execution manifest")
-        legacy_execution = legacy.get("execution")
-        if not isinstance(legacy_execution, Mapping):
-            raise campaign_error(
-                f"Source execution manifest '{legacy_path}' is missing execution metadata."
-            )
-        if legacy_execution.get("id") != execution.get("id"):
-            raise campaign_error(
-                f"Source execution manifest '{legacy_path}' execution ID does not match "
-                "its Campaign Execution record."
-            )
-        if legacy_execution.get("experiment_id") != artifact.experiment_id:
-            raise campaign_error(
-                f"Source execution manifest '{legacy_path}' belongs to a different experiment."
-            )
-        if legacy_execution.get("contract_sha256") != artifact.manifest["package"]["contract_sha256"]:
-            raise campaign_error(
-                f"Source execution manifest '{legacy_path}' Contract SHA-256 does not match "
-                "the frozen campaign."
-            )
-        package_provenance = legacy_execution.get("package")
-        if not isinstance(package_provenance, Mapping):
-            raise campaign_error(
-                f"Source execution manifest '{legacy_path}' is missing package provenance."
-            )
-        if package_provenance.get("sha256") != artifact.manifest["package"]["sha256"]:
-            raise campaign_error(
-                f"Source execution manifest '{legacy_path}' package SHA-256 does not match "
-                "the frozen campaign."
-            )
-        slots = legacy.get("slots")
-        if not isinstance(slots, list):
-            raise campaign_error(
-                f"Source execution manifest '{legacy_path}' does not contain slots."
-            )
-        slots_by_index: dict[int, Mapping[str, Any]] = {}
-        for slot in slots:
-            if not isinstance(slot, Mapping):
-                raise campaign_error(f"Source execution manifest '{legacy_path}' has malformed slots.")
-            index = slot.get("run_index")
-            if not isinstance(index, int) or isinstance(index, bool):
-                raise campaign_error(f"Source execution manifest '{legacy_path}' has invalid run_index.")
-            if index in slots_by_index:
-                raise campaign_error(
-                    f"Source execution manifest '{legacy_path}' contains duplicate run index {index}."
-                )
-            slots_by_index[index] = slot
 
-        events = read_campaign_events(session_dir / "campaign_events.jsonl").events
         for logical_run_id in observed_ids:
             if logical_run_id not in logical_by_id:
                 raise campaign_error(
@@ -341,34 +354,52 @@ def _collect_accepted_observations(
                 )
             logical = logical_by_id[logical_run_id]
             run_index = logical["run_index"]
-            slot = slots_by_index.get(run_index)
-            if slot is None:
-                raise campaign_error(
-                    f"Observed logical run '{logical_run_id}' is absent from source execution "
-                    f"manifest '{legacy_path}'."
-                )
-            selected_run_id = slot.get("selected_run_id")
-            attempts = slot.get("attempts")
-            if not isinstance(selected_run_id, str) or not selected_run_id:
-                raise campaign_error(
-                    f"Observed logical run '{logical_run_id}' does not identify an accepted source run."
-                )
-            if not isinstance(attempts, list):
-                raise campaign_error(
-                    f"Observed logical run '{logical_run_id}' has malformed source attempts."
-                )
-            matching_attempts = [
-                item
-                for item in attempts
-                if isinstance(item, Mapping) and item.get("run_id") == selected_run_id
-            ]
-            if len(matching_attempts) != 1:
-                raise campaign_error(
-                    f"Observed logical run '{logical_run_id}' must map to exactly one accepted attempt."
-                )
-            attempt = matching_attempts[0]
-            attempt_number = attempt.get("attempt")
-            result_path = attempt.get("result_path")
+
+            selected_run_id: str | None = None
+            if slots_by_index is not None:
+                slot = slots_by_index.get(run_index)
+                if slot is None:
+                    raise campaign_error(
+                        f"Observed logical run '{logical_run_id}' is absent from its source execution manifest."
+                    )
+                selected_run_id = slot.get("selected_run_id")
+                attempts = slot.get("attempts")
+                if not isinstance(selected_run_id, str) or not selected_run_id:
+                    raise campaign_error(
+                        f"Observed logical run '{logical_run_id}' does not identify an accepted source run."
+                    )
+                if not isinstance(attempts, list):
+                    raise campaign_error(
+                        f"Observed logical run '{logical_run_id}' has malformed source attempts."
+                    )
+                matching_attempts = [
+                    item
+                    for item in attempts
+                    if isinstance(item, Mapping) and item.get("run_id") == selected_run_id
+                ]
+                if len(matching_attempts) != 1:
+                    raise campaign_error(
+                        f"Observed logical run '{logical_run_id}' must map to exactly one accepted attempt."
+                    )
+                attempt = matching_attempts[0]
+                attempt_number = attempt.get("attempt")
+                result_path = attempt.get("result_path")
+            else:
+                persisted = [
+                    event
+                    for event in events
+                    if event.get("event") == "attempt_persisted"
+                    and event.get("run_index") == run_index
+                    and event.get("validity") == "valid"
+                ]
+                if len(persisted) != 1:
+                    raise campaign_error(
+                        f"Observed logical run '{logical_run_id}' must map to exactly one durable valid "
+                        "attempt_persisted event when its top-level execution manifest is unavailable."
+                    )
+                attempt_number = persisted[0].get("attempt")
+                result_path = persisted[0].get("result_path")
+
             if (
                 not isinstance(attempt_number, int)
                 or isinstance(attempt_number, bool)
@@ -379,16 +410,12 @@ def _collect_accepted_observations(
                 raise campaign_error(
                     f"Observed logical run '{logical_run_id}' has invalid accepted-attempt metadata."
                 )
-            if not _event_exists(
-                events,
-                "attempt_finalized",
-                run_index=run_index,
-                attempt=attempt_number,
-            ):
-                raise campaign_error(
-                    f"Observed logical run '{logical_run_id}' lacks durable attempt_finalized evidence."
-                )
-            source_result_dir = _safe_session_artifact(session_dir, result_path)
+
+            source_result_dir = (
+                _safe_persisted_result_artifact(session_dir, result_path)
+                if slots_by_index is None
+                else _safe_session_artifact(session_dir, result_path)
+            )
             if not source_result_dir.is_dir() or source_result_dir.is_symlink():
                 raise campaign_error(
                     f"Accepted result directory does not exist safely: '{source_result_dir}'."
@@ -411,6 +438,8 @@ def _collect_accepted_observations(
                     f"[{issue.code}] {issue.message}"
                 )
             run = record["run"]
+            if selected_run_id is None:
+                selected_run_id = run.get("id")
             if (
                 run["id"] != selected_run_id
                 or run["run_index"] != run_index
@@ -426,7 +455,20 @@ def _collect_accepted_observations(
                 raise campaign_error(
                     f"Accepted Run Record '{record_path}' is not scientifically valid."
                 )
-            _validate_evidence_artifacts(source_result_dir, record)
+
+            journal_finalized = _event_exists(
+                events,
+                "attempt_finalized",
+                run_index=run_index,
+                attempt=attempt_number,
+            )
+            artifact_finalized = _successful_environment_finalization(source_result_dir)
+            if not journal_finalized and not artifact_finalized:
+                raise campaign_error(
+                    f"Observed logical run '{logical_run_id}' lacks durable finalization evidence."
+                )
+
+            _validate_record_artifacts(source_result_dir, record)
             execution_id = execution.get("id")
             execution_status = execution.get("status")
             if not isinstance(execution_id, str) or not isinstance(execution_status, str):
@@ -452,21 +494,36 @@ def _collect_accepted_observations(
     return accepted
 
 
-def _validate_evidence_artifacts(result_dir: Path, record: Mapping[str, Any]) -> None:
-    for entry in record.get("evidence", ()):
-        if not isinstance(entry, Mapping):
-            raise campaign_error(f"Run Record '{result_dir / 'run_record.yaml'}' has invalid evidence.")
-        artifact = entry.get("artifact")
-        expected = entry.get("sha256")
-        if not isinstance(artifact, str) or not isinstance(expected, str):
-            raise campaign_error(f"Run Record '{result_dir / 'run_record.yaml'}' has invalid evidence metadata.")
-        path = _safe_result_artifact(result_dir, artifact)
-        if not path.is_file() or path.is_symlink():
-            raise campaign_error(f"Evidence artifact does not exist safely: '{path}'.")
-        actual = _sha256_file(path)
-        if actual != expected:
-            raise campaign_error(f"Evidence SHA-256 mismatch for '{path}'.")
+def _successful_environment_finalization(result_dir: Path) -> bool:
+    path = result_dir / "environment_finalization.yaml"
+    if not path.is_file() or path.is_symlink():
+        return False
+    try:
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return False
+    return isinstance(value, Mapping) and value.get("ok") is True
 
+
+def _validate_record_artifacts(result_dir: Path, record: Mapping[str, Any]) -> None:
+    for collection, label in (("evidence", "Evidence"), ("diagnostics", "Diagnostic")):
+        for entry in record.get(collection, ()):
+            if not isinstance(entry, Mapping):
+                raise campaign_error(
+                    f"Run Record '{result_dir / 'run_record.yaml'}' has invalid {collection}."
+                )
+            artifact = entry.get("artifact")
+            expected = entry.get("sha256")
+            if not isinstance(artifact, str) or not isinstance(expected, str):
+                raise campaign_error(
+                    f"Run Record '{result_dir / 'run_record.yaml'}' has invalid {collection} metadata."
+                )
+            path = _safe_result_artifact(result_dir, artifact)
+            if not path.is_file() or path.is_symlink():
+                raise campaign_error(f"{label} artifact does not exist safely: '{path}'.")
+            actual = _sha256_file(path)
+            if actual != expected:
+                raise campaign_error(f"{label} SHA-256 mismatch for '{path}'.")
 
 def _copy_result_tree(source: Path, destination: Path) -> None:
     if source.is_symlink():
@@ -477,6 +534,21 @@ def _copy_result_tree(source: Path, destination: Path) -> None:
             raise campaign_error(f"Refusing to merge symbolic-link result artifact '{path}'.")
     shutil.copytree(source, destination, symlinks=False)
 
+
+
+def _safe_persisted_result_artifact(session_dir: Path, reference: str) -> Path:
+    path = Path(reference)
+    if any(part in {"", ".", ".."} for part in path.parts):
+        raise campaign_error(f"Unsafe persisted result artifact path: '{reference}'.")
+    if path.is_absolute():
+        try:
+            relative = path.relative_to(session_dir.resolve())
+        except ValueError as exc:
+            raise campaign_error(
+                f"Persisted result artifact escapes its campaign execution: '{reference}'."
+            ) from exc
+        return _safe_session_artifact(session_dir, relative.as_posix())
+    return _safe_session_artifact(session_dir, reference)
 
 def _safe_session_artifact(session_dir: Path, relative: str) -> Path:
     path = Path(relative)
