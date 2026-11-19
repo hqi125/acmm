@@ -82,3 +82,5 @@ Campaign v0.2 freezes:
 - each run's `materialization_key`.
 
 Campaign v0.1 remains readable and retains its original design digest. New campaigns use v0.2.
+
+For durable selection, interruption recovery, resumption, and merge semantics, see `docs/runtime/campaign.md`.

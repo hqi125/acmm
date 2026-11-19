@@ -25,6 +25,7 @@ from acmm.campaign.execution import (
     eligible_campaign_runs,
     inspect_campaign_status,
     order_campaign_runs_for_execution,
+    resumable_campaign_runs,
     select_campaign_runs,
 )
 from acmm_infra.profiles.common import default_runtime_root
@@ -109,68 +110,30 @@ def register_campaign_commands(subparsers: argparse._SubParsersAction) -> None:
         metavar="N|START-END",
         help="Filter by frozen 1-based repetition number or inclusive range.",
     )
-    execute_parser.add_argument(
-        "--apply-if-needed",
-        action="store_true",
-        help=(
-            "Permit reconciliation of selected subject deployment context before "
-            "campaign execution."
-        ),
-    )
-    execute_parser.add_argument(
-        "--start-if-needed",
-        action="store_true",
-        help="Permit ACMM to start selected subject runtimes when needed.",
-    )
-    execute_parser.add_argument(
-        "--prestart-selected-subjects",
-        action="store_true",
-        help=(
-            "With --start-if-needed, acquire every selected subject before the "
-            "execution session is created."
-        ),
-    )
-    execute_parser.add_argument(
-        "--capture-runtime-logs",
-        action="store_true",
-        help="Capture sanitized per-subject runtime logs into the campaign execution.",
-    )
-    execute_parser.add_argument(
-        "--capture-environment-snapshots",
-        action="store_true",
-        help=(
-            "Ask the Experiment Package lifecycle to capture diagnostic pre/post "
-            "environment snapshots for each run. This may add provider traffic and is "
-            "intended for validation/debugging rather than final scientific acquisition."
-        ),
-    )
-    execute_parser.add_argument(
-        "--startup-max-attempts",
-        type=int,
-        default=3,
-        help="Maximum runtime acquisition attempts for each selected subject.",
-    )
-    execute_parser.add_argument(
-        "--startup-timeout-seconds",
-        type=float,
-        default=120.0,
-        help="Maximum startup wait for a subject started by ACMM.",
-    )
-    execute_parser.add_argument(
-        "--max-attempts-per-run",
-        type=int,
-        default=1,
-        help="Maximum attempts for an invalid execution of a selected logical run.",
-    )
-    execute_parser.add_argument(
-        "--generated-root",
-        default=str(default_generated_root()),
-        help=(
-            "Generated artifact root containing campaigns "
-            f"(default: {default_generated_root()})."
-        ),
-    )
+    _add_campaign_execution_options(execute_parser)
     execute_parser.set_defaults(handler=_campaign_execute)
+
+    resume_parser = commands.add_parser(
+        "resume",
+        help=(
+            "Resume the latest incomplete campaign execution selection in a new "
+            "durable execution session."
+        ),
+    )
+    resume_parser.add_argument(
+        "campaign_id",
+        help="Campaign ID returned by 'acmm campaign create'.",
+    )
+    resume_parser.add_argument(
+        "--execution",
+        metavar="EXECUTION_ID",
+        help=(
+            "Resume pending logical runs from a specific prior campaign execution. "
+            "By default the most recent resumable execution is selected."
+        ),
+    )
+    _add_campaign_execution_options(resume_parser)
+    resume_parser.set_defaults(handler=_campaign_resume)
 
     status_parser = commands.add_parser(
         "status",
@@ -215,6 +178,73 @@ def register_campaign_commands(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     merge_parser.set_defaults(handler=_campaign_merge)
+
+
+def _add_campaign_execution_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--apply-if-needed",
+        action="store_true",
+        help=(
+            "Permit reconciliation of selected subject deployment context before "
+            "campaign execution."
+        ),
+    )
+    parser.add_argument(
+        "--start-if-needed",
+        action="store_true",
+        help="Permit ACMM to start selected subject runtimes when needed.",
+    )
+    parser.add_argument(
+        "--prestart-selected-subjects",
+        action="store_true",
+        help=(
+            "With --start-if-needed, acquire every selected subject before the "
+            "execution session is created."
+        ),
+    )
+    parser.add_argument(
+        "--capture-runtime-logs",
+        action="store_true",
+        help="Capture sanitized per-subject runtime logs into the campaign execution.",
+    )
+    parser.add_argument(
+        "--capture-environment-snapshots",
+        action="store_true",
+        help=(
+            "Ask the Experiment Package lifecycle to capture diagnostic pre/post "
+            "environment snapshots for each run. This may add provider traffic and is "
+            "intended for validation/debugging rather than final scientific acquisition."
+        ),
+    )
+    parser.add_argument(
+        "--startup-max-attempts",
+        type=int,
+        default=3,
+        help="Maximum runtime acquisition attempts for each selected subject.",
+    )
+    parser.add_argument(
+        "--startup-timeout-seconds",
+        type=float,
+        default=120.0,
+        help="Maximum startup wait for a subject started by ACMM.",
+    )
+    parser.add_argument(
+        "--max-attempts-per-run",
+        type=int,
+        default=2,
+        help=(
+            "Maximum fresh-session attempts for an invalid selected logical run; "
+            "retries use a fresh materialization (default: 2)."
+        ),
+    )
+    parser.add_argument(
+        "--generated-root",
+        default=str(default_generated_root()),
+        help=(
+            "Generated artifact root containing campaigns "
+            f"(default: {default_generated_root()})."
+        ),
+    )
 
 
 def _campaign_create(args: argparse.Namespace) -> int:
@@ -311,7 +341,6 @@ def _campaign_execute_locked(args: argparse.Namespace, artifact) -> int:
         for item in artifact.manifest["runs"]
     }
     observed = set(status.observed_run_ids)
-    blocked = set(status.blocked_run_ids)
     active = set(status.active_run_ids)
 
     print("Campaign execution selection:")
@@ -325,16 +354,6 @@ def _campaign_execute_locked(args: argparse.Namespace, artifact) -> int:
                 1
                 for index in selected_ids
                 if logical_by_index[index] in observed
-            )
-        )
-    )
-    print(
-        "  blocked:          "
-        + str(
-            sum(
-                1
-                for index in selected_ids
-                if logical_by_index[index] in blocked
             )
         )
     )
@@ -353,9 +372,81 @@ def _campaign_execute_locked(args: argparse.Namespace, artifact) -> int:
         print("No eligible pending logical runs require execution.")
         return 0
 
+    return _execute_campaign_runs(args, artifact, eligible)
+
+
+def _campaign_resume(args: argparse.Namespace) -> int:
+    try:
+        artifact = load_campaign(
+            args.campaign_id,
+            Path(args.generated_root),
+        )
+        with campaign_execution_lock(artifact):
+            return _campaign_resume_locked(args, artifact)
+    except KeyboardInterrupt:
+        print(
+            "Campaign resume interrupted before the immediate execution boundary; "
+            "the campaign lock was released and the next resume will reconcile "
+            "durable recovery state.",
+            file=sys.stderr,
+        )
+        return 130
+    except (campaign_error, OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+
+def _campaign_resume_locked(args: argparse.Namespace, artifact) -> int:
+    reconciliation = reconcile_campaign(artifact)
+    status = inspect_campaign_status(artifact)
+    resumable = resumable_campaign_runs(
+        artifact,
+        status,
+        source_execution_id=args.execution,
+    )
+
+    if reconciliation.locally_reconciled_execution_ids:
+        print(
+            "Campaign reconciliation: finalized unfinished execution(s): "
+            + ", ".join(reconciliation.locally_reconciled_execution_ids)
+        )
+    if reconciliation.externally_recovered_execution_ids:
+        print(
+            "Campaign recovery: reconciled external state for execution(s): "
+            + ", ".join(reconciliation.externally_recovered_execution_ids)
+        )
+
+    if resumable is None:
+        print("No incomplete campaign execution has resumable logical runs.")
+        return 0
+
+    source_execution_id, runs = resumable
+    print("Campaign resume selection:")
+    print(f"  campaign:          {artifact.campaign_id}")
+    print(f"  source execution:  {source_execution_id}")
+    print(f"  pending selected:  {len(runs)}")
+    return _execute_campaign_runs(
+        args,
+        artifact,
+        runs,
+        resumed_from_execution_id=source_execution_id,
+    )
+
+
+def _execute_campaign_runs(
+    args: argparse.Namespace,
+    artifact,
+    runs,
+    *,
+    resumed_from_execution_id: str | None = None,
+) -> int:
     runtime_root = default_runtime_root().expanduser().resolve()
     ensure_campaign_package_installed(artifact, runtime_root)
-    context = create_campaign_execution_context(artifact, eligible)
+    context = create_campaign_execution_context(
+        artifact,
+        tuple(runs),
+        resumed_from_execution_id=resumed_from_execution_id,
+    )
 
     run_args = argparse.Namespace(**vars(args))
     run_args.experiment = (
@@ -372,6 +463,8 @@ def _campaign_execute_locked(args: argparse.Namespace, artifact) -> int:
     run_args.subject = None
     run_args.scenario = None
     run_args.repetition = None
+    if hasattr(run_args, "execution"):
+        delattr(run_args, "execution")
 
     from acmm.cli import _run_experiment
 
@@ -407,7 +500,6 @@ def _campaign_status(args: argparse.Namespace) -> int:
     print(f"  pending:         {snapshot.runs.pending}")
     print(f"  active:          {snapshot.runs.active}")
     print(f"  observed:        {snapshot.runs.observed}")
-    print(f"  blocked:         {snapshot.runs.blocked}")
     print("Executions:")
     print(f"  total:           {snapshot.executions.total}")
     print(f"  completed:       {snapshot.executions.completed}")
@@ -443,7 +535,6 @@ def _campaign_merge(args: argparse.Namespace) -> int:
     print(f"  completeness:    {merged.manifest['merge']['completeness']}")
     print(f"  observed:        {population['observed']}/{population['total']}")
     print(f"  pending:         {population['pending']}")
-    print(f"  blocked:         {population['blocked']}")
     print(f"  manifest:        {merged.manifest_path}")
     print(f"  runs:            {merged.path / 'runs'}")
     return 0

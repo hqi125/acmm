@@ -14,7 +14,11 @@ import uuid
 import yaml
 from jsonschema import Draft202012Validator
 
-from acmm.campaign.execution import inspect_campaign_status, read_campaign_events
+from acmm.campaign.execution import (
+    campaign_execution_outcomes,
+    inspect_campaign_status,
+    read_campaign_events,
+)
 from acmm.campaign.model import campaign_artifact, campaign_error
 from acmm.record.loader import load_run_record, run_record_load_error
 from acmm.record.validator import (
@@ -24,8 +28,11 @@ from acmm.record.validator import (
 )
 
 
-CAMPAIGN_MERGE_SCHEMA_VERSION = "0.1"
-_CAMPAIGN_MERGE_SCHEMA_NAME = "campaign-merge-v0.1.schema.json"
+CAMPAIGN_MERGE_SCHEMA_VERSION = "0.2"
+_CAMPAIGN_MERGE_SCHEMA_FILES = {
+    "0.1": "campaign-merge-v0.1.schema.json",
+    "0.2": "campaign-merge-v0.2.schema.json",
+}
 
 
 @dataclass(frozen=True)
@@ -70,12 +77,11 @@ def create_campaign_merge(
     if not allow_partial and (
         status.runs.observed != status.runs.total
         or status.runs.pending
-        or status.runs.blocked
     ):
         raise campaign_error(
             "Complete campaign merge requires every logical run to be observed: "
             f"observed={status.runs.observed}, pending={status.runs.pending}, "
-            f"blocked={status.runs.blocked}, total={status.runs.total}."
+            f"total={status.runs.total}."
         )
 
     accepted = _collect_accepted_observations(artifact)
@@ -179,7 +185,6 @@ def create_campaign_merge(
                 "total": status.runs.total,
                 "observed": status.runs.observed,
                 "pending": status.runs.pending,
-                "blocked": status.runs.blocked,
             },
             "observations": observations,
         }
@@ -200,7 +205,13 @@ def create_campaign_merge(
 
 
 def validate_campaign_merge_manifest(manifest: Mapping[str, Any]) -> None:
-    schema_path = Path(__file__).with_name("schemas") / _CAMPAIGN_MERGE_SCHEMA_NAME
+    version = manifest.get("schema_version")
+    if version not in _CAMPAIGN_MERGE_SCHEMA_FILES:
+        raise campaign_error(f"Unsupported Campaign Merge schema_version '{version}'.")
+    schema_path = (
+        Path(__file__).with_name("schemas")
+        / _CAMPAIGN_MERGE_SCHEMA_FILES[version]
+    )
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -252,11 +263,7 @@ def _collect_accepted_observations(
             raise campaign_error(
                 f"Campaign execution '{campaign_execution_path}' references a different campaign."
             )
-        observed_ids = outcomes.get("observed_run_ids")
-        if not isinstance(observed_ids, list):
-            raise campaign_error(
-                f"Campaign execution '{campaign_execution_path}' has invalid outcomes."
-            )
+        observed_ids, _ = campaign_execution_outcomes(campaign_execution)
         if not observed_ids:
             continue
 

@@ -23,8 +23,11 @@ from acmm.runtime.planner import (
 )
 
 
-CAMPAIGN_EXECUTION_SCHEMA_VERSION = "0.1"
-_CAMPAIGN_EXECUTION_SCHEMA_NAME = "campaign-execution-v0.1.schema.json"
+CAMPAIGN_EXECUTION_SCHEMA_VERSION = "0.2"
+_CAMPAIGN_EXECUTION_SCHEMA_FILES = {
+    "0.1": "campaign-execution-v0.1.schema.json",
+    "0.2": "campaign-execution-v0.2.schema.json",
+}
 
 
 @dataclass(frozen=True)
@@ -33,7 +36,6 @@ class campaign_run_counts:
     pending: int
     active: int
     observed: int
-    blocked: int
 
 
 @dataclass(frozen=True)
@@ -60,7 +62,6 @@ class campaign_status_snapshot:
     pending_run_ids: tuple[str, ...]
     active_run_ids: tuple[str, ...]
     observed_run_ids: tuple[str, ...]
-    blocked_run_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class campaign_execution_context:
     plan: experiment_plan
     selected_runs: tuple[planned_run, ...]
     execution_id: str
+    resumed_from_execution_id: str | None = None
 
     @property
     def session_parent(self) -> Path:
@@ -260,16 +262,20 @@ def create_campaign_execution_context(
     selected_runs: tuple[planned_run, ...],
     *,
     execution_id: str | None = None,
+    resumed_from_execution_id: str | None = None,
 ) -> campaign_execution_context:
     if not selected_runs:
         raise campaign_error("Campaign execution selection must not be empty.")
     realized_id = execution_id if execution_id is not None else str(uuid.uuid4())
     _validate_identifier("execution ID", realized_id)
+    if resumed_from_execution_id is not None:
+        _validate_identifier("resumed execution ID", resumed_from_execution_id)
     return campaign_execution_context(
         artifact=artifact,
         plan=frozen_campaign_plan(artifact),
         selected_runs=selected_runs,
         execution_id=realized_id,
+        resumed_from_execution_id=resumed_from_execution_id,
     )
 
 
@@ -297,12 +303,15 @@ def initialize_campaign_execution(
         },
         "outcomes": {
             "observed_run_ids": [],
-            "blocked_run_ids": [],
-            "pending_selected_run_ids": [
+            "pending_run_ids": [
                 logical_ids[run.run_index] for run in context.selected_runs
             ],
         },
     }
+    if context.resumed_from_execution_id is not None:
+        manifest["execution"]["resumed_from_execution_id"] = (
+            context.resumed_from_execution_id
+        )
     validate_campaign_execution_manifest(manifest)
     _write_json_atomically(context.session_dir / "campaign_execution.json", manifest)
     journal = campaign_event_journal(context.session_dir / "campaign_events.jsonl")
@@ -329,43 +338,18 @@ def finalize_campaign_execution(
     logical_ids = _logical_ids_by_index(context.artifact)
 
     observed_indices: set[int] = set()
-    blocked_indices: set[int] = set()
 
     for slot in getattr(result, "slots", ()):
         index = slot.planned.run_index
         if slot.is_resolved:
             observed_indices.add(index)
-        elif slot.attempts and _subject_execution_started_for_run(
-            context.session_dir,
-            index,
-        ):
-            blocked_indices.add(index)
-
-    interrupted_run_index = getattr(result, "interrupted_run_index", None)
-    interrupted_attempt = getattr(result, "interrupted_attempt", None)
-    if (
-        interrupted_run_index is not None
-        and interrupted_attempt is not None
-        and interrupted_run_index not in observed_indices
-        and _subject_execution_started(
-            context.session_dir,
-            interrupted_run_index,
-            interrupted_attempt,
-        )
-    ):
-        blocked_indices.add(interrupted_run_index)
 
     selected_indices = tuple(manifest["execution"]["selected_run_indices"])
     observed_ids = [logical_ids[index] for index in selected_indices if index in observed_indices]
-    blocked_ids = [
-        logical_ids[index]
-        for index in selected_indices
-        if index in blocked_indices and index not in observed_indices
-    ]
     pending_ids = [
         logical_ids[index]
         for index in selected_indices
-        if index not in observed_indices and index not in blocked_indices
+        if index not in observed_indices
     ]
 
     manifest["execution"]["status"] = status
@@ -389,10 +373,10 @@ def finalize_campaign_execution(
         manifest["execution"]["experiment_failure_artifact"] = str(
             Path(failure_manifest).relative_to(context.session_dir)
         )
+    manifest["schema_version"] = CAMPAIGN_EXECUTION_SCHEMA_VERSION
     manifest["outcomes"] = {
         "observed_run_ids": observed_ids,
-        "blocked_run_ids": blocked_ids,
-        "pending_selected_run_ids": pending_ids,
+        "pending_run_ids": pending_ids,
     }
     validate_campaign_execution_manifest(manifest)
     _write_json_atomically(manifest_path, manifest)
@@ -436,7 +420,6 @@ def reconcile_campaign_executions(artifact: campaign_artifact) -> tuple[str, ...
 def inspect_campaign_status(artifact: campaign_artifact) -> campaign_status_snapshot:
     logical_ids = tuple(item["run_id"] for item in artifact.manifest["runs"])
     observed: set[str] = set()
-    blocked: set[str] = set()
     active: set[str] = set()
 
     execution_total = 0
@@ -480,14 +463,11 @@ def inspect_campaign_status(artifact: campaign_artifact) -> campaign_status_snap
                     recovery_recovered += 1
                 elif recovery_state == "failed":
                     recovery_failed += 1
-            outcomes = manifest["outcomes"]
-            observed.update(outcomes["observed_run_ids"])
-            blocked.update(outcomes["blocked_run_ids"])
+            observed_ids, _ = campaign_execution_outcomes(manifest)
+            observed.update(observed_ids)
 
-    blocked.difference_update(observed)
     active.difference_update(observed)
-    active.difference_update(blocked)
-    pending = set(logical_ids) - observed - blocked - active
+    pending = set(logical_ids) - observed - active
 
     ordered = lambda values: tuple(run_id for run_id in logical_ids if run_id in values)
     return campaign_status_snapshot(
@@ -496,7 +476,6 @@ def inspect_campaign_status(artifact: campaign_artifact) -> campaign_status_snap
             pending=len(pending),
             active=len(active),
             observed=len(observed),
-            blocked=len(blocked),
         ),
         executions=campaign_execution_counts(
             total=execution_total,
@@ -513,7 +492,6 @@ def inspect_campaign_status(artifact: campaign_artifact) -> campaign_status_snap
         pending_run_ids=ordered(pending),
         active_run_ids=ordered(active),
         observed_run_ids=ordered(observed),
-        blocked_run_ids=ordered(blocked),
     )
 
 
@@ -534,8 +512,86 @@ def campaign_run_id(artifact: campaign_artifact, run_index: int) -> str:
         raise campaign_error(f"Campaign does not contain run index {run_index}.") from exc
 
 
+def campaign_execution_outcomes(
+    manifest: Mapping[str, Any],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    outcomes = manifest["outcomes"]
+    observed = tuple(outcomes["observed_run_ids"])
+    if manifest.get("schema_version") == "0.1":
+        pending = tuple(
+            dict.fromkeys(
+                tuple(outcomes["pending_selected_run_ids"])
+                + tuple(outcomes["blocked_run_ids"])
+            )
+        )
+    else:
+        pending = tuple(outcomes["pending_run_ids"])
+    return observed, pending
+
+
+def resumable_campaign_runs(
+    artifact: campaign_artifact,
+    status: campaign_status_snapshot,
+    *,
+    source_execution_id: str | None = None,
+) -> tuple[str, tuple[planned_run, ...]] | None:
+    pending_global = set(status.pending_run_ids)
+    if not pending_global:
+        return None
+
+    executions_root = artifact.path / "executions"
+    if not executions_root.is_dir():
+        return None
+
+    candidates: list[tuple[str, str, tuple[str, ...]]] = []
+    for session_dir in executions_root.glob("execution_*"):
+        manifest_path = session_dir / "campaign_execution.json"
+        if not manifest_path.is_file():
+            continue
+        manifest = _load_campaign_execution_manifest(manifest_path)
+        execution = manifest["execution"]
+        if execution["campaign_id"] != artifact.campaign_id:
+            raise campaign_error(
+                f"Campaign execution '{manifest_path}' references a different campaign."
+            )
+        execution_id = execution["id"]
+        if source_execution_id is not None and execution_id != source_execution_id:
+            continue
+        if execution["status"] == "running":
+            continue
+        _, pending = campaign_execution_outcomes(manifest)
+        resumable = tuple(run_id for run_id in pending if run_id in pending_global)
+        if not resumable:
+            continue
+        candidates.append((execution.get("started_at", ""), execution_id, resumable))
+
+    if source_execution_id is not None and not candidates:
+        raise campaign_error(
+            f"Campaign execution '{source_execution_id}' has no currently resumable logical runs."
+        )
+    if not candidates:
+        return None
+
+    _, execution_id, logical_run_ids = max(candidates, key=lambda item: (item[0], item[1]))
+    logical_set = set(logical_run_ids)
+    runs = tuple(
+        run
+        for run in frozen_campaign_plan(artifact).runs
+        if campaign_run_id(artifact, run.run_index) in logical_set
+    )
+    return execution_id, order_campaign_runs_for_execution(artifact, runs)
+
+
 def validate_campaign_execution_manifest(manifest: Mapping[str, Any]) -> None:
-    schema_path = Path(__file__).with_name("schemas") / _CAMPAIGN_EXECUTION_SCHEMA_NAME
+    version = manifest.get("schema_version")
+    if version not in _CAMPAIGN_EXECUTION_SCHEMA_FILES:
+        raise campaign_error(
+            f"Unsupported Campaign Execution schema_version '{version}'."
+        )
+    schema_path = (
+        Path(__file__).with_name("schemas")
+        / _CAMPAIGN_EXECUTION_SCHEMA_FILES[version]
+    )
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -565,7 +621,6 @@ def _reconcile_one_execution(
     selected_indices = tuple(manifest["execution"]["selected_run_indices"])
 
     persisted_valid_indices: set[int] = set()
-    exposed_indices: set[int] = set()
     finalized_indices: set[int] = set()
     runs_dir = session_dir / "runs"
     if runs_dir.exists():
@@ -589,19 +644,15 @@ def _reconcile_one_execution(
         index = event.get("run_index")
         if not isinstance(index, int) or isinstance(index, bool):
             continue
-        if event.get("event") == "subject_execution_started":
-            exposed_indices.add(index)
-        elif event.get("event") == "attempt_finalized":
+        if event.get("event") == "attempt_finalized":
             finalized_indices.add(index)
 
     observed_indices = persisted_valid_indices & finalized_indices
-    blocked_indices = exposed_indices - observed_indices
     observed_ids = [logical_ids[index] for index in selected_indices if index in observed_indices]
-    blocked_ids = [logical_ids[index] for index in selected_indices if index in blocked_indices]
     pending_ids = [
         logical_ids[index]
         for index in selected_indices
-        if index not in observed_indices and index not in blocked_indices
+        if index not in observed_indices
     ]
 
     if (session_dir / "experiment_execution.yaml").is_file():
@@ -625,41 +676,14 @@ def _reconcile_one_execution(
             "reconciled unfinished execution at the last durable journal checkpoint"
             + ("; incomplete trailing journal event ignored" if event_log.truncated_tail else "")
         )
+    manifest["schema_version"] = CAMPAIGN_EXECUTION_SCHEMA_VERSION
     manifest["outcomes"] = {
         "observed_run_ids": observed_ids,
-        "blocked_run_ids": blocked_ids,
-        "pending_selected_run_ids": pending_ids,
+        "pending_run_ids": pending_ids,
     }
     validate_campaign_execution_manifest(manifest)
     _write_json_atomically(manifest_path, manifest)
     return manifest
-
-
-
-
-def _subject_execution_started_for_run(
-    session_dir: Path,
-    run_index: int,
-) -> bool:
-    for event in read_campaign_events(session_dir / "campaign_events.jsonl").events:
-        if event.get("event") != "subject_execution_started":
-            continue
-        if event.get("run_index") == run_index:
-            return True
-    return False
-
-
-def _subject_execution_started(
-    session_dir: Path,
-    run_index: int,
-    attempt: int,
-) -> bool:
-    for event in read_campaign_events(session_dir / "campaign_events.jsonl").events:
-        if event.get("event") != "subject_execution_started":
-            continue
-        if event.get("run_index") == run_index and event.get("attempt") == attempt:
-            return True
-    return False
 
 def _load_lock_metadata(path: Path) -> dict[str, Any]:
     try:
@@ -793,6 +817,7 @@ __all__ = [
     "campaign_run_counts",
     "campaign_execution_counts",
     "campaign_recovery_counts",
+    "campaign_execution_outcomes",
     "campaign_run_id",
     "create_campaign_execution_context",
     "eligible_campaign_runs",
@@ -803,6 +828,7 @@ __all__ = [
     "inspect_campaign_status",
     "load_frozen_campaign_contract",
     "reconcile_campaign_executions",
+    "resumable_campaign_runs",
     "select_campaign_runs",
     "validate_campaign_execution_manifest",
 ]

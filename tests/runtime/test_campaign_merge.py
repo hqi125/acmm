@@ -12,7 +12,7 @@ from acmm.campaign.execution import (
     frozen_campaign_plan,
     initialize_campaign_execution,
 )
-from acmm.campaign.merge import create_campaign_merge
+from acmm.campaign.merge import create_campaign_merge, validate_campaign_merge_manifest
 from acmm.campaign.model import campaign_error, create_campaign
 from acmm.runtime.experiment_execution import execute_experiment
 from acmm.runtime.interfaces import (
@@ -173,7 +173,6 @@ def test_complete_campaign_merge_contains_every_logical_run(
         "total": len(runs),
         "observed": len(runs),
         "pending": 0,
-        "blocked": 0,
     }
     assert len(merged.manifest["observations"]) == len(runs)
 
@@ -255,4 +254,24 @@ def test_campaign_merge_rejects_symbolic_link_source_manifest(
             allow_partial=True,
             merge_id="merge-a",
         )
+
+
+def test_campaign_merge_v0_1_manifest_remains_valid(tmp_path: Path, monkeypatch) -> None:
+    package, _ = install_test_package(tmp_path, monkeypatch)
+    artifact = create_campaign(
+        package,
+        tmp_path / "generated",
+        campaign_id="campaign-a",
+    )
+    merged = create_campaign_merge(
+        artifact,
+        allow_partial=True,
+        merge_id="merge-a",
+    )
+    legacy = dict(merged.manifest)
+    legacy["schema_version"] = "0.1"
+    legacy["population"] = dict(legacy["population"])
+    legacy["population"]["blocked"] = 0
+
+    validate_campaign_merge_manifest(legacy)
 

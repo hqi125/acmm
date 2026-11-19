@@ -209,3 +209,107 @@ def test_recovery_rejects_nonserializable_observations(
     )
     assert manifest["recovery"]["status"] == "failed"
 
+
+
+def test_failed_execution_requires_recovery_before_campaign_can_continue(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    artifact, context = _unclean_campaign(tmp_path, monkeypatch)
+    (context.session_dir / "experiment_failure.yaml").write_text(
+        "schema_version: '0.1'\nexecution:\n  status: failed\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "acmm.campaign.recovery.load_campaign_package",
+        lambda artifact: SimpleNamespace(runtime=object()),
+    )
+    monkeypatch.setattr(
+        "acmm.campaign.recovery.load_staged_experiment_runtime",
+        lambda package: SimpleNamespace(
+            runtime=SimpleNamespace(lifecycle=object(), recovery=None)
+        ),
+    )
+
+    with pytest.raises(campaign_error, match="has no recovery hook"):
+        reconcile_campaign(artifact)
+
+    manifest = json.loads(
+        (context.session_dir / "campaign_execution.json").read_text(encoding="utf-8")
+    )
+    assert manifest["execution"]["status"] == "failed"
+    assert manifest["recovery"]["status"] == "required"
+
+
+def test_typed_interruption_uses_package_recovery_hook_when_available(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    artifact, context = _unclean_campaign(tmp_path, monkeypatch)
+    (context.session_dir / "experiment_interruption.yaml").write_text(
+        "schema_version: '0.1'\nexecution:\n  status: interrupted\n",
+        encoding="utf-8",
+    )
+    seen = []
+
+    class _recovery:
+        def reconcile(self, recovery_context):
+            seen.append(recovery_context.execution_id)
+            return runtime_execution_recovery_result(
+                safe_to_continue=True,
+                changed=False,
+                detail="typed interruption already clean",
+            )
+
+    monkeypatch.setattr(
+        "acmm.campaign.recovery.load_campaign_package",
+        lambda artifact: SimpleNamespace(runtime=object()),
+    )
+    monkeypatch.setattr(
+        "acmm.campaign.recovery.load_staged_experiment_runtime",
+        lambda package: SimpleNamespace(
+            runtime=SimpleNamespace(lifecycle=object(), recovery=_recovery())
+        ),
+    )
+
+    result = reconcile_campaign(artifact)
+
+    assert seen == ["execution-a"]
+    assert result.externally_recovered_execution_ids == ("execution-a",)
+    manifest = json.loads(
+        (context.session_dir / "campaign_execution.json").read_text(encoding="utf-8")
+    )
+    assert manifest["execution"]["status"] == "interrupted"
+    assert manifest["recovery"]["status"] == "recovered"
+
+
+def test_typed_interruption_without_recovery_hook_remains_resumable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    artifact, context = _unclean_campaign(tmp_path, monkeypatch)
+    (context.session_dir / "experiment_interruption.yaml").write_text(
+        "schema_version: '0.1'\nexecution:\n  status: interrupted\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "acmm.campaign.recovery.load_campaign_package",
+        lambda artifact: SimpleNamespace(runtime=object()),
+    )
+    monkeypatch.setattr(
+        "acmm.campaign.recovery.load_staged_experiment_runtime",
+        lambda package: SimpleNamespace(
+            runtime=SimpleNamespace(lifecycle=object(), recovery=None)
+        ),
+    )
+
+    result = reconcile_campaign(artifact)
+
+    assert result.recovery_not_required_execution_ids == ("execution-a",)
+    manifest = json.loads(
+        (context.session_dir / "campaign_execution.json").read_text(encoding="utf-8")
+    )
+    assert manifest["execution"]["status"] == "interrupted"
+    assert manifest["recovery"]["status"] == "not_required"

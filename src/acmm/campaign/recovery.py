@@ -71,12 +71,45 @@ def reconcile_campaign(artifact: campaign_artifact) -> campaign_reconciliation_r
 
     recovery = loaded.runtime.recovery
     if recovery is None:
-        execution_ids = tuple(manifest["execution"]["id"] for _, manifest in candidates)
-        detail = (
-            "unclean execution used runtime lifecycle but the frozen Experiment Package "
-            "does not provide runtime recovery support"
+        typed_interruptions = [
+            (session_dir, manifest)
+            for session_dir, manifest in candidates
+            if manifest["execution"]["status"] == "interrupted"
+        ]
+        hard_candidates = [
+            (session_dir, manifest)
+            for session_dir, manifest in candidates
+            if manifest["execution"]["status"] != "interrupted"
+        ]
+        for session_dir, manifest in typed_interruptions:
+            _write_recovery(
+                session_dir,
+                manifest,
+                status="not_required",
+                detail=(
+                    "typed interruption crossed the runtime cleanup boundary; "
+                    "the frozen Experiment Package provides no additional recovery hook"
+                ),
+                changed=False,
+            )
+        if not hard_candidates:
+            return campaign_reconciliation_result(
+                locally_reconciled_execution_ids=locally_reconciled,
+                externally_recovered_execution_ids=(),
+                recovery_not_required_execution_ids=tuple(
+                    manifest["execution"]["id"]
+                    for _, manifest in typed_interruptions
+                ),
+            )
+
+        execution_ids = tuple(
+            manifest["execution"]["id"] for _, manifest in hard_candidates
         )
-        for session_dir, manifest in candidates:
+        detail = (
+            "failed or unclean execution used runtime lifecycle but the frozen "
+            "Experiment Package does not provide runtime recovery support"
+        )
+        for session_dir, manifest in hard_candidates:
             _write_recovery(
                 session_dir,
                 manifest,
@@ -85,7 +118,7 @@ def reconcile_campaign(artifact: campaign_artifact) -> campaign_reconciliation_r
             )
         raise campaign_error(
             "Campaign recovery is required before new logical runs can execute, but "
-            "the frozen Experiment Package has no recovery hook. Unclean execution(s): "
+            "the frozen Experiment Package has no recovery hook. Execution(s): "
             + ", ".join(execution_ids)
             + "."
         )
@@ -203,7 +236,11 @@ def _recovery_candidates(
             raise campaign_error(
                 f"Campaign execution '{manifest_path}' references a different campaign."
             )
-        if execution["status"] != "interrupted_unclean":
+        if execution["status"] not in {
+            "interrupted",
+            "interrupted_unclean",
+            "failed",
+        }:
             continue
         recovery = manifest.get("recovery")
         if isinstance(recovery, Mapping) and recovery.get("status") in {

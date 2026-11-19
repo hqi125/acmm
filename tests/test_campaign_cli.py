@@ -78,7 +78,6 @@ def test_campaign_create_then_status_round_trip(
     assert "Campaign status:" in status.out
     assert f"id:              {campaign_id}" in status.out
     assert "observed:        0" in status.out
-    assert "blocked:         0" in status.out
 
 
 def test_campaign_execute_uses_frozen_campaign_selection(
@@ -124,5 +123,83 @@ def test_campaign_execute_uses_frozen_campaign_selection(
     assert len(captured_context) == 1
     run_args, context = captured_context[0]
     assert run_args.experiment == f"{artifact.experiment_id}@{package.package_sha256}"
+    assert run_args.max_attempts_per_run == 2
     assert context is not None
     assert tuple(run.run_index for run in context.selected_runs) == (0,)
+
+
+def test_campaign_resume_replays_only_pending_source_selection(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    package, _ = install_test_package(tmp_path, monkeypatch)
+    generated_root = tmp_path / "generated"
+
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from acmm.campaign.execution import (
+        create_campaign_execution_context,
+        finalize_campaign_execution,
+        frozen_campaign_plan,
+        initialize_campaign_execution,
+    )
+    from acmm.campaign.model import create_campaign
+
+    artifact = create_campaign(
+        package,
+        generated_root,
+        campaign_id="campaign-a",
+    )
+    runs = frozen_campaign_plan(artifact).runs[:2]
+    source = create_campaign_execution_context(
+        artifact,
+        runs,
+        execution_id="execution-source",
+    )
+    source.session_dir.mkdir(parents=True)
+    initialize_campaign_execution(source)
+    finalize_campaign_execution(
+        source,
+        SimpleNamespace(
+            ended_at=datetime(2026, 11, 19, 12, 0, tzinfo=timezone.utc),
+            slots=(
+                SimpleNamespace(planned=runs[0], is_resolved=True, attempts=()),
+                SimpleNamespace(planned=runs[1], is_resolved=False, attempts=()),
+            ),
+        ),
+        status="completed",
+    )
+
+    captured_context = []
+
+    def fake_run(args, *, campaign_context=None):
+        captured_context.append((args, campaign_context))
+        return 0
+
+    monkeypatch.setattr("acmm.cli._run_experiment", fake_run)
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "campaign",
+            "resume",
+            artifact.campaign_id,
+            "--generated-root",
+            str(generated_root),
+        ]
+    )
+
+    assert args.handler(args) == 0
+    output = capsys.readouterr().out
+    assert "Campaign resume selection:" in output
+    assert "source execution:  execution-source" in output
+    assert len(captured_context) == 1
+    run_args, context = captured_context[0]
+    assert run_args.max_attempts_per_run == 2
+    assert context is not None
+    assert context.resumed_from_execution_id == "execution-source"
+    assert tuple(run.run_index for run in context.selected_runs) == (
+        runs[1].run_index,
+    )

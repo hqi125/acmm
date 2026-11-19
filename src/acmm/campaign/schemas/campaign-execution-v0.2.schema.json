@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acmm.local/schemas/campaign-execution-v0.2.schema.json",
+  "title": "ACMM Campaign Execution v0.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "execution",
+    "outcomes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.2"
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "campaign_id",
+        "experiment_id",
+        "status",
+        "started_at",
+        "selected_run_indices",
+        "selected_run_ids"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "campaign_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "experiment_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "enum": [
+            "running",
+            "completed",
+            "interrupted",
+            "interrupted_unclean",
+            "failed"
+          ]
+        },
+        "started_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ended_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "detail": {
+          "type": "string"
+        },
+        "selected_run_indices": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uniqueItems": true
+        },
+        "selected_run_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "experiment_execution_artifact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "experiment_interruption_artifact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "experiment_failure_artifact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resumed_from_execution_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_run_ids",
+        "pending_run_ids"
+      ],
+      "properties": {
+        "observed_run_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "pending_run_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "detail"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "not_required",
+            "required",
+            "recovered",
+            "failed"
+          ]
+        },
+        "attempted_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observations": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}
