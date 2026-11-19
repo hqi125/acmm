@@ -5,6 +5,8 @@ import shutil
 
 import pytest
 
+import acmm.experiment_package.resources as integration_module
+
 from acmm.experiment_package import (
     acquire_experiment_package,
     acquire_staged_integration_resources,
@@ -650,3 +652,32 @@ def test_runtime_admission_broker_cleans_up_partial_admission_and_hides_handles(
         "integrations": {"profile-test": {"revoked": True}}
     }
 
+
+
+def test_shared_resource_start_interrupt_rolls_back_partial_runtime(tmp_path: Path) -> None:
+    source_code = RESOURCE_INTEGRATION_SOURCE.replace(
+        '        if progress is not None:\n            progress("started")\n',
+        '        if progress is not None:\n            progress("started")\n'
+        '        raise KeyboardInterrupt\n',
+    )
+    _, package, runtime_root = _acquire(
+        tmp_path,
+        integration_source=source_code,
+    )
+    apply_staged_integration_resources(package, runtime_root)
+
+    with pytest.raises(KeyboardInterrupt):
+        acquire_staged_integration_resources(
+            package,
+            runtime_root,
+            start_if_needed=True,
+        )
+
+    loaded = load_staged_experiment_integrations(package)
+    context = integration_module._context(
+        package,
+        loaded[0].component.integration_id,
+        runtime_root,
+    )
+    assert loaded[0].integration.shared_resource is not None
+    assert loaded[0].integration.shared_resource.is_running(context) is False

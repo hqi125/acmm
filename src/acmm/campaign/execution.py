@@ -751,11 +751,18 @@ def _write_json_atomically(path: Path, value: Mapping[str, Any]) -> None:
     data = (
         json.dumps(value, ensure_ascii=True, indent=2, sort_keys=False) + "\n"
     ).encode("ascii")
-    with temporary.open("wb") as file:
-        file.write(data)
-        file.flush()
-        os.fsync(file.fileno())
-    os.replace(temporary, path)
+    try:
+        with temporary.open("wb") as file:
+            file.write(data)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _validate_identifier(label: str, value: str) -> None:

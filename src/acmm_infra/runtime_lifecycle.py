@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 
+from acmm.runtime.interruption import protect_interruption_cleanup
 from acmm_infra.common import infrastructure_error
 from acmm_infra.docker import docker_error
 from acmm_infra.profiles.common import profile_error
@@ -49,25 +51,25 @@ class subject_runtime_lease:
 
         try:
             self.context.manager.up(timeout_seconds=timeout_seconds)
-        except (
-            infrastructure_error,
-            profile_error,
-            docker_error,
-            OSError,
-            ValueError,
-        ):
-            if self.context.manager.docker.container_running():
-                self.started_by_acmm = True
-                try:
-                    self.release()
-                except (
-                    infrastructure_error,
-                    profile_error,
-                    docker_error,
-                    OSError,
-                    ValueError,
-                ):
-                    pass
+        except BaseException as exc:
+            cleanup_scope = (
+                protect_interruption_cleanup()
+                if isinstance(exc, KeyboardInterrupt)
+                else nullcontext()
+            )
+            with cleanup_scope:
+                if self.context.manager.docker.container_running():
+                    self.started_by_acmm = True
+                    try:
+                        self.release()
+                    except (
+                        infrastructure_error,
+                        profile_error,
+                        docker_error,
+                        OSError,
+                        ValueError,
+                    ):
+                        pass
             raise
 
         self.started_by_acmm = True

@@ -212,14 +212,19 @@ def test_run_apparatus_lists_and_runs_active_package_action(
     assert "detail:     initialized test apparatus" in output
     assert "fixture_version: test-v1" in output
 
-    execution_dir = tmp_path / "execution-test"
+    generated_root = tmp_path / "generated"
+    monkeypatch.setenv("ACMM_GENERATED_ROOT", str(generated_root))
+    execution_reference = "results/test_package/execution-test"
+    expected_execution = (
+        generated_root / "results" / "test_package" / "execution-test"
+    ).resolve()
     cleanup_args = cli_module._parse_cli_arguments(
         [
             "run",
             "apparatus",
             "cleanup",
             "--execution",
-            str(execution_dir),
+            execution_reference,
             "--preview",
         ]
     )
@@ -230,6 +235,7 @@ def test_run_apparatus_lists_and_runs_active_package_action(
     assert "mode:       preview" in cleanup_output
     assert "changed:    no" in cleanup_output
     assert "detail:     previewed test cleanup" in cleanup_output
+    assert f"execution_path: {expected_execution}" in cleanup_output
 
 
 def test_top_level_help_builds_with_apparatus_enabled(capsys) -> None:

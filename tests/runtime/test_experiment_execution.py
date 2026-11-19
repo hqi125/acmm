@@ -23,9 +23,12 @@ from acmm.runtime.interfaces import (
     prepared_environment,
     runtime_resource_admission,
     runtime_resource_governor_session,
+    runtime_run_recovery_error,
+    runtime_run_recovery_result,
 )
 from acmm.runtime.registry import execution_registry
 from acmm.runtime.provider_pressure import (
+    runtime_provider_pressure_gate_configuration,
     runtime_provider_pressure_identity,
     runtime_provider_pressure_observation,
     runtime_provider_pressure_pacing_event,
@@ -1169,6 +1172,246 @@ class fake_materialized_runtime_lifecycle(fake_runtime_lifecycle):
         return super().run_prepare(session_handle, context, scenario, reset)
 
 
+class recoverable_finalize_materialized_lifecycle(fake_runtime_lifecycle):
+    def __init__(self) -> None:
+        super().__init__()
+        self.generation = 0
+
+    def materialization_initialize(self, session_handle, context):
+        del session_handle
+        self.generation += 1
+        self.events.append(("materialization_initialize", context.key, self.generation))
+        return {"generation": self.generation}
+
+    def materialization_finalize(self, session_handle, context, handle, outcome):
+        del session_handle
+        generation = handle["generation"] if isinstance(handle, dict) else None
+        self.events.append(
+            (
+                "materialization_finalize",
+                context.key,
+                generation,
+                outcome.completed,
+            )
+        )
+        return {"retired_generation": generation}
+
+    def run_prepare(self, session_handle, context, scenario, reset):
+        assert context.materialization_handle == {"generation": self.generation}
+        return super().run_prepare(session_handle, context, scenario, reset)
+
+    def run_finalize(
+        self,
+        session_handle,
+        context,
+        scenario,
+        handle,
+        reset,
+        outcome,
+    ):
+        base = super().run_finalize(
+            session_handle, context, scenario, handle, reset, outcome
+        )
+        if context.run_index == 0:
+            return {
+                **base,
+                "restored": False,
+                "retired": True,
+                "continuation_safe": True,
+                "materialization_reusable": False,
+                "retryable": False,
+                "recovery_detail": "synthetic post-run restoration timeout",
+            }
+        return {**base, "restored": True}
+
+
+def test_valid_run_survives_recoverable_finalization_and_next_run_rematerializes(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+    lifecycle = recoverable_finalize_materialized_lifecycle()
+    base = _registry(adapter)
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        materialization_group_by=("scenario_id",),
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=registry,
+        results_root=tmp_path,
+        harness_version="test",
+        sleep=lambda _: None,
+        max_attempts_per_run=1,
+        run_indices=(0, 1),
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+    )
+
+    assert [slot.is_resolved for slot in result.slots] == [True, True]
+    assert lifecycle.generation == 2
+    finalized = [event for event in lifecycle.events if event[0] == "materialization_finalize"]
+    assert finalized == [
+        ("materialization_finalize", "scenario_id=synthetic_plus_13", 1, False),
+        ("materialization_finalize", "scenario_id=synthetic_plus_13", 2, True),
+    ]
+    recovery_files = list((result.session_dir / "run_recovery").glob("*.yaml"))
+    assert len(recovery_files) == 1
+    recovery = yaml.safe_load(recovery_files[0].read_text(encoding="utf-8"))
+    assert recovery["run_index"] == 0
+    assert recovery["stage"] == "run_finalize"
+    assert recovery["safe_to_continue"] is True
+    assert recovery["materialization_reusable"] is False
+
+
+class recoverable_prepare_materialized_lifecycle(recoverable_finalize_materialized_lifecycle):
+    def run_prepare(self, session_handle, context, scenario, reset):
+        if context.run_index == 0:
+            raise runtime_run_recovery_error(
+                runtime_run_recovery_result(
+                    safe_to_continue=True,
+                    materialization_reusable=False,
+                    retryable=False,
+                    detail="synthetic preparation cleanup retired the materialization",
+                    observations={"retired": True},
+                )
+            )
+        return fake_runtime_lifecycle.run_prepare(
+            self, session_handle, context, scenario, reset
+        )
+
+    def run_finalize(
+        self,
+        session_handle,
+        context,
+        scenario,
+        handle,
+        reset,
+        outcome,
+    ):
+        return fake_runtime_lifecycle.run_finalize(
+            self, session_handle, context, scenario, handle, reset, outcome
+        )
+
+
+def test_recoverable_prepare_failure_discards_slot_and_next_run_rematerializes(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    lifecycle = recoverable_prepare_materialized_lifecycle()
+    base = _registry(sequence_adapter())
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        materialization_group_by=("scenario_id",),
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=registry,
+        results_root=tmp_path,
+        harness_version="test",
+        sleep=lambda _: None,
+        max_attempts_per_run=1,
+        run_indices=(0, 1),
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+    )
+
+    assert [slot.is_resolved for slot in result.slots] == [False, True]
+    assert result.slots[0].attempts == ()
+    assert lifecycle.generation == 2
+    recovery_files = list((result.session_dir / "run_recovery").glob("*.yaml"))
+    assert len(recovery_files) == 1
+    recovery = yaml.safe_load(recovery_files[0].read_text(encoding="utf-8"))
+    assert recovery["run_index"] == 0
+    assert recovery["attempt"] == 1
+    assert recovery["stage"] == "run_prepare"
+
+
+class recoverable_materialization_initialize_lifecycle(
+    recoverable_finalize_materialized_lifecycle
+):
+    def materialization_initialize(self, session_handle, context):
+        del session_handle
+        self.generation += 1
+        if self.generation == 1:
+            raise runtime_run_recovery_error(
+                runtime_run_recovery_result(
+                    safe_to_continue=True,
+                    materialization_reusable=False,
+                    retryable=False,
+                    detail="synthetic failed materialization was retired",
+                    observations={"retired": True},
+                )
+            )
+        self.events.append(("materialization_initialize", context.key, self.generation))
+        return {"generation": self.generation}
+
+    def run_finalize(
+        self,
+        session_handle,
+        context,
+        scenario,
+        handle,
+        reset,
+        outcome,
+    ):
+        return fake_runtime_lifecycle.run_finalize(
+            self, session_handle, context, scenario, handle, reset, outcome
+        )
+
+
+def test_recoverable_materialization_initialize_failure_skips_only_current_slot(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    lifecycle = recoverable_materialization_initialize_lifecycle()
+    base = _registry(sequence_adapter())
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        materialization_group_by=("scenario_id",),
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=registry,
+        results_root=tmp_path,
+        harness_version="test",
+        sleep=lambda _: None,
+        max_attempts_per_run=1,
+        run_indices=(0, 1),
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+    )
+
+    assert [slot.is_resolved for slot in result.slots] == [False, True]
+    assert lifecycle.generation == 2
+    recovery_files = list((result.session_dir / "run_recovery").glob("*.yaml"))
+    assert len(recovery_files) == 1
+    recovery = yaml.safe_load(recovery_files[0].read_text(encoding="utf-8"))
+    assert recovery["attempt"] == 0
+    assert recovery["stage"] == "materialization_initialize"
+
+
 def test_materialization_hooks_wrap_subject_major_slice(tmp_path: Path) -> None:
     contract = load_contract(CONTRACT_PATH)
     adapter = sequence_adapter()
@@ -1598,3 +1841,309 @@ def test_execute_experiment_exposes_pph_action_and_runtime_pacing_to_lifecycle(
     assert any(event[:2] == ("pacing", "provider_secondary_pressure") for event in lifecycle.events)
     assert any(event[:2] == ("recovery", 15.0) for event in lifecycle.events)
     assert any(event[:2] == ("action_result", "success") for event in lifecycle.events)
+
+
+
+def test_keyboard_interrupt_during_deferred_run_finalization_records_interrupted_marker(
+    tmp_path: Path,
+) -> None:
+    class interrupting_finalize_lifecycle(fake_runtime_lifecycle):
+        def run_finalize(
+            self,
+            session_handle,
+            context,
+            scenario,
+            handle,
+            reset,
+            outcome,
+        ):
+            del scenario, handle, reset
+            self.events.append(
+                ("run_finalize_interrupted", context.run_index, outcome.persisted)
+            )
+            raise KeyboardInterrupt
+
+    contract = load_contract(CONTRACT_PATH)
+    base = _registry(sequence_adapter())
+    lifecycle = interrupting_finalize_lifecycle()
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+
+    with pytest.raises(experiment_execution_interrupted) as captured:
+        execute_experiment(
+            contract=contract,
+            contract_path=CONTRACT_PATH,
+            registry=registry,
+            results_root=tmp_path,
+            harness_version="test",
+            run_indices=(0,),
+            now=_clock(),
+            execution_id_factory=lambda: EXECUTION_ID,
+            run_id_factory=_run_id_factory(),
+        )
+
+    result = captured.value.result
+    assert result.interruption_path.is_file()
+    finalization_markers = list(tmp_path.rglob("environment_finalization.yaml"))
+    assert len(finalization_markers) == 1
+    marker = yaml.safe_load(
+        finalization_markers[0].read_text(encoding="utf-8")
+    )
+    assert marker["ok"] is False
+    assert marker["interrupted"] is True
+    assert marker["detail"] == "KeyboardInterrupt"
+
+
+def test_keyboard_interrupt_during_run_persistence_finalizes_unpersisted_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class recording_lifecycle(fake_runtime_lifecycle):
+        def run_finalize(
+            self,
+            session_handle,
+            context,
+            scenario,
+            handle,
+            reset,
+            outcome,
+        ):
+            del session_handle, scenario, handle, reset
+            self.events.append(
+                (
+                    "run_finalize_after_persist_interrupt",
+                    context.run_index,
+                    outcome.persisted,
+                    outcome.interrupted,
+                )
+            )
+            return {"restored": True}
+
+    def interrupt_persist(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        experiment_execution_module,
+        "persist_executed_run_to",
+        interrupt_persist,
+    )
+    contract = load_contract(CONTRACT_PATH)
+    base = _registry(sequence_adapter())
+    lifecycle = recording_lifecycle()
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+
+    with pytest.raises(experiment_execution_interrupted):
+        execute_experiment(
+            contract=contract,
+            contract_path=CONTRACT_PATH,
+            registry=registry,
+            results_root=tmp_path,
+            harness_version="test",
+            run_indices=(0,),
+            now=_clock(),
+            execution_id_factory=lambda: EXECUTION_ID,
+            run_id_factory=_run_id_factory(),
+        )
+
+    assert (
+        "run_finalize_after_persist_interrupt",
+        0,
+        False,
+        True,
+    ) in lifecycle.events
+
+def test_keyboard_interrupt_during_session_initialize_persists_typed_boundary(
+    tmp_path: Path,
+) -> None:
+    class interrupting_session_lifecycle(fake_runtime_lifecycle):
+        def session_initialize(self, context):
+            self.events.append(("session_initialize_interrupted", context.execution_id))
+            raise KeyboardInterrupt
+
+    contract = load_contract(CONTRACT_PATH)
+    base = _registry(sequence_adapter())
+    lifecycle = interrupting_session_lifecycle()
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+
+    with pytest.raises(experiment_execution_interrupted) as captured:
+        execute_experiment(
+            contract=contract,
+            contract_path=CONTRACT_PATH,
+            registry=registry,
+            results_root=tmp_path,
+            harness_version="test",
+            run_indices=(0,),
+            now=_clock(),
+            execution_id_factory=lambda: EXECUTION_ID,
+            run_id_factory=_run_id_factory(),
+        )
+
+    result = captured.value.result
+    assert result.slots == ()
+    assert result.interruption_path.is_file()
+    manifest = yaml.safe_load(result.interruption_path.read_text(encoding="utf-8"))
+    assert manifest["execution"]["status"] == "interrupted"
+    assert manifest["execution"]["resolved_run_indices"] == []
+    assert manifest["execution"]["not_started_run_indices"] == [0]
+
+
+def test_keyboard_interrupt_during_materialization_initialize_finalizes_slice_boundary(
+    tmp_path: Path,
+) -> None:
+    class interrupting_materialization_lifecycle(fake_runtime_lifecycle):
+        def materialization_initialize(self, session_handle, context):
+            self.events.append(("materialization_initialize", context.key))
+            raise KeyboardInterrupt
+
+        def materialization_finalize(self, session_handle, context, handle, outcome):
+            self.events.append(
+                (
+                    "materialization_finalize",
+                    context.key,
+                    handle,
+                    outcome.completed,
+                    outcome.interrupted,
+                )
+            )
+            return {"retired": True}
+
+    contract = load_contract(CONTRACT_PATH)
+    base = _registry(sequence_adapter())
+    lifecycle = interrupting_materialization_lifecycle()
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        materialization_group_by=("scenario_id",),
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+
+    with pytest.raises(experiment_execution_interrupted):
+        execute_experiment(
+            contract=contract,
+            contract_path=CONTRACT_PATH,
+            registry=registry,
+            results_root=tmp_path,
+            harness_version="test",
+            run_indices=(0,),
+            now=_clock(),
+            execution_id_factory=lambda: EXECUTION_ID,
+            run_id_factory=_run_id_factory(),
+        )
+
+    assert ("materialization_initialize", "scenario_id=synthetic_plus_13") in lifecycle.events
+    assert (
+        "materialization_finalize",
+        "scenario_id=synthetic_plus_13",
+        None,
+        False,
+        True,
+    ) in lifecycle.events
+    assert lifecycle.events[-1][0] == "session_finalize"
+
+
+def test_keyboard_interrupt_quiesces_gate_before_provider_facing_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ordering: list[str] = []
+
+    class recording_gate:
+        def start(self):
+            ordering.append("gate_start")
+
+        def activate(self, context):
+            del context
+            ordering.append("gate_activate")
+
+        def quiesce(self, detail):
+            assert detail == "keyboard_interrupt"
+            ordering.append("gate_quiesce")
+            return 1
+
+        def deactivate(self):
+            ordering.append("gate_deactivate")
+
+        def close(self):
+            ordering.append("gate_close")
+
+    gate = recording_gate()
+    monkeypatch.setattr(
+        experiment_execution_module,
+        "provider_pressure_transport_gate",
+        lambda *args, **kwargs: gate,
+    )
+
+    class gated_pressure_model(_execution_pressure_model):
+        def transport_gate_configuration(self, context):
+            return runtime_provider_pressure_gate_configuration(
+                control_path=str(tmp_path / "provider-gate.json"),
+                bind_host="127.0.0.1",
+                bind_port=18765,
+                advertised_url="http://127.0.0.1:18765",
+            )
+
+    class recording_lifecycle(fake_materialized_runtime_lifecycle):
+        def materialization_finalize(self, session_handle, context, handle, outcome):
+            ordering.append("materialization_finalize")
+            return super().materialization_finalize(
+                session_handle, context, handle, outcome
+            )
+
+        def session_finalize(self, session_handle, context, outcome):
+            ordering.append("session_finalize")
+            return super().session_finalize(session_handle, context, outcome)
+
+    adapter = sequence_adapter()
+
+    def interrupt_execute(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    adapter.execute = interrupt_execute  # type: ignore[method-assign]
+    base = _registry(adapter)
+    lifecycle = recording_lifecycle()
+    registry = execution_registry(
+        subject_adapters=base.subject_adapters,
+        lifecycle=lifecycle,
+        provider_pressure_model=gated_pressure_model(),
+        materialization_group_by=("scenario_id",),
+        fixtures=base.fixtures,
+        evaluators=base.evaluators,
+        subject_configuration_overlays=base.subject_configuration_overlays,
+    )
+
+    with pytest.raises(experiment_execution_interrupted):
+        execute_experiment(
+            contract=load_contract(CONTRACT_PATH),
+            contract_path=CONTRACT_PATH,
+            registry=registry,
+            results_root=tmp_path / "generated" / "results",
+            harness_version="test",
+            run_indices=(0,),
+            now=_clock(),
+            execution_id_factory=lambda: EXECUTION_ID,
+            run_id_factory=_run_id_factory(),
+        )
+
+    assert ordering.index("gate_quiesce") < ordering.index("materialization_finalize")
+    assert ordering.index("materialization_finalize") < ordering.index("session_finalize")
+    assert ordering.index("session_finalize") < ordering.index("gate_deactivate")
+    assert ordering.index("gate_deactivate") < ordering.index("gate_close")

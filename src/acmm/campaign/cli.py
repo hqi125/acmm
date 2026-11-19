@@ -267,6 +267,14 @@ def _campaign_execute(args: argparse.Namespace) -> int:
         )
         with campaign_execution_lock(artifact):
             return _campaign_execute_locked(args, artifact)
+    except KeyboardInterrupt:
+        print(
+            "Campaign execution interrupted before the immediate execution boundary; "
+            "the campaign lock was released and the next execute will reconcile any "
+            "durable recovery state.",
+            file=sys.stderr,
+        )
+        return 130
     except (campaign_error, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -14,6 +15,7 @@ import yaml
 
 from acmm.runtime.execution import execute_planned_run, finalize_executed_run
 from acmm.runtime.execution_manifest import EXPERIMENT_EXECUTION_SCHEMA_VERSION
+from acmm.runtime.interruption import protect_interruption_cleanup
 from acmm.runtime.planner import (
     build_experiment_plan,
     build_materialization_slices,
@@ -30,6 +32,8 @@ from acmm.runtime.interfaces import (
     runtime_materialization_finalization,
     runtime_run_context,
     runtime_run_finalization,
+    runtime_run_recovery_error,
+    runtime_run_recovery_result,
     runtime_session_context,
     runtime_session_finalization,
 )
@@ -340,34 +344,118 @@ def execute_experiment(
         progress=report,
     )
 
+    lifecycle_session_handle = None
+    resource_usage_path = session_dir / EXECUTION_RESOURCE_USAGE_FILENAME
+    resource_governor_session: runtime_resource_governor_session | None = None
+    resource_usage_document: dict[str, Any] | None = None
+    active_resource_admission: runtime_resource_admission | None = None
+    pressure_engine: provider_pressure_engine | None = None
+    pressure_session: provider_pressure_execution_session | None = None
+    active_pressure_admission: provider_pressure_run_admission | None = None
+    pressure_gate: provider_pressure_transport_gate | None = None
+
+    def raise_setup_interruption(stage: str) -> None:
+        interrupted_at = clock()
+        interruption_path = session_dir / "experiment_interruption.yaml"
+        interruption = _build_interruption_manifest(
+            execution_id=execution_id,
+            experiment_id=experiment_id,
+            contract_sha256=contract_sha256,
+            harness_version=harness_version,
+            started_at=interrupted_at,
+            ended_at=interrupted_at,
+            max_attempts_per_run=max_attempts_per_run,
+            inter_run_delay_seconds=inter_run_delay_seconds,
+            contract_run_count=plan.run_count,
+            selected_run_indices=selected_run_indices,
+            subject_llm_baselines=subject_llm_baselines,
+            package_provenance=package_provenance,
+            deployment_reconciliation=deployment_reconciliation,
+            provider_usage=None,
+            slots=(),
+            interrupted_run_index=None,
+            interrupted_attempt=None,
+            session_dir=session_dir,
+        )
+
+        with protect_interruption_cleanup(report):
+            report(
+                f"Execution {execution_id}: Ctrl+C received during {stage}; "
+                "persisting interruption boundary."
+            )
+            _write_yaml_atomically(interruption_path, interruption)
+            if pressure_gate is not None:
+                try:
+                    pressure_gate.close()
+                except Exception as exc:
+                    report(
+                        "WARNING: Provider Pressure gate cleanup failed during "
+                        f"setup interruption: {exc}"
+                    )
+            if registry.lifecycle is not None and lifecycle_session_handle is not None:
+                try:
+                    registry.lifecycle.session_finalize(
+                        lifecycle_session_handle,
+                        lifecycle_session_context,
+                        runtime_session_finalization(
+                            completed=False,
+                            interrupted=True,
+                            detail=f"keyboard_interrupt:{stage}",
+                        ),
+                    )
+                except Exception as exc:
+                    report(
+                        "WARNING: Runtime lifecycle session finalization failed "
+                        f"during setup interruption: {exc}"
+                    )
+
+        result = experiment_interruption_result(
+            execution_id=execution_id,
+            experiment_id=experiment_id,
+            contract_sha256=contract_sha256,
+            session_dir=session_dir,
+            interruption_path=interruption_path,
+            contract_run_count=plan.run_count,
+            selected_run_indices=selected_run_indices,
+            started_at=interrupted_at,
+            ended_at=interrupted_at,
+            slots=(),
+            interrupted_run_index=None,
+            interrupted_attempt=None,
+        )
+        raise experiment_execution_interrupted(result) from None
+
     # Publish the durable session boundary before package lifecycle initialization.
     # Campaign execution uses this callback to establish its journal so abrupt
     # failure during lifecycle setup is still reconstructible.
-    publish_session(session_dir)
+    try:
+        publish_session(session_dir)
+    except KeyboardInterrupt:
+        raise_setup_interruption("session publication")
 
-    lifecycle_session_handle = None
     if registry.lifecycle is not None:
         emit(
             "runtime_session_initialize_started",
             {"execution_id": execution_id},
         )
-        lifecycle_session_handle = registry.lifecycle.session_initialize(
-            lifecycle_session_context
-        )
+        try:
+            lifecycle_session_handle = registry.lifecycle.session_initialize(
+                lifecycle_session_context
+            )
+        except KeyboardInterrupt:
+            raise_setup_interruption("runtime lifecycle session initialization")
         emit(
             "runtime_session_initialized",
             {"execution_id": execution_id},
         )
-
-    resource_usage_path = session_dir / EXECUTION_RESOURCE_USAGE_FILENAME
-    resource_governor_session: runtime_resource_governor_session | None = None
-    resource_usage_document: dict[str, Any] | None = None
-    active_resource_admission: runtime_resource_admission | None = None
     if registry.resource_governor is not None:
-        history = discover_execution_resource_usage_history(
-            session_dir.parent,
-            exclude_session=session_dir,
-        )
+        try:
+            history = discover_execution_resource_usage_history(
+                session_dir.parent,
+                exclude_session=session_dir,
+            )
+        except KeyboardInterrupt:
+            raise_setup_interruption("resource-governor history discovery")
         resource_context = runtime_resource_execution_context(
             experiment_id=experiment_id,
             execution_id=execution_id,
@@ -377,9 +465,12 @@ def execute_experiment(
             history_records=tuple(item.document for item in history),
             progress=report,
         )
-        resource_governor_session = registry.resource_governor.execution_initialize(
-            resource_context
-        )
+        try:
+            resource_governor_session = registry.resource_governor.execution_initialize(
+                resource_context
+            )
+        except KeyboardInterrupt:
+            raise_setup_interruption("resource-governor initialization")
         if not isinstance(resource_governor_session, runtime_resource_governor_session):
             raise TypeError(
                 "Runtime resource governor execution_initialize() must return "
@@ -407,12 +498,11 @@ def execute_experiment(
             "history_artifacts": [str(item.path) for item in history],
             "materializations": [],
         }
-        write_execution_resource_usage(resource_usage_path, resource_usage_document)
+        try:
+            write_execution_resource_usage(resource_usage_path, resource_usage_document)
+        except KeyboardInterrupt:
+            raise_setup_interruption("resource-usage checkpoint initialization")
 
-    pressure_engine: provider_pressure_engine | None = None
-    pressure_session: provider_pressure_execution_session | None = None
-    active_pressure_admission: provider_pressure_run_admission | None = None
-    pressure_gate: provider_pressure_transport_gate | None = None
     if registry.provider_pressure_model is not None:
         pressure_engine = provider_pressure_engine(
             registry.provider_pressure_model,
@@ -433,7 +523,10 @@ def execute_experiment(
             ),
             progress=report,
         )
-        pressure_session = pressure_engine.execution_initialize(pressure_context)
+        try:
+            pressure_session = pressure_engine.execution_initialize(pressure_context)
+        except KeyboardInterrupt:
+            raise_setup_interruption("Provider Pressure initialization")
         emit(
             "provider_pressure_initialized",
             {
@@ -457,7 +550,10 @@ def execute_experiment(
                     pressure_session,
                     configuration,
                 )
-                pressure_gate.start()
+                try:
+                    pressure_gate.start()
+                except KeyboardInterrupt:
+                    raise_setup_interruption("Provider Pressure gate startup")
                 emit(
                     "provider_pressure_gate_started",
                     {
@@ -512,6 +608,13 @@ def execute_experiment(
             ),
             progress=report,
         )
+        # Establish the Core-owned materialization boundary before any package
+        # admission/initialization side effect. If Ctrl+C lands during package
+        # setup, interruption cleanup can still finalize the resource admission
+        # and invoke the lifecycle with a ``None`` handle rather than losing the
+        # slice boundary entirely.
+        active_materialization_context = context
+        active_materialization_handle = None
         if materialization_observable:
             emit(
                 "materialization_initialize_started",
@@ -566,7 +669,6 @@ def execute_experiment(
                 lifecycle_session_handle,
                 context,
             )
-        active_materialization_context = context
         active_materialization_handle = handle
         if materialization_observable:
             emit(
@@ -587,13 +689,14 @@ def execute_experiment(
         interrupted: bool,
         detail: str | None = None,
         suppress_errors: bool = False,
-    ) -> None:
+    ) -> bool:
         nonlocal active_materialization_context, active_materialization_handle
         nonlocal active_resource_admission, active_resource_subject_slice_key
         context = active_materialization_context
         handle = active_materialization_handle
         if context is None:
-            return
+            return True
+        succeeded = False
         try:
             result = None
             if callable(materialization_finalize):
@@ -655,6 +758,7 @@ def execute_experiment(
                         "result": dict(result) if isinstance(result, Mapping) else {},
                     },
                 )
+            succeeded = True
         except Exception as exc:
             if materialization_observable:
                 emit(
@@ -671,10 +775,129 @@ def execute_experiment(
                 f"{context.key}: {exc}"
             )
         finally:
-            active_materialization_context = None
-            active_materialization_handle = None
-            active_resource_admission = None
-            active_resource_subject_slice_key = None
+            if succeeded:
+                active_materialization_context = None
+                active_materialization_handle = None
+                active_resource_admission = None
+                active_resource_subject_slice_key = None
+        return succeeded
+
+    def record_run_recovery(
+        planned: planned_run,
+        *,
+        attempt: int,
+        stage: str,
+        recovery: runtime_run_recovery_result,
+    ) -> Path:
+        recovery_dir = session_dir / "run_recovery"
+        recovery_dir.mkdir(exist_ok=True)
+        path = recovery_dir / (
+            f"run_{planned.run_index:06d}_attempt_{attempt:02d}_{stage}.yaml"
+        )
+        _write_yaml_atomically(
+            path,
+            {
+                "schema_version": "0.1",
+                "run_index": planned.run_index,
+                "subject_id": planned.subject_id,
+                "scenario_id": planned.scenario_id,
+                "repetition": planned.repetition,
+                "attempt": attempt,
+                "stage": stage,
+                "safe_to_continue": recovery.safe_to_continue,
+                "materialization_reusable": recovery.materialization_reusable,
+                "retryable": recovery.retryable,
+                "detail": recovery.detail,
+                "observations": dict(recovery.observations),
+            },
+        )
+        emit(
+            "run_recovery_recorded",
+            {
+                "run_index": planned.run_index,
+                "attempt": attempt,
+                "stage": stage,
+                "safe_to_continue": recovery.safe_to_continue,
+                "materialization_reusable": recovery.materialization_reusable,
+                "retryable": recovery.retryable,
+                "path": str(path),
+            },
+        )
+        return path
+
+    def finalization_recovery(
+        result: Mapping[str, object] | None,
+    ) -> runtime_run_recovery_result | None:
+        if not isinstance(result, Mapping):
+            return None
+        if (
+            "continuation_safe" not in result
+            and "materialization_reusable" not in result
+        ):
+            return None
+        detail_value = result.get("recovery_detail", result.get("reason"))
+        detail = (
+            str(detail_value).strip()
+            if detail_value is not None
+            else "Runtime finalization requested materialization recovery."
+        )
+        if not detail:
+            detail = "Runtime finalization requested materialization recovery."
+        observations = {
+            str(key): value
+            for key, value in result.items()
+            if key
+            not in {
+                "continuation_safe",
+                "materialization_reusable",
+                "retryable",
+                "recovery_detail",
+            }
+        }
+        return runtime_run_recovery_result(
+            safe_to_continue=result.get("continuation_safe") is True,
+            materialization_reusable=result.get("materialization_reusable") is not False,
+            retryable=result.get("retryable") is True,
+            detail=detail,
+            observations=observations,
+        )
+
+    def close_recovered_materialization(
+        planned: planned_run,
+        *,
+        attempt: int,
+        stage: str,
+        recovery: runtime_run_recovery_result,
+    ) -> None:
+        path = record_run_recovery(
+            planned,
+            attempt=attempt,
+            stage=stage,
+            recovery=recovery,
+        )
+        if not recovery.safe_to_continue:
+            raise RuntimeError(
+                "Runtime recovery could not establish a safe continuation boundary: "
+                + recovery.detail
+            )
+        report(
+            f"Run {planned.run_index} attempt {attempt}: recoverable {stage} "
+            f"failure recorded at {path.name}: {recovery.detail}"
+        )
+        if recovery.materialization_reusable:
+            return
+        clean = finish_materialization(
+            completed=False,
+            interrupted=False,
+            detail=f"recoverable_{stage}: {recovery.detail}",
+            suppress_errors=True,
+        )
+        if not clean:
+            raise RuntimeError(
+                "Runtime recovery retired the active materialization but Core could "
+                "not close its lifecycle/resource boundary safely: "
+                + recovery.detail
+            )
 
     def finish_pressure_run(
         *,
@@ -720,28 +943,46 @@ def execute_experiment(
             )
         finally:
             if pressure_gate is not None:
-                pressure_gate.deactivate()
+                try:
+                    pressure_gate.deactivate()
+                except Exception as exc:
+                    if not suppress_errors:
+                        raise
+                    report(
+                        "WARNING: Provider Pressure gate deactivation failed: "
+                        f"{exc}"
+                    )
             active_pressure_admission = None
 
     def finish_pressure_execution(
         status: str,
         *,
         suppress_errors: bool = False,
+        export_snapshot: bool = True,
     ) -> None:
         if pressure_engine is None or pressure_session is None:
             return
         try:
-            snapshot_path = pressure_engine.execution_finalize(
-                pressure_session,
-                status=status,
-            )
-            emit(
-                "provider_pressure_snapshot_exported",
-                {
-                    "status": status,
-                    "path": str(snapshot_path),
-                },
-            )
+            if export_snapshot:
+                snapshot_path = pressure_engine.execution_finalize(
+                    pressure_session,
+                    status=status,
+                )
+                emit(
+                    "provider_pressure_snapshot_exported",
+                    {
+                        "status": status,
+                        "path": str(snapshot_path),
+                    },
+                )
+            else:
+                emit(
+                    "provider_pressure_snapshot_skipped",
+                    {
+                        "status": status,
+                        "reason": "forced_interruption_cleanup",
+                    },
+                )
         except Exception as exc:
             if not suppress_errors:
                 raise
@@ -751,12 +992,23 @@ def execute_experiment(
             )
         finally:
             if pressure_gate is not None:
-                pressure_gate.close()
+                try:
+                    pressure_gate.close()
+                except Exception as exc:
+                    if not suppress_errors:
+                        raise
+                    report(
+                        "WARNING: Provider Pressure gate shutdown failed: "
+                        f"{exc}"
+                    )
 
-    provider_usage_started = _begin_provider_usage_monitor(
-        provider_usage_monitor,
-        report,
-    )
+    try:
+        provider_usage_started = _begin_provider_usage_monitor(
+            provider_usage_monitor,
+            report,
+        )
+    except KeyboardInterrupt:
+        raise_setup_interruption("provider-usage monitor initialization")
     started_at = clock()
     emit(
         "execution_started",
@@ -779,20 +1031,61 @@ def execute_experiment(
 
     try:
         for selected_position, planned in enumerate(selected_runs):
+            active_planned = planned
+            active_attempts = []
+            active_selected_run_id = None
+            active_attempt_number = None
+
             materialization_key = materialization_key_for_run(
                 planned,
                 registry.materialization_group_by,
             )
-            if (
-                active_materialization_context is None
-                or active_materialization_context.key != materialization_key
-            ):
-                if active_materialization_context is not None:
-                    finish_materialization(
-                        completed=True,
-                        interrupted=False,
+            try:
+                if (
+                    active_materialization_context is None
+                    or active_materialization_context.key != materialization_key
+                ):
+                    if active_materialization_context is not None:
+                        finish_materialization(
+                            completed=True,
+                            interrupted=False,
+                        )
+                    begin_materialization(materialization_key)
+            except runtime_run_recovery_error as exc:
+                recovery = exc.recovery
+                close_recovered_materialization(
+                    planned,
+                    attempt=0,
+                    stage="materialization_initialize",
+                    recovery=recovery,
+                )
+                slots.append(
+                    slot_execution(
+                        planned=planned,
+                        attempts=(),
+                        selected_run_id=None,
                     )
-                begin_materialization(materialization_key)
+                )
+                report(
+                    f"Run {planned.run_index}: materialization initialization was "
+                    "discarded safely; the slot remains unresolved."
+                )
+                emit(
+                    "logical_run_discarded",
+                    {
+                        "run_index": planned.run_index,
+                        "stage": "materialization_initialize",
+                    },
+                )
+                active_planned = None
+                has_next_selected_run = selected_position + 1 < len(selected_runs)
+                if has_next_selected_run and inter_run_delay_seconds > 0:
+                    report(
+                        "Pacing: waiting "
+                        f"{inter_run_delay_seconds:g}s before the next planned run."
+                    )
+                    wait(inter_run_delay_seconds)
+                continue
 
             if registry.resource_governor is not None:
                 subject_slice_admit = getattr(
@@ -871,11 +1164,6 @@ def execute_experiment(
                         },
                     )
                     active_resource_subject_slice_key = subject_slice_key
-
-            active_planned = planned
-            active_attempts = []
-            active_selected_run_id = None
-            active_attempt_number = None
 
             if pressure_engine is not None and pressure_session is not None:
                 pressure_run_context = runtime_provider_pressure_run_context(
@@ -1081,28 +1369,45 @@ def execute_experiment(
                     pressure_action_result=pressure_action_result,
                     pressure_checkpoint=pressure_checkpoint,
                 )
-                executed = execute_planned_run(
-                    contract=contract,
-                    planned=planned,
-                    contract_sha256=contract_sha256,
-                    registry=registry,
-                    harness_version=harness_version,
-                    now=clock,
-                    run_id_factory=make_run_id,
-                    lifecycle_session_handle=lifecycle_session_handle,
-                    lifecycle_context=lifecycle_run_context,
-                    event_sink=(
-                        lambda event, payload, run_index=planned.run_index,
-                        attempt=attempt_number: emit(
-                            event,
-                            {
-                                "run_index": run_index,
-                                "attempt": attempt,
-                                **dict(payload),
-                            },
-                        )
-                    ),
-                )
+                try:
+                    executed = execute_planned_run(
+                        contract=contract,
+                        planned=planned,
+                        contract_sha256=contract_sha256,
+                        registry=registry,
+                        harness_version=harness_version,
+                        now=clock,
+                        run_id_factory=make_run_id,
+                        lifecycle_session_handle=lifecycle_session_handle,
+                        lifecycle_context=lifecycle_run_context,
+                        event_sink=(
+                            lambda event, payload, run_index=planned.run_index,
+                            attempt=attempt_number: emit(
+                                event,
+                                {
+                                    "run_index": run_index,
+                                    "attempt": attempt,
+                                    **dict(payload),
+                                },
+                            )
+                        ),
+                    )
+                except runtime_run_recovery_error as exc:
+                    recovery = exc.recovery
+                    close_recovered_materialization(
+                        planned,
+                        attempt=attempt_number,
+                        stage="run_prepare",
+                        recovery=recovery,
+                    )
+                    active_attempt_number = None
+                    if (
+                        recovery.materialization_reusable
+                        and recovery.retryable
+                        and attempt_number < max_attempts_per_run
+                    ):
+                        continue
+                    break
 
                 execution = executed.record["execution"]
                 try:
@@ -1110,15 +1415,22 @@ def execute_experiment(
                         executed,
                         runs_dir,
                     )
-                except Exception:
-                    finalize_executed_run(
-                        executed,
-                        runtime_run_finalization(
-                            persisted=False,
-                            validity=execution.get("validity"),
-                            termination=execution.get("termination"),
-                        ),
+                except BaseException as exc:
+                    cleanup_scope = (
+                        protect_interruption_cleanup()
+                        if isinstance(exc, KeyboardInterrupt)
+                        else nullcontext()
                     )
+                    with cleanup_scope:
+                        finalize_executed_run(
+                            executed,
+                            runtime_run_finalization(
+                                persisted=False,
+                                validity=execution.get("validity"),
+                                termination=execution.get("termination"),
+                                interrupted=isinstance(exc, KeyboardInterrupt),
+                            ),
+                        )
                     raise
 
                 emit(
@@ -1146,6 +1458,7 @@ def execute_experiment(
                 # session could not safely continue."
                 active_attempts.append(attempt)
 
+                materialization_replaced_after_attempt = False
                 try:
                     finalization = finalize_executed_run(
                         executed,
@@ -1156,14 +1469,24 @@ def execute_experiment(
                             result_path=str(result_path),
                         ),
                     )
-                except Exception as exc:
-                    _write_run_finalization(
-                        result_path,
-                        {
-                            "ok": False,
-                            "detail": str(exc) or exc.__class__.__name__,
-                        },
+                except BaseException as exc:
+                    cleanup_scope = (
+                        protect_interruption_cleanup()
+                        if isinstance(exc, KeyboardInterrupt)
+                        else nullcontext()
                     )
+                    with cleanup_scope:
+                        try:
+                            _write_run_finalization(
+                                result_path,
+                                {
+                                    "ok": False,
+                                    "detail": str(exc) or exc.__class__.__name__,
+                                    "interrupted": isinstance(exc, KeyboardInterrupt),
+                                },
+                            )
+                        except BaseException:
+                            pass
                     raise
                 else:
                     if executed.finalizer is not None:
@@ -1173,6 +1496,17 @@ def execute_experiment(
                                 "ok": True,
                                 "result": finalization,
                             },
+                        )
+                    recovery = finalization_recovery(finalization)
+                    if recovery is not None:
+                        close_recovered_materialization(
+                            planned,
+                            attempt=attempt_number,
+                            stage="run_finalize",
+                            recovery=recovery,
+                        )
+                        materialization_replaced_after_attempt = (
+                            not recovery.materialization_reusable
                         )
 
                 emit(
@@ -1195,7 +1529,10 @@ def execute_experiment(
                     f"stored={result_path.name}."
                 )
 
-                if active_selected_run_id is not None:
+                if (
+                    active_selected_run_id is not None
+                    or materialization_replaced_after_attempt
+                ):
                     break
 
             slots.append(
@@ -1304,44 +1641,8 @@ def execute_experiment(
             f"{len(slots)} selected run(s) resolved."
         )
     except KeyboardInterrupt:
-        finish_materialization(
-            completed=False,
-            interrupted=True,
-            detail="keyboard_interrupt",
-            suppress_errors=True,
-        )
-        ended_at = clock()
-        if resource_usage_document is not None:
-            resource_usage_document["execution"]["status"] = "interrupted"
-            resource_usage_document["execution"]["detail"] = "keyboard_interrupt"
-            write_execution_resource_usage(
-                resource_usage_path,
-                resource_usage_document,
-            )
-        finish_pressure_run(
-            completed=False,
-            resolved=active_selected_run_id is not None,
-            attempts=tuple(active_attempts),
-            detail="keyboard_interrupt",
-            suppress_errors=True,
-        )
-        finish_pressure_execution("interrupted", suppress_errors=True)
-        emit(
-            "execution_interrupted",
-            {
-                "execution_id": execution_id,
-                "run_index": (active_planned.run_index if active_planned is not None else None),
-                "attempt": active_attempt_number,
-                "kind": "keyboard_interrupt",
-            },
-        )
-        provider_usage = _finish_provider_usage_monitor(
-            provider_usage_monitor,
-            provider_usage_started,
-            report,
-        )
+        interrupt_requested_at = clock()
         interruption_slots = list(slots)
-
         if active_planned is not None:
             interruption_slots.append(
                 slot_execution(
@@ -1352,47 +1653,160 @@ def execute_experiment(
             )
 
         interruption_path = session_dir / "experiment_interruption.yaml"
-        interruption = _build_interruption_manifest(
-            execution_id=execution_id,
-            experiment_id=experiment_id,
-            contract_sha256=contract_sha256,
-            harness_version=harness_version,
-            started_at=started_at,
-            ended_at=ended_at,
-            max_attempts_per_run=max_attempts_per_run,
-            inter_run_delay_seconds=inter_run_delay_seconds,
-            contract_run_count=plan.run_count,
-            selected_run_indices=selected_run_indices,
-            subject_llm_baselines=subject_llm_baselines,
-            package_provenance=package_provenance,
-            deployment_reconciliation=deployment_reconciliation,
-            provider_usage=provider_usage,
-            slots=tuple(interruption_slots),
-            interrupted_run_index=(
-                active_planned.run_index
-                if active_planned is not None
-                else None
-            ),
-            interrupted_attempt=active_attempt_number,
-            session_dir=session_dir,
-        )
-        _write_yaml_atomically(interruption_path, interruption)
 
-        if registry.lifecycle is not None:
-            try:
-                registry.lifecycle.session_finalize(
-                    lifecycle_session_handle,
-                    lifecycle_session_context,
-                    runtime_session_finalization(
-                        completed=False,
-                        interrupted=True,
-                        detail="keyboard_interrupt",
-                    ),
+        def persist_interruption_checkpoint(
+            provider_usage: Mapping[str, object] | None,
+        ) -> None:
+            interruption = _build_interruption_manifest(
+                execution_id=execution_id,
+                experiment_id=experiment_id,
+                contract_sha256=contract_sha256,
+                harness_version=harness_version,
+                started_at=started_at,
+                ended_at=interrupt_requested_at,
+                max_attempts_per_run=max_attempts_per_run,
+                inter_run_delay_seconds=inter_run_delay_seconds,
+                contract_run_count=plan.run_count,
+                selected_run_indices=selected_run_indices,
+                subject_llm_baselines=subject_llm_baselines,
+                package_provenance=package_provenance,
+                deployment_reconciliation=deployment_reconciliation,
+                provider_usage=provider_usage,
+                slots=tuple(interruption_slots),
+                interrupted_run_index=(
+                    active_planned.run_index
+                    if active_planned is not None
+                    else None
+                ),
+                interrupted_attempt=active_attempt_number,
+                session_dir=session_dir,
+            )
+            _write_yaml_atomically(interruption_path, interruption)
+
+        def interruption_report(message: str) -> None:
+            report(message)
+
+        with protect_interruption_cleanup(interruption_report) as cleanup_state:
+            report(
+                f"Execution {execution_id}: Ctrl+C received; preserving interruption "
+                "checkpoint before cleanup."
+            )
+            # Persist the minimal typed boundary before any provider-facing or
+            # potentially expensive cleanup. A later force request or machine
+            # failure can still be reconciled from this artifact.
+            persist_interruption_checkpoint(None)
+
+            if pressure_gate is not None:
+                report("Interruption cleanup: quiescing in-flight Provider Gate requests.")
+                try:
+                    terminalized = pressure_gate.quiesce("keyboard_interrupt")
+                    if terminalized:
+                        report(
+                            "Interruption cleanup: terminalized "
+                            f"{terminalized} in-flight provider request(s)."
+                        )
+                except Exception as exc:
+                    report(
+                        "WARNING: Provider Gate quiescence failed during Ctrl+C "
+                        f"cleanup: {exc}"
+                    )
+
+            report("Interruption cleanup: finalizing active materialization.")
+            materialization_clean = finish_materialization(
+                completed=False,
+                interrupted=True,
+                detail="keyboard_interrupt",
+                suppress_errors=True,
+            )
+            if not materialization_clean:
+                report(
+                    "WARNING: Active materialization could not be finalized during "
+                    "Ctrl+C cleanup; the session lifecycle/apparatus ledger remains "
+                    "available for recovery."
                 )
+
+            if resource_usage_document is not None:
+                resource_usage_document["execution"]["status"] = "interrupted"
+                resource_usage_document["execution"]["detail"] = "keyboard_interrupt"
+                write_execution_resource_usage(
+                    resource_usage_path,
+                    resource_usage_document,
+                )
+
+            # Give the package one last governed cleanup sweep while the Core
+            # gate is still active. This is especially important if the
+            # materialization finalizer itself could not retire an owned
+            # provider resource.
+            if registry.lifecycle is not None:
+                report("Interruption cleanup: finalizing runtime lifecycle session.")
+                try:
+                    registry.lifecycle.session_finalize(
+                        lifecycle_session_handle,
+                        lifecycle_session_context,
+                        runtime_session_finalization(
+                            completed=False,
+                            interrupted=True,
+                            detail=(
+                                "keyboard_interrupt_forced"
+                                if cleanup_state.force_requested
+                                else "keyboard_interrupt"
+                            ),
+                        ),
+                    )
+                except Exception as exc:
+                    report(
+                        "WARNING: Runtime lifecycle session finalization failed after "
+                        f"Ctrl+C: {exc}"
+                    )
+
+            report("Interruption cleanup: finalizing active pressure run.")
+            finish_pressure_run(
+                completed=False,
+                resolved=active_selected_run_id is not None,
+                attempts=tuple(active_attempts),
+                detail="keyboard_interrupt",
+                suppress_errors=True,
+            )
+
+            report("Interruption cleanup: closing Provider Pressure execution state.")
+            finish_pressure_execution(
+                "interrupted",
+                suppress_errors=True,
+                export_snapshot=not cleanup_state.force_requested,
+            )
+
+            emit(
+                "execution_interrupted",
+                {
+                    "execution_id": execution_id,
+                    "run_index": (
+                        active_planned.run_index
+                        if active_planned is not None
+                        else None
+                    ),
+                    "attempt": active_attempt_number,
+                    "kind": "keyboard_interrupt",
+                    "forced_cleanup": cleanup_state.force_requested,
+                },
+            )
+
+            provider_usage = None
+            if not cleanup_state.force_requested:
+                report("Interruption cleanup: collecting provider-usage telemetry.")
+                provider_usage = _finish_provider_usage_monitor(
+                    provider_usage_monitor,
+                    provider_usage_started,
+                    report,
+                )
+
+            # Enrich the early checkpoint after cleanup. If this write fails, the
+            # minimal interruption artifact written above remains authoritative.
+            try:
+                persist_interruption_checkpoint(provider_usage)
             except Exception as exc:
                 report(
-                    "WARNING: Runtime lifecycle session finalization failed after "
-                    f"Ctrl+C: {exc}"
+                    "WARNING: Could not enrich interruption checkpoint after cleanup: "
+                    f"{exc}"
                 )
 
         result = experiment_interruption_result(
@@ -1404,7 +1818,7 @@ def execute_experiment(
             contract_run_count=plan.run_count,
             selected_run_indices=selected_run_indices,
             started_at=started_at,
-            ended_at=ended_at,
+            ended_at=interrupt_requested_at,
             slots=tuple(interruption_slots),
             interrupted_run_index=(
                 active_planned.run_index
@@ -1428,65 +1842,6 @@ def execute_experiment(
             else None
         )
         failed_attempt = active_attempt_number
-
-        finish_materialization(
-            completed=False,
-            interrupted=False,
-            detail=detail,
-            suppress_errors=True,
-        )
-        if resource_usage_document is not None:
-            resource_usage_document["execution"]["status"] = "failed"
-            resource_usage_document["execution"]["detail"] = detail
-            write_execution_resource_usage(
-                resource_usage_path,
-                resource_usage_document,
-            )
-        finish_pressure_run(
-            completed=False,
-            resolved=active_selected_run_id is not None,
-            attempts=tuple(active_attempts),
-            detail=detail,
-            suppress_errors=True,
-        )
-        finish_pressure_execution("failed", suppress_errors=True)
-        emit(
-            "execution_failed",
-            {
-                "execution_id": execution_id,
-                "run_index": failed_run_index,
-                "attempt": failed_attempt,
-                "detail": detail,
-            },
-        )
-
-        session_finalize_error = None
-        if registry.lifecycle is not None:
-            try:
-                registry.lifecycle.session_finalize(
-                    lifecycle_session_handle,
-                    lifecycle_session_context,
-                    runtime_session_finalization(
-                        completed=False,
-                        interrupted=False,
-                        detail=detail,
-                    ),
-                )
-            except Exception as finalize_exc:
-                session_finalize_error = (
-                    str(finalize_exc) or finalize_exc.__class__.__name__
-                )
-                report(
-                    "WARNING: Runtime lifecycle session finalization failed after "
-                    f"execution error: {session_finalize_error}"
-                )
-
-        ended_at = clock()
-        provider_usage = _finish_provider_usage_monitor(
-            provider_usage_monitor,
-            provider_usage_started,
-            report,
-        )
         failure_slots = list(slots)
         if active_planned is not None:
             failure_slots.append(
@@ -1496,37 +1851,153 @@ def execute_experiment(
                     selected_run_id=active_selected_run_id,
                 )
             )
+        failure_path = session_dir / "experiment_failure.yaml"
 
+        def persist_failure_checkpoint(
+            *,
+            provider_usage: Mapping[str, object] | None,
+            failure_detail: str,
+            ended_at: datetime,
+        ) -> None:
+            failure_manifest = _build_failure_manifest(
+                execution_id=execution_id,
+                experiment_id=experiment_id,
+                contract_sha256=contract_sha256,
+                harness_version=harness_version,
+                started_at=started_at,
+                ended_at=ended_at,
+                max_attempts_per_run=max_attempts_per_run,
+                inter_run_delay_seconds=inter_run_delay_seconds,
+                contract_run_count=plan.run_count,
+                selected_run_indices=selected_run_indices,
+                subject_llm_baselines=subject_llm_baselines,
+                package_provenance=package_provenance,
+                deployment_reconciliation=deployment_reconciliation,
+                provider_usage=provider_usage,
+                slots=tuple(failure_slots),
+                failed_run_index=failed_run_index,
+                failed_attempt=failed_attempt,
+                detail=failure_detail,
+                session_dir=session_dir,
+            )
+            _write_yaml_atomically(failure_path, failure_manifest)
+
+        def failure_cleanup_report(message: str) -> None:
+            report(message)
+
+        session_finalize_error = None
+        provider_usage = None
         failure_detail = detail
-        if session_finalize_error is not None:
-            failure_detail += (
-                "; lifecycle session finalization warning: "
-                + session_finalize_error
+        ended_at = clock()
+
+        with protect_interruption_cleanup(
+            failure_cleanup_report,
+            already_interrupted=False,
+        ) as cleanup_state:
+            # Persist the typed failure boundary before provider-facing cleanup. If
+            # cleanup is later force-shortened or the process is lost, Campaign and
+            # apparatus recovery still have an execution-level record to inspect.
+            persist_failure_checkpoint(
+                provider_usage=None,
+                failure_detail=detail,
+                ended_at=ended_at,
             )
 
-        failure_path = session_dir / "experiment_failure.yaml"
-        failure_manifest = _build_failure_manifest(
-            execution_id=execution_id,
-            experiment_id=experiment_id,
-            contract_sha256=contract_sha256,
-            harness_version=harness_version,
-            started_at=started_at,
-            ended_at=ended_at,
-            max_attempts_per_run=max_attempts_per_run,
-            inter_run_delay_seconds=inter_run_delay_seconds,
-            contract_run_count=plan.run_count,
-            selected_run_indices=selected_run_indices,
-            subject_llm_baselines=subject_llm_baselines,
-            package_provenance=package_provenance,
-            deployment_reconciliation=deployment_reconciliation,
-            provider_usage=provider_usage,
-            slots=tuple(failure_slots),
-            failed_run_index=failed_run_index,
-            failed_attempt=failed_attempt,
-            detail=failure_detail,
-            session_dir=session_dir,
-        )
-        _write_yaml_atomically(failure_path, failure_manifest)
+            if pressure_gate is not None:
+                try:
+                    pressure_gate.quiesce(f"execution_failure:{detail}")
+                except Exception as gate_exc:
+                    report(
+                        "WARNING: Provider Gate quiescence failed after execution "
+                        f"error: {gate_exc}"
+                    )
+
+            finish_materialization(
+                completed=False,
+                interrupted=False,
+                detail=detail,
+                suppress_errors=True,
+            )
+            if resource_usage_document is not None:
+                resource_usage_document["execution"]["status"] = "failed"
+                resource_usage_document["execution"]["detail"] = detail
+                write_execution_resource_usage(
+                    resource_usage_path,
+                    resource_usage_document,
+                )
+
+            # Keep the Core gate alive through the package's final cleanup sweep.
+            if registry.lifecycle is not None:
+                try:
+                    registry.lifecycle.session_finalize(
+                        lifecycle_session_handle,
+                        lifecycle_session_context,
+                        runtime_session_finalization(
+                            completed=False,
+                            interrupted=False,
+                            detail=detail,
+                        ),
+                    )
+                except Exception as finalize_exc:
+                    session_finalize_error = (
+                        str(finalize_exc) or finalize_exc.__class__.__name__
+                    )
+                    report(
+                        "WARNING: Runtime lifecycle session finalization failed after "
+                        f"execution error: {session_finalize_error}"
+                    )
+
+            finish_pressure_run(
+                completed=False,
+                resolved=active_selected_run_id is not None,
+                attempts=tuple(active_attempts),
+                detail=detail,
+                suppress_errors=True,
+            )
+            finish_pressure_execution(
+                "failed",
+                suppress_errors=True,
+                export_snapshot=not cleanup_state.force_requested,
+            )
+            emit(
+                "execution_failed",
+                {
+                    "execution_id": execution_id,
+                    "run_index": failed_run_index,
+                    "attempt": failed_attempt,
+                    "detail": detail,
+                    "forced_cleanup": cleanup_state.force_requested,
+                },
+            )
+
+            ended_at = clock()
+            if not cleanup_state.force_requested:
+                provider_usage = _finish_provider_usage_monitor(
+                    provider_usage_monitor,
+                    provider_usage_started,
+                    report,
+                )
+
+            failure_detail = detail
+            if session_finalize_error is not None:
+                failure_detail += (
+                    "; lifecycle session finalization warning: "
+                    + session_finalize_error
+                )
+
+            # Enrich the early failure checkpoint after cleanup. The early version
+            # remains useful if this optional rewrite cannot be completed.
+            try:
+                persist_failure_checkpoint(
+                    provider_usage=provider_usage,
+                    failure_detail=failure_detail,
+                    ended_at=ended_at,
+                )
+            except Exception as checkpoint_exc:
+                report(
+                    "WARNING: Could not enrich failure checkpoint after cleanup: "
+                    f"{checkpoint_exc}"
+                )
 
         result = experiment_failure_result(
             execution_id=execution_id,
@@ -1990,9 +2461,15 @@ def _write_yaml_atomically(
             os.fsync(file.fileno())
 
         os.replace(temp_path, path)
-    except Exception:
-        if temp_path.exists():
-            temp_path.unlink()
+    except BaseException as exc:
+        cleanup_scope = (
+            protect_interruption_cleanup()
+            if isinstance(exc, KeyboardInterrupt)
+            else nullcontext()
+        )
+        with cleanup_scope:
+            if temp_path.exists():
+                temp_path.unlink()
         raise
 
 

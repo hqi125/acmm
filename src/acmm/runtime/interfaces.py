@@ -439,6 +439,34 @@ class runtime_run_finalization:
 
 
 @dataclass(frozen=True)
+class runtime_run_recovery_result:
+    safe_to_continue: bool
+    materialization_reusable: bool
+    retryable: bool
+    detail: str
+    observations: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.detail, str) or not self.detail.strip():
+            raise ValueError("Runtime run recovery detail must not be empty.")
+        object.__setattr__(
+            self,
+            "observations",
+            MappingProxyType(dict(self.observations)),
+        )
+
+
+class runtime_run_recovery_error(RuntimeError):
+    def __init__(self, recovery: runtime_run_recovery_result) -> None:
+        if not isinstance(recovery, runtime_run_recovery_result):
+            raise TypeError(
+                "runtime_run_recovery_error requires runtime_run_recovery_result."
+            )
+        self.recovery = recovery
+        super().__init__(recovery.detail)
+
+
+@dataclass(frozen=True)
 class runtime_session_finalization:
     completed: bool
     interrupted: bool

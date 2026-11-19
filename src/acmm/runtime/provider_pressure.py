@@ -1952,8 +1952,15 @@ def _write_yaml_atomically(path: Path, value: Mapping[str, Any]) -> None:
         sort_keys=False,
         allow_unicode=False,
     )
-    temporary.write_text(rendered, encoding="utf-8")
-    os.replace(temporary, target)
+    try:
+        temporary.write_text(rendered, encoding="utf-8")
+        os.replace(temporary, target)
+    except BaseException:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def _safe_component(value: str) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
@@ -11,6 +12,7 @@ from acmm.experiment_package.integration import (
 )
 from acmm.experiment_package.model import experiment_package
 from acmm.integration_api import integration_report, shared_integration_context
+from acmm.runtime.interruption import protect_interruption_cleanup
 from acmm.secret_bindings import (
     experiment_secret_binding_key,
     resolve_secret,
@@ -125,6 +127,8 @@ def acquire_staged_integration_resources(
             continue
         integration_id = item.component.integration_id
         context = _context(package, integration_id, runtime_root)
+        initially_running = False
+        started_by_acmm = False
         try:
             initially_running = bool(resource.is_running(context))
             if progress is not None:
@@ -132,7 +136,6 @@ def acquire_staged_integration_resources(
                     integration_id,
                     "runtime-running" if initially_running else "runtime-stopped",
                 )
-            started_by_acmm = False
             if start_if_needed and not initially_running:
                 if progress is not None:
                     progress(integration_id, "starting")
@@ -148,26 +151,42 @@ def acquire_staged_integration_resources(
                 started_by_acmm = True
                 if progress is not None:
                     progress(integration_id, "started")
-        except Exception as exc:
+        except BaseException as exc:
             cleanup_errors: list[str] = []
-            loaded_by_id = {
-                value.component.integration_id: value
-                for value in loaded
-            }
-            for previous in reversed(leases):
-                if not previous.started_by_acmm:
-                    continue
-                previous_item = loaded_by_id.get(previous.integration_id)
-                if previous_item is None or previous_item.integration.shared_resource is None:
-                    continue
-                try:
-                    previous_item.integration.shared_resource.down(
-                        _context(package, previous.integration_id, runtime_root)
-                    )
-                except Exception as cleanup_exc:
-                    cleanup_errors.append(
-                        f"{previous.integration_id}: {cleanup_exc}"
-                    )
+            cleanup_scope = (
+                protect_interruption_cleanup()
+                if isinstance(exc, KeyboardInterrupt)
+                else nullcontext()
+            )
+            with cleanup_scope:
+                loaded_by_id = {
+                    value.component.integration_id: value
+                    for value in loaded
+                }
+                if start_if_needed and not initially_running:
+                    try:
+                        if resource.is_running(context):
+                            resource.down(context)
+                    except Exception as cleanup_exc:
+                        cleanup_errors.append(
+                            f"{integration_id}: {cleanup_exc}"
+                        )
+                for previous in reversed(leases):
+                    if not previous.started_by_acmm:
+                        continue
+                    previous_item = loaded_by_id.get(previous.integration_id)
+                    if previous_item is None or previous_item.integration.shared_resource is None:
+                        continue
+                    try:
+                        previous_item.integration.shared_resource.down(
+                            _context(package, previous.integration_id, runtime_root)
+                        )
+                    except Exception as cleanup_exc:
+                        cleanup_errors.append(
+                            f"{previous.integration_id}: {cleanup_exc}"
+                        )
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             detail = (
                 f"Integration '{integration_id}' shared resource startup failed: {exc}"
             )

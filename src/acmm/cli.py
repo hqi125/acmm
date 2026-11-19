@@ -43,7 +43,11 @@ from acmm.experiment_package import (
 )
 from acmm.experiment_package.cli import register_experiment_package_commands
 from acmm.environment_cli import register_environment_commands
-from acmm.generated_paths import default_exports_root, default_results_root
+from acmm.generated_paths import (
+    default_exports_root,
+    default_results_root,
+    resolve_results_reference,
+)
 from acmm.campaign.cli import register_campaign_commands
 from acmm.secret_bindings import secret_binding_error
 from acmm.secret_bindings.cli import register_secret_commands
@@ -81,6 +85,7 @@ from acmm.runtime.execution_summary import (
     write_execution_summary,
     write_interruption_summary,
 )
+from acmm.runtime.interruption import protect_interruption_cleanup
 from acmm.runtime.provider_usage import (
     OLLAMA_CLOUD_API_KEY_SECRET_ID,
     ollama_cloud_usage_monitor,
@@ -171,7 +176,10 @@ def _build_run_apparatus_parser() -> argparse.ArgumentParser:
         "--execution",
         required=True,
         metavar="PATH",
-        help="Execution directory or experiment_execution.yaml path to clean.",
+        help=(
+            "Execution directory or experiment_execution.yaml path to clean. "
+            "Relative results/... references resolve under the generated artifact root."
+        ),
     )
     cleanup_parser.add_argument(
         "--preview",
@@ -806,7 +814,10 @@ def _run_apparatus_cleanup(args: argparse.Namespace) -> int:
         )
         return 2
 
-    execution_path = args.execution
+    execution_path = resolve_results_reference(
+        args.execution,
+        experiment_id=package.experiment_id,
+    )
     progress_started = False
 
     def report_cleanup_progress(event) -> None:
@@ -814,7 +825,7 @@ def _run_apparatus_cleanup(args: argparse.Namespace) -> int:
         if not progress_started:
             print("Experiment apparatus cleanup progress:")
             print(f"  experiment: {package.experiment_id}")
-            print(f"  execution:  {Path(execution_path).expanduser()}")
+            print(f"  execution:  {execution_path}")
             progress_started = True
         if event.step is not None and event.total is not None:
             prefix = f"[{event.step}/{event.total}]"
@@ -827,10 +838,18 @@ def _run_apparatus_cleanup(args: argparse.Namespace) -> int:
     try:
         result = run_staged_experiment_apparatus_cleanup(
             package,
-            str(Path(execution_path).expanduser().resolve()),
+            str(execution_path),
             preview=bool(args.preview),
             progress=report_cleanup_progress,
         )
+    except KeyboardInterrupt:
+        print(
+            "Experiment apparatus cleanup interrupted. Cleanup is designed to be "
+            "rerunnable; invoke the same command again to verify/finish any remaining "
+            "targets.",
+            file=sys.stderr,
+        )
+        return 130
     except (experiment_runtime_error, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
@@ -1125,6 +1144,14 @@ def _run_experiment(
                 selected_subject_ids=selected_subject_ids,
             )
             reconciliation_performed = True
+        except KeyboardInterrupt:
+            print(
+                "Experiment context reconciliation interrupted; no execution session "
+                "was created. Re-run with --apply-if-needed to reconcile the idempotent "
+                "deployment state before execution.",
+                file=sys.stderr,
+            )
+            return 130
         except (
             infrastructure_error,
             profile_error,
@@ -1181,6 +1208,26 @@ def _run_experiment(
             )
         return tuple(errors)
 
+    def interrupted_before_execution_session(detail: str) -> int:
+        def report_cleanup(message: str) -> None:
+            print(f"WARNING: {message}", file=sys.stderr, flush=True)
+
+        print(
+            f"\nInterruption requested during {detail}; restoring ACMM-owned "
+            "runtime resources before exit.",
+            file=sys.stderr,
+            flush=True,
+        )
+        with protect_interruption_cleanup(report_cleanup):
+            cleanup_errors = cleanup_runtime_resources()
+        for error in cleanup_errors:
+            print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
+        print(
+            "Interrupted before an execution session was created.",
+            file=sys.stderr,
+        )
+        return 130
+
     try:
         integration_resource_leases = acquire_staged_integration_resources(
             package,
@@ -1188,6 +1235,10 @@ def _run_experiment(
             start_if_needed=bool(args.start_if_needed),
             timeout_seconds=args.startup_timeout_seconds,
             progress=_run_integration_resource_progress,
+        )
+    except KeyboardInterrupt:
+        return interrupted_before_execution_session(
+            "integration-resource acquisition"
         )
     except (experiment_package_error, OSError, ValueError) as exc:
         print(
@@ -1215,6 +1266,10 @@ def _run_experiment(
 
     try:
         resource_reports = doctor_staged_integration_resources(package, runtime_root)
+    except KeyboardInterrupt:
+        return interrupted_before_execution_session(
+            "integration-resource readiness checks"
+        )
     except (experiment_package_error, OSError, ValueError) as exc:
         cleanup_errors = cleanup_runtime_resources()
         print(
@@ -1248,6 +1303,10 @@ def _run_experiment(
                 runtime_root=runtime_root,
                 subject_bindings=subject_bindings,
             )
+        except KeyboardInterrupt:
+            return interrupted_before_execution_session(
+                "subject-runtime discovery"
+            )
         except (infrastructure_error, profile_error, docker_error, OSError, ValueError) as exc:
             cleanup_errors = cleanup_runtime_resources()
             print(f"ERROR: Could not inspect selected subject runtimes: {exc}", file=sys.stderr)
@@ -1260,11 +1319,16 @@ def _run_experiment(
             for subject_id, lease in runtime_leases.items()
             if lease.initially_running
         }
-        live_readiness = inspect_live_readiness(
-            repo_root=repo_root,
-            runtime_root=runtime_root,
-            subject_bindings=running_bindings,
-        )
+        try:
+            live_readiness = inspect_live_readiness(
+                repo_root=repo_root,
+                runtime_root=runtime_root,
+                subject_bindings=running_bindings,
+            )
+        except KeyboardInterrupt:
+            return interrupted_before_execution_session(
+                "subject live-readiness checks"
+            )
         _print_start_if_needed_preflight(runtime_leases, live_readiness)
 
         if not live_readiness.is_ready:
@@ -1281,11 +1345,16 @@ def _run_experiment(
             item.subject_id for item in live_readiness.subjects if item.is_ready
         )
     else:
-        live_readiness = inspect_live_readiness(
-            repo_root=repo_root,
-            runtime_root=runtime_root,
-            subject_bindings=subject_bindings,
-        )
+        try:
+            live_readiness = inspect_live_readiness(
+                repo_root=repo_root,
+                runtime_root=runtime_root,
+                subject_bindings=subject_bindings,
+            )
+        except KeyboardInterrupt:
+            return interrupted_before_execution_session(
+                "subject live-readiness checks"
+            )
         _print_live_readiness_preflight(live_readiness)
 
         if not live_readiness.is_ready:
@@ -1306,6 +1375,10 @@ def _run_experiment(
                     repo_root,
                     runtime_root,
                     subject_binding.infrastructure_subject,
+                )
+            except KeyboardInterrupt:
+                return interrupted_before_execution_session(
+                    "runtime-log lease discovery"
                 )
             except (
                 infrastructure_error,
@@ -1421,6 +1494,10 @@ def _run_experiment(
                     heading=None,
                 )
                 ready_subject_ids.add(subject_id)
+        except KeyboardInterrupt:
+            return interrupted_before_execution_session(
+                "selected-subject pre-start"
+            )
         except (
             infrastructure_error,
             profile_error,
@@ -1451,6 +1528,10 @@ def _run_experiment(
     if args.start_if_needed:
         try:
             prepare_subject_runtime(selected_runs[0].subject_id)
+        except KeyboardInterrupt:
+            return interrupted_before_execution_session(
+                "first subject-runtime acquisition"
+            )
         except (infrastructure_error, profile_error, docker_error, OSError, ValueError) as exc:
             cleanup_errors = cleanup_runtime_resources()
             for error in cleanup_errors:
@@ -1462,17 +1543,22 @@ def _run_experiment(
             print("ERROR: No execution session was created.", file=sys.stderr)
             return 2
 
-    subject_adapters = {
-        subject_id: subject_bindings[subject_id].adapter_builder()
-        for subject_id in selected_subject_ids
-    }
-    selected_baselines = {
-        subject_id: load_llm_baseline(
-            repo_root,
-            subject_bindings[subject_id].llm_baseline_id,
+    try:
+        subject_adapters = {
+            subject_id: subject_bindings[subject_id].adapter_builder()
+            for subject_id in selected_subject_ids
+        }
+        selected_baselines = {
+            subject_id: load_llm_baseline(
+                repo_root,
+                subject_bindings[subject_id].llm_baseline_id,
+            )
+            for subject_id in selected_subject_ids
+        }
+    except KeyboardInterrupt:
+        return interrupted_before_execution_session(
+            "subject adapter/baseline setup"
         )
-        for subject_id in selected_subject_ids
-    }
     overlays = {
         subject_id: runtime_provenance_configuration(
             selected_baselines[subject_id],
@@ -1497,6 +1583,10 @@ def _run_experiment(
     if ollama_usage_models:
         try:
             ollama_api_key = resolve_ollama_cloud_api_key()
+        except KeyboardInterrupt:
+            return interrupted_before_execution_session(
+                "provider-usage credential setup"
+            )
         except secret_binding_error as exc:
             ollama_credential_error = (
                 f"ACMM core secret binding '{OLLAMA_CLOUD_API_KEY_SECRET_ID}' "
@@ -1548,19 +1638,24 @@ def _run_experiment(
             binding.llm_baseline_id,
         ).context.manager
 
-    admission_controller = compose_staged_subject_admission_controller(
-        package,
-        subject_admission_contexts,
-        resolve_subject_admission_manager,
-    )
-    registry = compose_execution_registry(
-        loaded_runtime.runtime,
-        subject_adapters,
-        tool_result_error_interpreters=staged_tool_result_error_interpreters(package),
-        subject_configuration_overlays=overlays,
-        admission_controller=admission_controller,
-        materialization_group_by=tuple(materialization_group_by),
-    )
+    try:
+        admission_controller = compose_staged_subject_admission_controller(
+            package,
+            subject_admission_contexts,
+            resolve_subject_admission_manager,
+        )
+        registry = compose_execution_registry(
+            loaded_runtime.runtime,
+            subject_adapters,
+            tool_result_error_interpreters=staged_tool_result_error_interpreters(package),
+            subject_configuration_overlays=overlays,
+            admission_controller=admission_controller,
+            materialization_group_by=tuple(materialization_group_by),
+        )
+    except KeyboardInterrupt:
+        return interrupted_before_execution_session(
+            "execution-registry setup"
+        )
 
     pacing = contract["run_protocol"].get("pacing", {})
     inter_run_delay = pacing.get("inter_run_delay_seconds", 0)
@@ -1638,14 +1733,23 @@ def _run_experiment(
             ),
         )
     except experiment_execution_failed as exc:
-        capture_runtime_log(active_subject_id[0])
-        cleanup_errors = cleanup_runtime_resources()
         result = exc.result
-        if campaign_context is not None:
-            finalize_campaign_execution_failure(
-                campaign_context,
-                detail=result.detail,
-            )
+
+        def report_failure_cleanup(message: str) -> None:
+            print(f"WARNING: {message}", file=sys.stderr, flush=True)
+
+        with protect_interruption_cleanup(
+            report_failure_cleanup,
+            already_interrupted=False,
+        ) as cleanup_state:
+            capture_runtime_log(active_subject_id[0])
+            cleanup_errors = cleanup_runtime_resources()
+            if campaign_context is not None:
+                finalize_campaign_execution_failure(
+                    campaign_context,
+                    detail=result.detail,
+                )
+
         print(
             "ERROR: Experiment execution stopped safely after an unrecoverable "
             f"error: {result.detail}",
@@ -1655,31 +1759,67 @@ def _run_experiment(
             f"ERROR: Failure record: {result.failure_path}",
             file=sys.stderr,
         )
+        if cleanup_state.force_requested:
+            print(
+                "WARNING: Ctrl+C was received while failed-execution cleanup was "
+                "in progress; critical cleanup completed before exit.",
+                file=sys.stderr,
+            )
         for error in cleanup_errors:
             print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
         return 2
     except experiment_execution_interrupted as exc:
-        capture_runtime_log(active_subject_id[0])
-        cleanup_errors = cleanup_runtime_resources()
         result = exc.result
-        if campaign_context is not None:
-            finalize_campaign_execution(
-                campaign_context,
-                result,
-                status="interrupted",
-            )
-        _validate_persisted_execution(result, contract)
 
-        try:
-            summary_path = write_interruption_summary(result)
-        except OSError as summary_exc:
+        def report_interrupt_cleanup(message: str) -> None:
+            print(f"WARNING: {message}", file=sys.stderr, flush=True)
+
+        with protect_interruption_cleanup(report_interrupt_cleanup) as cleanup_state:
+            capture_runtime_log(active_subject_id[0])
+            cleanup_errors = cleanup_runtime_resources()
+            if campaign_context is not None:
+                finalize_campaign_execution(
+                    campaign_context,
+                    result,
+                    status="interrupted",
+                )
+            _validate_persisted_execution(result, contract)
+
             summary_path = None
-            print(
-                f"WARNING: Could not persist interruption summary: {summary_exc}",
-                file=sys.stderr,
-            )
+            if not cleanup_state.force_requested:
+                try:
+                    summary_path = write_interruption_summary(result)
+                except OSError as summary_exc:
+                    print(
+                        f"WARNING: Could not persist interruption summary: {summary_exc}",
+                        file=sys.stderr,
+                    )
 
-        _print_execution_interruption(result, summary_path)
+            _print_execution_interruption(result, summary_path)
+        for error in cleanup_errors:
+            print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
+        return 130
+    except KeyboardInterrupt:
+        # A raw KeyboardInterrupt here means execution setup was interrupted
+        # before the runtime could convert it into a typed interruption result.
+        # Preserve the outer resource boundary instead of falling through to
+        # main(), which cannot see the acquired leases.
+        def report_raw_interrupt_cleanup(message: str) -> None:
+            print(f"WARNING: {message}", file=sys.stderr, flush=True)
+
+        with protect_interruption_cleanup(report_raw_interrupt_cleanup):
+            capture_runtime_log(active_subject_id[0])
+            cleanup_errors = cleanup_runtime_resources()
+            if campaign_context is not None:
+                finalize_campaign_execution_failure(
+                    campaign_context,
+                    detail="keyboard_interrupt_before_typed_execution_boundary",
+                )
+        print(
+            "Interrupted before the execution could publish a typed interruption "
+            "record; ACMM-owned runtime resources were released.",
+            file=sys.stderr,
+        )
         for error in cleanup_errors:
             print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
         return 130
@@ -1690,30 +1830,45 @@ def _run_experiment(
         OSError,
         ValueError,
     ) as exc:
-        capture_runtime_log(active_subject_id[0])
-        cleanup_errors = cleanup_runtime_resources()
-        if campaign_context is not None:
-            finalize_campaign_execution_failure(
-                campaign_context,
-                detail=str(exc) or exc.__class__.__name__,
-            )
+        def report_error_cleanup(message: str) -> None:
+            print(f"WARNING: {message}", file=sys.stderr, flush=True)
+
+        with protect_interruption_cleanup(
+            report_error_cleanup,
+            already_interrupted=False,
+        ):
+            capture_runtime_log(active_subject_id[0])
+            cleanup_errors = cleanup_runtime_resources()
+            if campaign_context is not None:
+                finalize_campaign_execution_failure(
+                    campaign_context,
+                    detail=str(exc) or exc.__class__.__name__,
+                )
         print(f"ERROR: Experiment execution failed: {exc}", file=sys.stderr)
         for error in cleanup_errors:
             print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
         return 2
     except Exception as exc:
-        # Last-resort CLI safety boundary.  Runtime/package exceptions should
+        # Last-resort CLI safety boundary. Runtime/package exceptions should
         # normally be converted into experiment_execution_failed with a durable
         # failure manifest, but an unexpected exception must still release
         # ACMM-started subject and integration resources before returning.
-        capture_runtime_log(active_subject_id[0])
-        cleanup_errors = cleanup_runtime_resources()
         detail = str(exc) or exc.__class__.__name__
-        if campaign_context is not None:
-            finalize_campaign_execution_failure(
-                campaign_context,
-                detail=detail,
-            )
+
+        def report_unexpected_cleanup(message: str) -> None:
+            print(f"WARNING: {message}", file=sys.stderr, flush=True)
+
+        with protect_interruption_cleanup(
+            report_unexpected_cleanup,
+            already_interrupted=False,
+        ):
+            capture_runtime_log(active_subject_id[0])
+            cleanup_errors = cleanup_runtime_resources()
+            if campaign_context is not None:
+                finalize_campaign_execution_failure(
+                    campaign_context,
+                    detail=detail,
+                )
         print(
             f"ERROR: Unexpected experiment execution failure: {detail}",
             file=sys.stderr,
@@ -1722,33 +1877,54 @@ def _run_experiment(
             print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
         return 2
 
-    capture_runtime_log(active_subject_id[0])
-    cleanup_errors = cleanup_runtime_resources()
-    if campaign_context is not None:
-        finalize_campaign_execution(
-            campaign_context,
+    # The scientific execution is already durable at this point. A Ctrl+C during
+    # container/integration release, campaign reconciliation, validation, or
+    # summary writing must not strand resources or retroactively turn the run into
+    # an interrupted scientific execution. Consume SIGINT cooperatively until the
+    # post-execution boundary is safe.
+    def report_post_execution_cleanup(message: str) -> None:
+        print(f"WARNING: {message}", file=sys.stderr, flush=True)
+
+    with protect_interruption_cleanup(
+        report_post_execution_cleanup,
+        already_interrupted=False,
+    ) as post_execution_state:
+        capture_runtime_log(active_subject_id[0])
+        cleanup_errors = cleanup_runtime_resources()
+        if campaign_context is not None:
+            finalize_campaign_execution(
+                campaign_context,
+                result,
+                status="completed",
+            )
+
+        validation_status = _validate_persisted_execution(
             result,
-            status="completed",
+            contract,
         )
 
-    validation_status = _validate_persisted_execution(
-        result,
-        contract,
-    )
+        summary_path = None
+        if validation_status == 0 and not post_execution_state.force_requested:
+            try:
+                summary_path = write_execution_summary(result)
+            except OSError as exc:
+                print(
+                    f"WARNING: Could not persist execution summary: {exc}",
+                    file=sys.stderr,
+                )
+
+        _print_execution_completion(result, summary_path)
+
+    if post_execution_state.force_requested:
+        print(
+            "Interrupted during post-execution teardown. The scientific execution "
+            "was already persisted and ACMM-owned runtime resources were released.",
+            file=sys.stderr,
+        )
+        return 130
 
     if validation_status != 0:
         return validation_status
-
-    try:
-        summary_path = write_execution_summary(result)
-    except OSError as exc:
-        summary_path = None
-        print(
-            f"WARNING: Could not persist execution summary: {exc}",
-            file=sys.stderr,
-        )
-
-    _print_execution_completion(result, summary_path)
 
     if cleanup_errors:
         for error in cleanup_errors:
@@ -2281,7 +2457,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.handler(args)
     except KeyboardInterrupt:
-        print("\nInterrupted before an execution could be finalized.", file=sys.stderr)
+        print("\nInterrupted.", file=sys.stderr)
         return 130
 
 

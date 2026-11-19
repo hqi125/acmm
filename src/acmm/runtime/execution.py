@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -25,8 +26,10 @@ from acmm.runtime.interfaces import (
     prepared_environment,
     runtime_run_context,
     runtime_run_finalization,
+    runtime_run_recovery_error,
     runtime_subject_admission,
 )
+from acmm.runtime.interruption import protect_interruption_cleanup
 from acmm.runtime.planner import planned_run
 from acmm.runtime.registry import execution_registry
 
@@ -62,6 +65,7 @@ def execute_planned_run(
     observed_termination = "harness_error"
     environment_session: _environment_session | None = None
     subject_admission: runtime_subject_admission | None = None
+    subject_execution_interrupted = False
     scenario = contract_scenario
 
     try:
@@ -129,25 +133,34 @@ def execute_planned_run(
                 "subject_execution_ended",
                 {"termination": adapter_result.termination},
             )
+        except KeyboardInterrupt:
+            subject_execution_interrupted = True
+            raise
         finally:
             if subject_admission is not None:
-                controller = registry.admission_controller
-                assert controller is not None
-                emit("subject_revocation_started", {})
-                revocation = controller.revoke(
-                    planned.subject_id,
-                    subject_admission,
+                cleanup_scope = (
+                    protect_interruption_cleanup()
+                    if subject_execution_interrupted
+                    else nullcontext()
                 )
-                subject_admission = None
-                if revocation is not None and not isinstance(revocation, Mapping):
-                    raise TypeError(
-                        "Runtime subject admission controller revoke() must return "
-                        "a mapping or None."
+                with cleanup_scope:
+                    controller = registry.admission_controller
+                    assert controller is not None
+                    emit("subject_revocation_started", {})
+                    revocation = controller.revoke(
+                        planned.subject_id,
+                        subject_admission,
                     )
-                emit(
-                    "subject_revoked",
-                    {"detail": dict(revocation or {})},
-                )
+                    subject_admission = None
+                    if revocation is not None and not isinstance(revocation, Mapping):
+                        raise TypeError(
+                            "Runtime subject admission controller revoke() must return "
+                            "a mapping or None."
+                        )
+                    emit(
+                        "subject_revoked",
+                        {"detail": dict(revocation or {})},
+                    )
 
         adapter_evidence = _apply_tool_result_error_interpreters(
             adapter_result.evidence,
@@ -286,26 +299,43 @@ def execute_planned_run(
             contract["run_protocol"]["reset"],
         )
 
+    except runtime_run_recovery_error:
+        # Package lifecycle code uses this typed signal only when it has already
+        # classified whether provider-visible state is safe for Core to continue.
+        # Do not collapse it into an ordinary invalid scientific run.
+        raise
+
     except KeyboardInterrupt:
-        if environment_session is not None and environment_session.uses_runtime_lifecycle:
-            _best_effort_finalize_environment(
-                environment_session,
-                scenario,
-                contract["run_protocol"]["reset"],
-                outcome=runtime_run_finalization(
-                    persisted=False,
-                    validity=None,
-                    termination=observed_termination,
-                    interrupted=True,
-                ),
-            )
-        else:
-            _best_effort_finalize_environment(
-                environment_session,
-                scenario,
-                contract["run_protocol"]["reset"],
-                outcome=None,
-            )
+        with protect_interruption_cleanup():
+            if subject_admission is not None and registry.admission_controller is not None:
+                try:
+                    registry.admission_controller.revoke(
+                        planned.subject_id,
+                        subject_admission,
+                    )
+                except Exception:
+                    pass
+                finally:
+                    subject_admission = None
+            if environment_session is not None and environment_session.uses_runtime_lifecycle:
+                _best_effort_finalize_environment(
+                    environment_session,
+                    scenario,
+                    contract["run_protocol"]["reset"],
+                    outcome=runtime_run_finalization(
+                        persisted=False,
+                        validity=None,
+                        termination=observed_termination,
+                        interrupted=True,
+                    ),
+                )
+            else:
+                _best_effort_finalize_environment(
+                    environment_session,
+                    scenario,
+                    contract["run_protocol"]["reset"],
+                    outcome=None,
+                )
         raise
 
     except Exception as exc:

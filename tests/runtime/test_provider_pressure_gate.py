@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from http import HTTPStatus
 import http.client
 import json
 import socket
@@ -412,3 +413,131 @@ def test_transport_gate_cancel_delivery_is_idempotent(tmp_path: Path) -> None:
     ]
     assert len(action_results) == 1
     assert action_results[0]["outcome"] == "interrupted"
+
+
+def test_transport_gate_quiesce_terminalizes_inflight_and_keeps_gate_active(
+    tmp_path: Path,
+) -> None:
+    engine = provider_pressure_engine(
+        gate_model(),
+        sleep=lambda seconds: None,
+        now=lambda: datetime(2026, 11, 14, 20, 0, tzinfo=timezone.utc),
+    )
+    session = engine.execution_initialize(execution_context(tmp_path))
+    from acmm.runtime.provider_pressure import runtime_provider_pressure_gate_configuration
+
+    gate = provider_pressure_transport_gate(
+        engine,
+        session,
+        runtime_provider_pressure_gate_configuration(
+            control_path=str(tmp_path / "pph-gate.json"),
+            bind_host="127.0.0.1",
+            bind_port=8765,
+            advertised_url="http://127.0.0.1:8765",
+        ),
+    )
+    gate.activate(run_context(tmp_path))
+    gate._admit(
+        {
+            "request_id": "request-inflight",
+            "plane": "trusted_controller",
+            "method": "GET",
+            "url": "https://api.example.test/items",
+            "request_kind": "rest",
+        }
+    )
+
+    assert gate.quiesce("keyboard_interrupt") == 1
+    action_results = [
+        item for item in session.decisions if item.get("decision_kind") == "action_result"
+    ]
+    assert action_results[-1]["outcome"] == "interrupted"
+
+    # Quiescence is not deactivation: trusted interruption cleanup can continue
+    # through the same governed run context with a fresh request id.
+    next_admission = gate._admit(
+        {
+            "request_id": "request-cleanup",
+            "plane": "trusted_controller",
+            "method": "DELETE",
+            "url": "https://api.example.test/items/1",
+            "request_kind": "rest",
+        }
+    )
+    assert next_admission["request_id"] == "request-cleanup"
+    gate._feedback(
+        {
+            "request_id": "request-cleanup",
+            "status": 204,
+            "headers": {},
+            "body": "",
+            "metadata": {"attempt": 0},
+        }
+    )
+
+
+def test_transport_gate_deactivate_terminalizes_inflight_admission(tmp_path: Path) -> None:
+    engine = provider_pressure_engine(
+        gate_model(),
+        sleep=lambda seconds: None,
+        now=lambda: datetime(2026, 11, 14, 20, 0, tzinfo=timezone.utc),
+    )
+    session = engine.execution_initialize(execution_context(tmp_path))
+    from acmm.runtime.provider_pressure import runtime_provider_pressure_gate_configuration
+
+    gate = provider_pressure_transport_gate(
+        engine,
+        session,
+        runtime_provider_pressure_gate_configuration(
+            control_path=str(tmp_path / "pph-gate.json"),
+            bind_host="127.0.0.1",
+            bind_port=8765,
+            advertised_url="http://127.0.0.1:8765",
+        ),
+    )
+    gate.activate(run_context(tmp_path))
+    gate._admit(
+        {
+            "request_id": "request-deactivate",
+            "plane": "subject_mcp",
+            "method": "GET",
+            "url": "https://api.example.test/items",
+            "request_kind": "rest",
+        }
+    )
+
+    gate.deactivate()
+    action_results = [
+        item for item in session.decisions if item.get("decision_kind") == "action_result"
+    ]
+    assert action_results[-1]["outcome"] == "interrupted"
+
+
+class _broken_pipe_writer:
+    def write(self, data: bytes) -> int:
+        raise BrokenPipeError("client disconnected")
+
+
+class _broken_pipe_handler:
+    def __init__(self) -> None:
+        self.wfile = _broken_pipe_writer()
+        self.close_connection = False
+
+    def send_response(self, status: int) -> None:
+        self.status = status
+
+    def send_header(self, key: str, value: str) -> None:
+        pass
+
+    def end_headers(self) -> None:
+        pass
+
+
+def test_transport_gate_response_ignores_client_disconnect() -> None:
+    handler = _broken_pipe_handler()
+    provider_pressure_transport_gate._json(
+        handler,
+        HTTPStatus.OK,
+        {"ok": True},
+    )
+    assert handler.close_connection is True

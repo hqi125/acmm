@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import hashlib
 import os
 from pathlib import Path
@@ -9,6 +10,7 @@ import tempfile
 import yaml
 
 from acmm.runtime.interfaces import captured_evidence, executed_run
+from acmm.runtime.interruption import protect_interruption_cleanup
 
 
 class result_write_error(RuntimeError):
@@ -100,10 +102,18 @@ def persist_executed_run_to(
         )
 
         os.rename(temp_dir, final_dir)
-    except Exception as exc:
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir)
+    except BaseException as exc:
+        cleanup_scope = (
+            protect_interruption_cleanup()
+            if isinstance(exc, KeyboardInterrupt)
+            else nullcontext()
+        )
+        with cleanup_scope:
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir)
 
+        if isinstance(exc, KeyboardInterrupt):
+            raise
         if isinstance(exc, result_write_error):
             raise
 

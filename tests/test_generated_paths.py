@@ -6,6 +6,7 @@ from acmm.generated_paths import (
     default_exports_root,
     default_generated_root,
     default_results_root,
+    resolve_results_reference,
 )
 
 
@@ -43,3 +44,33 @@ def test_main_cli_defaults_use_generated_namespaces() -> None:
     assert run_args.results_root == str(default_results_root())
     assert export_args.output_root == str(default_exports_root())
 
+
+
+def test_results_reference_resolves_against_generated_namespace(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    generated = tmp_path / "generated"
+    working = tmp_path / "working"
+    working.mkdir()
+    monkeypatch.setenv("ACMM_GENERATED_ROOT", str(generated))
+    monkeypatch.chdir(working)
+
+    stale_repository_results = working / "results" / "example" / "execution_123"
+    stale_repository_results.mkdir(parents=True)
+    assert resolve_results_reference(
+        "results/example/execution_123"
+    ) == (generated / "results" / "example" / "execution_123").resolve()
+    assert resolve_results_reference(
+        "example/execution_123"
+    ) == (generated / "results" / "example" / "execution_123").resolve()
+    assert resolve_results_reference(
+        "execution_123",
+        experiment_id="example",
+    ) == (generated / "results" / "example" / "execution_123").resolve()
+
+    explicit = working / "legacy-results" / "execution_123"
+    explicit.mkdir(parents=True)
+    assert resolve_results_reference(
+        Path("legacy-results") / "execution_123"
+    ) == explicit.resolve()

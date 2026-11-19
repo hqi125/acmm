@@ -811,7 +811,10 @@ before acquisition. Package runtime code is activated only from the verified imm
 snapshot and is composed with Core-owned adapters. Completed executions persist the Contract
 snapshot, Run Records, evidence, execution summary, package provenance, and optional diagnostics.
 Interrupted acquisition preserves already-written records plus `experiment_interruption.yaml` and
-never writes a completed `experiment_execution.yaml`.
+never writes a completed `experiment_execution.yaml`. Ctrl+C first checkpoints interruption intent,
+quiesces any in-flight provider-gate admission, and then performs trusted cleanup while traffic
+control remains active; additional Ctrl+C presses request a cooperative forced stop at the next safe
+boundary instead of tearing through authority/resource cleanup.
 
 `--capture-runtime-logs` records sanitized container diagnostics without adding them to scientific
 evidence. Provider usage telemetry is likewise operational provenance only. When selected subjects use

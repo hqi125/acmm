@@ -265,3 +265,28 @@ def test_unsafe_experiment_id_cannot_escape_results_root(
 
     assert not (tmp_path.parent / "escaped").exists()
 
+
+
+def test_keyboard_interrupt_mid_write_leaves_no_published_or_temp_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = _sample_result()
+    real_write = result_store_module._write_bytes
+    write_count = 0
+
+    def interrupt_on_second_write(path: Path, content: bytes) -> None:
+        nonlocal write_count
+        write_count += 1
+        if write_count == 2:
+            raise KeyboardInterrupt
+        real_write(path, content)
+
+    monkeypatch.setattr(result_store_module, "_write_bytes", interrupt_on_second_write)
+
+    with pytest.raises(KeyboardInterrupt):
+        persist_executed_run(result, tmp_path)
+
+    experiment_dir = tmp_path / "runtime_execution_fixture_v1"
+    assert not _final_path(tmp_path).exists()
+    assert list(experiment_dir.iterdir()) == []

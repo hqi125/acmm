@@ -416,10 +416,26 @@ as an experiment-selection mechanism.
 
 
 Ctrl+C exits with status 130 after persisting an interruption manifest and a human-readable
-summary when an execution session has already started. An unrecoverable execution/lifecycle error
-after session creation writes `experiment_failure.yaml`, best-effort finalizes pressure/lifecycle
-state, and returns through the CLI cleanup boundary with status 2 instead of exposing a package
-traceback. No completion manifest is written in either case.
+summary when an execution session has already started. Interruption uses a two-phase lifecycle:
+Core first persists a minimal interruption checkpoint and quiesces any in-flight Provider Gate
+admission, then trusted run/materialization/session cleanup executes while the provider-traffic gate
+remains active. Only after provider-facing cleanup reaches a safe boundary does Core finalize the
+pressure run/execution and close the gate. This prevents cleanup traffic from bypassing traffic
+control and prevents an orphan admission from blocking trusted retirement.
+
+While this cleanup is in progress, later Ctrl+C presses are cooperative force requests rather than
+new asynchronous exceptions. Critical authority/resource cleanup continues to a safe boundary;
+optional telemetry, large pressure exports, or summary work may be skipped afterward. Provider Gate
+response writes tolerate clients that disconnected during interruption, so a completed idempotent
+control transition does not surface as a `BrokenPipeError` traceback. Pre-session startup, subject
+authority admission/revocation, run persistence, deferred environment finalization, and post-success
+teardown use the same principle: do not strand ACMM-owned resources merely because SIGINT arrived at
+a transition boundary.
+
+An unrecoverable execution/lifecycle error after session creation writes
+`experiment_failure.yaml`, best-effort finalizes pressure/lifecycle state, and returns through the
+CLI cleanup boundary with status 2 instead of exposing a package traceback. No completion manifest
+is written in either case.
 
 ## Current boundaries
 

@@ -110,10 +110,16 @@ class provider_pressure_transport_gate:
         self._write_control(active=False, run_context=None)
 
     def close(self) -> None:
+        quiesce_error: Exception | None = None
         with self._lock:
-            self._active = None
-            self._admissions.clear()
-            self._write_control(active=False, run_context=None)
+            try:
+                self._quiesce_locked("provider pressure gate closed")
+            except Exception as exc:
+                quiesce_error = exc
+            finally:
+                self._active = None
+                self._admissions.clear()
+                self._write_control(active=False, run_context=None)
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
@@ -125,6 +131,8 @@ class provider_pressure_transport_gate:
             Path(self._configuration.control_path).unlink(missing_ok=True)
         except OSError:
             pass
+        if quiesce_error is not None:
+            raise quiesce_error
 
     def activate(self, context: runtime_provider_pressure_run_context) -> None:
         with self._lock:
@@ -133,10 +141,69 @@ class provider_pressure_transport_gate:
             self._write_control(active=True, run_context=context)
 
     def deactivate(self) -> None:
+        quiesce_error: Exception | None = None
         with self._lock:
-            self._active = None
-            self._admissions.clear()
-            self._write_control(active=False, run_context=None)
+            try:
+                self._quiesce_locked("provider pressure gate deactivated")
+            except Exception as exc:
+                quiesce_error = exc
+            finally:
+                self._active = None
+                self._admissions.clear()
+                self._write_control(active=False, run_context=None)
+        if quiesce_error is not None:
+            raise quiesce_error
+
+    def quiesce(self, detail: str = "provider pressure gate quiesced") -> int:
+        """Terminalize all in-flight transport admissions without deactivating.
+
+        Interruption cleanup may still need trusted provider traffic.  Quiescing
+        records any request whose control exchange was abandoned as interrupted,
+        while keeping the active run context available for subsequent governed
+        cleanup requests.
+        """
+
+        with self._lock:
+            return self._quiesce_locked(detail)
+
+    def _quiesce_locked(self, detail: str) -> int:
+        terminalized = 0
+        errors: list[str] = []
+        for request_id, admission in self._admissions.items():
+            if admission.terminal:
+                continue
+            try:
+                self._engine.action_result_observe(
+                    self._session,
+                    admission.context,
+                    runtime_provider_pressure_action_result_event(
+                        outcome="interrupted",
+                        action_id=admission.action.action_id,
+                        decision_id=admission.decision_id,
+                        features=admission.features,
+                        metadata={
+                            "transport_plane": admission.request.plane,
+                            "transport_request_kind": admission.request.request_kind,
+                            "transport_url": admission.request.url,
+                            "transport_method": admission.request.method,
+                            "detail": str(detail or "transport quiesced"),
+                            "control_request_id": request_id,
+                        },
+                    ),
+                )
+            except Exception as exc:
+                errors.append(
+                    f"{request_id}: {str(exc) or exc.__class__.__name__}"
+                )
+                continue
+            admission.terminal = True
+            terminalized += 1
+        if errors:
+            raise RuntimeError(
+                "Could not quiesce all Provider Pressure gate admissions: "
+                + "; ".join(errors)
+            )
+        return terminalized
 
     def _write_control(
         self,
@@ -429,11 +496,18 @@ class provider_pressure_transport_gate:
         value: Mapping[str, Any],
     ) -> None:
         data = (json.dumps(dict(value), sort_keys=True) + "\n").encode("utf-8")
-        handler.send_response(int(status))
-        handler.send_header("Content-Type", "application/json")
-        handler.send_header("Content-Length", str(len(data)))
-        handler.end_headers()
-        handler.wfile.write(data)
+        try:
+            handler.send_response(int(status))
+            handler.send_header("Content-Type", "application/json")
+            handler.send_header("Content-Length", str(len(data)))
+            handler.end_headers()
+            handler.wfile.write(data)
+        except OSError:
+            # During Ctrl+C or client-side timeout recovery the caller can leave
+            # after Core has already completed the idempotent control operation.
+            # The state transition is authoritative; a dead response socket is
+            # not a gate-server failure and should not emit a thread traceback.
+            handler.close_connection = True
 
 
 class _gate_unavailable(RuntimeError):
