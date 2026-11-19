@@ -2221,3 +2221,37 @@ def test_keyboard_interrupt_quiesces_gate_before_provider_facing_cleanup(
     assert ordering.index("materialization_finalize") < ordering.index("session_finalize")
     assert ordering.index("session_finalize") < ordering.index("gate_deactivate")
     assert ordering.index("gate_deactivate") < ordering.index("gate_close")
+
+def test_system_exit_from_subject_becomes_invalid_attempt_instead_of_process_exit(
+    tmp_path: Path,
+) -> None:
+    contract = load_contract(CONTRACT_PATH)
+    adapter = sequence_adapter()
+
+    def exit_subject(*args, **kwargs):
+        del args, kwargs
+        raise SystemExit("synthetic subject SystemExit")
+
+    adapter.execute = exit_subject  # type: ignore[method-assign]
+
+    result = execute_experiment(
+        contract=contract,
+        contract_path=CONTRACT_PATH,
+        registry=_registry(adapter),
+        results_root=tmp_path,
+        harness_version="test",
+        run_indices=(0,),
+        max_attempts_per_run=1,
+        now=_clock(),
+        execution_id_factory=lambda: EXECUTION_ID,
+        run_id_factory=_run_id_factory(),
+        sleep=lambda _: None,
+    )
+
+    assert result.unresolved_run_indices == (0,)
+    attempt = result.slots[0].attempts[0]
+    assert attempt.validity == "invalid"
+    record = yaml.safe_load((attempt.result_path / "run_record.yaml").read_text(encoding="utf-8"))
+    assert record["execution"]["termination"] == "harness_error"
+    assert record["execution"]["failure"]["kind"] == "orchestration_error"
+    assert record["execution"]["failure"]["message"] == "synthetic subject SystemExit"

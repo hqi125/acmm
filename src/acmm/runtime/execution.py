@@ -314,7 +314,7 @@ def execute_planned_run(
                         planned.subject_id,
                         subject_admission,
                     )
-                except Exception:
+                except BaseException:
                     pass
                 finally:
                     subject_admission = None
@@ -339,7 +339,7 @@ def execute_planned_run(
                 )
         raise
 
-    except Exception as exc:
+    except BaseException as exc:
         cleanup_error = None
         if environment_session is not None and not environment_session.uses_runtime_lifecycle:
             cleanup_error = _best_effort_finalize_environment(
@@ -779,7 +779,7 @@ def _best_effort_finalize_environment(
             reset,
             outcome=outcome,
         )
-    except Exception as exc:
+    except BaseException as exc:
         return str(exc) or exc.__class__.__name__
     return None
 

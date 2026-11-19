@@ -98,7 +98,9 @@ def apply_staged_integration_resources(
                     else lambda message, iid=integration_id: progress(iid, message)
                 ),
             )
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             raise experiment_integration_error(
                 f"Integration '{integration_id}' shared resource apply failed: {exc}"
             ) from exc
@@ -167,7 +169,7 @@ def acquire_staged_integration_resources(
                     try:
                         if resource.is_running(context):
                             resource.down(context)
-                    except Exception as cleanup_exc:
+                    except BaseException as cleanup_exc:
                         cleanup_errors.append(
                             f"{integration_id}: {cleanup_exc}"
                         )
@@ -181,7 +183,7 @@ def acquire_staged_integration_resources(
                         previous_item.integration.shared_resource.down(
                             _context(package, previous.integration_id, runtime_root)
                         )
-                    except Exception as cleanup_exc:
+                    except BaseException as cleanup_exc:
                         cleanup_errors.append(
                             f"{previous.integration_id}: {cleanup_exc}"
                         )
@@ -230,7 +232,9 @@ def restore_staged_integration_resources(
             )
             if progress is not None:
                 progress(lease.integration_id, "restored")
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             errors.append((lease.integration_id, str(exc)))
             if progress is not None:
                 progress(lease.integration_id, "restore-failed")
@@ -247,9 +251,17 @@ def doctor_staged_integration_resources(
         resource = item.integration.shared_resource
         if resource is None:
             continue
-        report = resource.doctor(
-            _context(package, item.component.integration_id, runtime_root)
-        )
+        try:
+            report = resource.doctor(
+                _context(package, item.component.integration_id, runtime_root)
+            )
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            raise experiment_integration_error(
+                f"Integration '{item.component.integration_id}' shared resource doctor "
+                f"failed: {str(exc) or exc.__class__.__name__}"
+            ) from exc
         if not isinstance(report, integration_report):
             raise experiment_integration_error(
                 f"Integration '{item.component.integration_id}' shared resource doctor "
@@ -301,18 +313,24 @@ def down_staged_integration_resources(
 
         try:
             initially_running = bool(resource.is_running(context))
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             errors.append(f"initial state: {exc}")
 
         try:
             resource.down(context)
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             errors.append(f"shutdown: {exc}")
 
         try:
             running_after = bool(resource.is_running(context))
             value = dict(resource.status(context))
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             errors.append(f"final state: {exc}")
 
         results.append(

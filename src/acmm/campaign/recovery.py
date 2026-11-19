@@ -142,7 +142,7 @@ def reconcile_campaign(artifact: campaign_artifact) -> campaign_reconciliation_r
                 detail="keyboard_interrupt_during_recovery",
             )
             raise
-        except Exception as exc:
+        except BaseException as exc:
             detail = str(exc) or exc.__class__.__name__
             _write_recovery(
                 session_dir,

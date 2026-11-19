@@ -226,7 +226,7 @@ def create_campaign(
             )
         _write_json(temp_dir / "campaign.json", manifest)
         os.rename(temp_dir, final_dir)
-    except Exception:
+    except BaseException:
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
         raise

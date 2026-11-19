@@ -622,6 +622,7 @@ def _reconcile_one_execution(
 
     persisted_valid_indices: set[int] = set()
     finalized_indices: set[int] = set()
+    artifact_finalized_indices: set[int] = set()
     runs_dir = session_dir / "runs"
     if runs_dir.exists():
         for record_path in runs_dir.glob("run_*/run_record.yaml"):
@@ -638,6 +639,19 @@ def _reconcile_one_execution(
                 continue
             if execution.get("validity") == "valid":
                 persisted_valid_indices.add(index)
+                finalization_path = record_path.parent / "environment_finalization.yaml"
+                if finalization_path.is_file():
+                    try:
+                        finalization = yaml.safe_load(
+                            finalization_path.read_text(encoding="utf-8")
+                        )
+                    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+                        finalization = None
+                    if (
+                        isinstance(finalization, dict)
+                        and finalization.get("ok") is True
+                    ):
+                        artifact_finalized_indices.add(index)
 
     event_log = read_campaign_events(session_dir / "campaign_events.jsonl")
     for event in event_log.events:
@@ -647,6 +661,7 @@ def _reconcile_one_execution(
         if event.get("event") == "attempt_finalized":
             finalized_indices.add(index)
 
+    finalized_indices.update(artifact_finalized_indices)
     observed_indices = persisted_valid_indices & finalized_indices
     observed_ids = [logical_ids[index] for index in selected_indices if index in observed_indices]
     pending_ids = [

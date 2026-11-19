@@ -191,7 +191,7 @@ def create_campaign_merge(
         validate_campaign_merge_manifest(manifest)
         _write_json(temp_dir / "campaign_merge.json", manifest)
         os.rename(temp_dir, final_dir)
-    except Exception:
+    except BaseException:
         if temp_dir.exists():
             shutil.rmtree(temp_dir)
         raise

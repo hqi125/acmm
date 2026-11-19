@@ -79,7 +79,9 @@ def load_staged_experiment_integration(
 
     try:
         integration = entrypoint(context)
-    except Exception as exc:
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            raise
         raise experiment_integration_error(
             f"Integration entrypoint '{component.entrypoint}' failed: {exc}"
         ) from exc
@@ -138,7 +140,9 @@ def compose_staged_experiment_profile_integrations(
         profile_type = type(composed)
         try:
             realized = binding.profile.compose_profile(context, composed)
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             raise experiment_integration_error(
                 f"Integration '{component.integration_id}' failed to compose profile "
                 f"for '{infrastructure_subject}': {exc}"
@@ -183,7 +187,9 @@ def compose_staged_experiment_manager_integrations(
         )
         try:
             realized = binding.manager.compose_manager(context, composed)
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             raise experiment_integration_error(
                 f"Integration '{component.integration_id}' failed to compose manager "
                 f"for '{infrastructure_subject}': {exc}"
@@ -288,8 +294,10 @@ class staged_subject_admission_controller:
                         handle=handle,
                     )
                 )
-        except Exception as exc:
+        except BaseException as exc:
             cleanup_errors = self._revoke_entries(entries)
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             detail = str(exc) or exc.__class__.__name__
             if cleanup_errors:
                 detail += " Runtime admission cleanup also failed: " + "; ".join(cleanup_errors)
@@ -330,7 +338,9 @@ class staged_subject_admission_controller:
                             "runtime admission revoke() must return a mapping or None"
                         )
                     observations[entry.integration_id] = dict(value)
-            except Exception as exc:
+            except BaseException as exc:
+                if isinstance(exc, KeyboardInterrupt):
+                    raise
                 errors.append(
                     f"{entry.integration_id}: {str(exc) or exc.__class__.__name__}"
                 )
@@ -346,7 +356,7 @@ class staged_subject_admission_controller:
         for entry in reversed(entries):
             try:
                 entry.admission.revoke(entry.context, entry.manager, entry.handle)
-            except Exception as exc:
+            except BaseException as exc:
                 errors.append(
                     f"{entry.integration_id}: {str(exc) or exc.__class__.__name__}"
                 )
@@ -495,8 +505,10 @@ def _load_integration_module(
     sys.dont_write_bytecode = True
     try:
         spec.loader.exec_module(module)
-    except Exception as exc:
+    except BaseException as exc:
         _remove_failed_integration_modules(module_name, modules_before)
+        if isinstance(exc, KeyboardInterrupt):
+            raise
         raise experiment_integration_error(
             f"Could not import Experiment Package integration "
             f"'{integration_root}': {exc}"

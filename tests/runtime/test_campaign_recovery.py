@@ -313,3 +313,35 @@ def test_typed_interruption_without_recovery_hook_remains_resumable(
     )
     assert manifest["execution"]["status"] == "interrupted"
     assert manifest["recovery"]["status"] == "not_required"
+
+
+def test_campaign_recovery_contains_system_exit_and_persists_failed_recovery(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    artifact, context = _unclean_campaign(tmp_path, monkeypatch)
+
+    class _recovery:
+        def reconcile(self, recovery_context):
+            del recovery_context
+            raise SystemExit("synthetic recovery SystemExit")
+
+    monkeypatch.setattr(
+        "acmm.campaign.recovery.load_campaign_package",
+        lambda artifact: SimpleNamespace(runtime=object()),
+    )
+    monkeypatch.setattr(
+        "acmm.campaign.recovery.load_staged_experiment_runtime",
+        lambda package: SimpleNamespace(
+            runtime=SimpleNamespace(lifecycle=object(), recovery=_recovery())
+        ),
+    )
+
+    with pytest.raises(campaign_error, match="synthetic recovery SystemExit"):
+        reconcile_campaign(artifact)
+
+    manifest = json.loads(
+        (context.session_dir / "campaign_execution.json").read_text(encoding="utf-8")
+    )
+    assert manifest["recovery"]["status"] == "failed"
+    assert manifest["recovery"]["detail"] == "synthetic recovery SystemExit"

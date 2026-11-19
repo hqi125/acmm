@@ -95,7 +95,9 @@ def load_staged_experiment_runtime(
 
     try:
         runtime = entrypoint(context)
-    except Exception as exc:
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            raise
         raise experiment_runtime_error(
             f"Runtime entrypoint '{component.entrypoint}' failed: {exc}"
         ) from exc
@@ -138,7 +140,9 @@ def doctor_staged_experiment_runtime(
     for diagnostic_id, diagnostic in loaded.runtime.diagnostics.items():
         try:
             report = diagnostic.doctor()
-        except Exception as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             detail = str(exc) or exc.__class__.__name__
             report = runtime_diagnostic_report(
                 checks=(
@@ -188,7 +192,9 @@ def run_staged_experiment_apparatus_action(
             result = progressive(progress)
         else:
             result = action.run()
-    except Exception as exc:
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            raise
         raise experiment_runtime_error(
             f"Experiment apparatus action '{action_id}' failed: {exc}"
         ) from exc
@@ -225,7 +231,9 @@ def run_staged_experiment_apparatus_cleanup(
             )
         else:
             result = cleanup.cleanup(execution_path, preview=preview)
-    except Exception as exc:
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            raise
         raise experiment_runtime_error(
             f"Experiment apparatus cleanup failed: {exc}"
         ) from exc
@@ -323,8 +331,10 @@ def _load_runtime_module(
     sys.dont_write_bytecode = True
     try:
         spec.loader.exec_module(module)
-    except Exception as exc:
+    except BaseException as exc:
         _remove_failed_runtime_modules(module_name, modules_before)
+        if isinstance(exc, KeyboardInterrupt):
+            raise
         raise experiment_runtime_error(
             f"Could not import Experiment Package runtime '{runtime_root}': {exc}"
         ) from exc

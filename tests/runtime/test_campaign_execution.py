@@ -823,3 +823,49 @@ def test_interrupted_campaign_selection_resumes_in_new_execution(
     assert resumed_manifest["execution"]["resumed_from_execution_id"] == (
         "execution-source"
     )
+
+def test_reconciliation_accepts_successful_environment_finalization_without_journal_tail(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package, _ = install_test_package(tmp_path, monkeypatch)
+    artifact = create_campaign(
+        package,
+        tmp_path / "generated",
+        campaign_id="campaign-a",
+    )
+    run = frozen_campaign_plan(artifact).runs[0]
+    context = create_campaign_execution_context(
+        artifact,
+        (run,),
+        execution_id="execution-a",
+    )
+    context.session_dir.mkdir(parents=True)
+    journal = initialize_campaign_execution(context)
+    journal.emit("subject_execution_started", {"run_index": run.run_index, "attempt": 1})
+
+    run_dir = context.session_dir / "runs" / "run_000000_attempt-a"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run_record.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "run": {"run_index": run.run_index},
+                "execution": {"validity": "valid"},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "environment_finalization.yaml").write_text(
+        yaml.safe_dump(
+            {"ok": True, "result": {"restored": True}},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    reconcile_campaign_executions(artifact)
+    snapshot = inspect_campaign_status(artifact)
+
+    assert snapshot.runs.observed == 1
+    assert snapshot.runs.pending == artifact.manifest["campaign"]["run_count"] - 1

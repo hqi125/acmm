@@ -63,7 +63,7 @@ def stage_experiment_package(
             package.package_sha256,
             contract_schema_path=contract_schema_path,
         )
-    except Exception:
+    except BaseException:
         if temporary_root.exists():
             shutil.rmtree(temporary_root)
         raise

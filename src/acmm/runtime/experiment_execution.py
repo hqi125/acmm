@@ -332,7 +332,7 @@ def execute_experiment(
             session_dir / "contract.yaml",
             contract_bytes,
         )
-    except Exception:
+    except BaseException:
         _remove_empty_session(session_dir)
         raise
 
@@ -387,7 +387,7 @@ def execute_experiment(
             if pressure_gate is not None:
                 try:
                     pressure_gate.close()
-                except Exception as exc:
+                except BaseException as exc:
                     report(
                         "WARNING: Provider Pressure gate cleanup failed during "
                         f"setup interruption: {exc}"
@@ -403,7 +403,7 @@ def execute_experiment(
                             detail=f"keyboard_interrupt:{stage}",
                         ),
                     )
-                except Exception as exc:
+                except BaseException as exc:
                     report(
                         "WARNING: Runtime lifecycle session finalization failed "
                         f"during setup interruption: {exc}"
@@ -759,7 +759,7 @@ def execute_experiment(
                     },
                 )
             succeeded = True
-        except Exception as exc:
+        except BaseException as exc:
             if materialization_observable:
                 emit(
                     "materialization_finalization_failed",
@@ -1018,7 +1018,7 @@ def execute_experiment(
                     "resolved": resolved,
                 },
             )
-        except Exception as exc:
+        except BaseException as exc:
             if not suppress_errors:
                 raise
             report(
@@ -1029,7 +1029,7 @@ def execute_experiment(
             if pressure_gate is not None:
                 try:
                     pressure_gate.deactivate()
-                except Exception as exc:
+                except BaseException as exc:
                     if not suppress_errors:
                         raise
                     report(
@@ -1067,7 +1067,7 @@ def execute_experiment(
                         "reason": "forced_interruption_cleanup",
                     },
                 )
-        except Exception as exc:
+        except BaseException as exc:
             if not suppress_errors:
                 raise
             report(
@@ -1078,7 +1078,7 @@ def execute_experiment(
             if pressure_gate is not None:
                 try:
                     pressure_gate.close()
-                except Exception as exc:
+                except BaseException as exc:
                     if not suppress_errors:
                         raise
                     report(
@@ -1756,7 +1756,7 @@ def execute_experiment(
                             "Interruption cleanup: terminalized "
                             f"{terminalized} in-flight provider request(s)."
                         )
-                except Exception as exc:
+                except BaseException as exc:
                     report(
                         "WARNING: Provider Gate quiescence failed during Ctrl+C "
                         f"cleanup: {exc}"
@@ -1804,7 +1804,7 @@ def execute_experiment(
                             ),
                         ),
                     )
-                except Exception as exc:
+                except BaseException as exc:
                     report(
                         "WARNING: Runtime lifecycle session finalization failed after "
                         f"Ctrl+C: {exc}"
@@ -1854,7 +1854,7 @@ def execute_experiment(
             # minimal interruption artifact written above remains authoritative.
             try:
                 persist_interruption_checkpoint(provider_usage)
-            except Exception as exc:
+            except BaseException as exc:
                 report(
                     "WARNING: Could not enrich interruption checkpoint after cleanup: "
                     f"{exc}"
@@ -1885,7 +1885,7 @@ def execute_experiment(
             "selected run(s) resolved before Ctrl+C."
         )
         raise experiment_execution_interrupted(result) from None
-    except Exception as exc:
+    except BaseException as exc:
         detail = str(exc) or exc.__class__.__name__
         failed_run_index = (
             active_planned.run_index
@@ -1957,7 +1957,7 @@ def execute_experiment(
             if pressure_gate is not None:
                 try:
                     pressure_gate.quiesce(f"execution_failure:{detail}")
-                except Exception as gate_exc:
+                except BaseException as gate_exc:
                     report(
                         "WARNING: Provider Gate quiescence failed after execution "
                         f"error: {gate_exc}"
@@ -1989,7 +1989,7 @@ def execute_experiment(
                             detail=detail,
                         ),
                     )
-                except Exception as finalize_exc:
+                except BaseException as finalize_exc:
                     session_finalize_error = (
                         str(finalize_exc) or finalize_exc.__class__.__name__
                     )
@@ -2044,7 +2044,7 @@ def execute_experiment(
                     failure_detail=failure_detail,
                     ended_at=ended_at,
                 )
-            except Exception as checkpoint_exc:
+            except BaseException as checkpoint_exc:
                 report(
                     "WARNING: Could not enrich failure checkpoint after cleanup: "
                     f"{checkpoint_exc}"
@@ -2402,7 +2402,9 @@ def _begin_provider_usage_monitor(
 
     try:
         monitor.begin()
-    except Exception as exc:
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            raise
         report(f"Provider usage telemetry unavailable before execution: {exc}")
         return False
     return True
@@ -2418,7 +2420,9 @@ def _finish_provider_usage_monitor(
 
     try:
         return dict(monitor.finish())
-    except Exception as exc:
+    except BaseException as exc:
+        if isinstance(exc, KeyboardInterrupt):
+            raise
         report(f"Provider usage telemetry unavailable after execution: {exc}")
         return None
 

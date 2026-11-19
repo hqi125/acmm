@@ -586,6 +586,21 @@ def _ensure_runtime_ready(
                 indent=4,
             )
             time.sleep(delay)
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:
+            if lease.started_by_acmm:
+                try:
+                    lease.release()
+                except BaseException as cleanup_exc:
+                    raise infrastructure_error(
+                        f"Unexpected runtime startup failure for '{subject_id}' ({exc}); "
+                        f"cleanup also failed: {cleanup_exc}"
+                    ) from cleanup_exc
+            raise infrastructure_error(
+                f"Unexpected runtime startup failure for '{subject_id}': "
+                f"{str(exc) or exc.__class__.__name__}"
+            ) from exc
 
 
 def _release_runtime_leases(
@@ -600,7 +615,9 @@ def _release_runtime_leases(
             print("Runtime release:")
             print(f"  {subject_id}:")
             _print_labeled_fields([("result", "stopped")], indent=4)
-        except (infrastructure_error, profile_error, docker_error, OSError, ValueError) as exc:
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                raise
             errors.append(f"{subject_id}: {exc}")
     return tuple(errors)
 
@@ -1848,7 +1865,7 @@ def _run_experiment(
         for error in cleanup_errors:
             print(f"WARNING: Runtime cleanup failed: {error}", file=sys.stderr)
         return 2
-    except Exception as exc:
+    except BaseException as exc:
         # Last-resort CLI safety boundary. Runtime/package exceptions should
         # normally be converted into experiment_execution_failed with a durable
         # failure manifest, but an unexpected exception must still release

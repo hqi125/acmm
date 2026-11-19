@@ -110,11 +110,11 @@ class provider_pressure_transport_gate:
         self._write_control(active=False, run_context=None)
 
     def close(self) -> None:
-        quiesce_error: Exception | None = None
+        quiesce_error: BaseException | None = None
         with self._lock:
             try:
                 self._quiesce_locked("provider pressure gate closed")
-            except Exception as exc:
+            except BaseException as exc:
                 quiesce_error = exc
             finally:
                 self._active = None
@@ -141,11 +141,11 @@ class provider_pressure_transport_gate:
             self._write_control(active=True, run_context=context)
 
     def deactivate(self) -> None:
-        quiesce_error: Exception | None = None
+        quiesce_error: BaseException | None = None
         with self._lock:
             try:
                 self._quiesce_locked("provider pressure gate deactivated")
-            except Exception as exc:
+            except BaseException as exc:
                 quiesce_error = exc
             finally:
                 self._active = None
@@ -191,7 +191,7 @@ class provider_pressure_transport_gate:
                         },
                     ),
                 )
-            except Exception as exc:
+            except BaseException as exc:
                 errors.append(
                     f"{request_id}: {str(exc) or exc.__class__.__name__}"
                 )
@@ -267,7 +267,7 @@ class provider_pressure_transport_gate:
         except _gate_unavailable as exc:
             self._json(handler, HTTPStatus.CONFLICT, {"error": str(exc)})
             return
-        except Exception as exc:
+        except BaseException as exc:
             self._json(
                 handler,
                 HTTPStatus.INTERNAL_SERVER_ERROR,
