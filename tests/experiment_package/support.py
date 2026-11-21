@@ -18,7 +18,8 @@ PACKAGE_SMOKE_CONTRACT = (
     ROOT / "tests" / "fixtures" / "contracts" / "valid" / "package_smoke.yaml"
 )
 
-SMOKE_RUNTIME_SOURCE = '''from acmm.experiment_api import (
+SMOKE_RUNTIME_SOURCE = '''from acmm.adjudication_api import experiment_adjudicator
+from acmm.experiment_api import (
     experiment_runtime,
     harness_capabilities,
     judgment_result,
@@ -45,6 +46,13 @@ def build_runtime(context):
         ),
         evaluators={"always_compliant": always_compliant_evaluator()},
     )
+
+
+def build_adjudicator(context):
+    del context
+    return experiment_adjudicator(
+        evaluators={"always_compliant": always_compliant_evaluator()},
+    )
 '''
 
 
@@ -55,6 +63,7 @@ def install_test_package(
     contract_path: Path = PACKAGE_SMOKE_CONTRACT,
     runtime_source: str = SMOKE_RUNTIME_SOURCE,
     source_name: str = "package-source",
+    with_adjudication: bool = False,
 ) -> tuple[experiment_package, Path]:
     runtime_root = tmp_path / "runtime"
     monkeypatch.setenv("ACMM_RUNTIME_ROOT", str(runtime_root))
@@ -67,16 +76,23 @@ def install_test_package(
 
     contract = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
     experiment_id = contract["experiment"]["id"]
-    (source / "experiment-package.yaml").write_text(
-        'schema_version: "0.1"\n'
+    manifest = (
+        f'schema_version: "{"0.5" if with_adjudication else "0.1"}"\n'
         f"experiment_id: {experiment_id}\n"
         "contract: experiment.yaml\n"
         "runtime:\n"
         '  api_version: "0.1"\n'
         "  root: runtime\n"
-        "  entrypoint: build_runtime\n",
-        encoding="utf-8",
+        "  entrypoint: build_runtime\n"
     )
+    if with_adjudication:
+        manifest += (
+            "adjudication:\n"
+            '  api_version: "0.1"\n'
+            "  root: runtime\n"
+            "  entrypoint: build_adjudicator\n"
+        )
+    (source / "experiment-package.yaml").write_text(manifest, encoding="utf-8")
     runtime = source / "runtime"
     runtime.mkdir()
     (runtime / "__init__.py").write_text(runtime_source, encoding="utf-8")

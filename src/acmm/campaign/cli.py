@@ -18,6 +18,7 @@ from acmm.campaign.model import (
     load_campaign,
 )
 from acmm.campaign.merge import create_campaign_merge
+from acmm.campaign.adjudication import create_campaign_adjudication
 from acmm.campaign.recovery import reconcile_campaign
 from acmm.campaign.execution import (
     campaign_execution_lock,
@@ -153,6 +154,33 @@ def register_campaign_commands(subparsers: argparse._SubParsersAction) -> None:
     )
     status_parser.set_defaults(handler=_campaign_status)
 
+    adjudicate_parser = commands.add_parser(
+        "adjudicate",
+        help="Re-adjudicate accepted Campaign evidence with an explicit adjudicator package.",
+    )
+    adjudicate_parser.add_argument(
+        "campaign_id",
+        help="Campaign ID returned by 'acmm campaign create'.",
+    )
+    adjudicate_parser.add_argument(
+        "--package",
+        required=True,
+        metavar="EXPERIMENT[@SHA256]",
+        help=(
+            "Installed Experiment Package providing adjudication code. Its Contract "
+            "must exactly match the frozen Campaign Contract."
+        ),
+    )
+    adjudicate_parser.add_argument(
+        "--generated-root",
+        default=str(default_generated_root()),
+        help=(
+            "Generated artifact root containing campaigns "
+            f"(default: {default_generated_root()})."
+        ),
+    )
+    adjudicate_parser.set_defaults(handler=_campaign_adjudicate)
+
     merge_parser = commands.add_parser(
         "merge",
         help="Assemble accepted campaign observations into one immutable merged product.",
@@ -160,6 +188,11 @@ def register_campaign_commands(subparsers: argparse._SubParsersAction) -> None:
     merge_parser.add_argument(
         "campaign_id",
         help="Campaign ID returned by 'acmm campaign create'.",
+    )
+    merge_parser.add_argument(
+        "--adjudication",
+        metavar="ADJUDICATION_ID",
+        help="Apply one immutable Campaign adjudication when assembling merged Run Records.",
     )
     merge_parser.add_argument(
         "--allow-partial",
@@ -513,6 +546,40 @@ def _campaign_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _campaign_adjudicate(args: argparse.Namespace) -> int:
+    runtime_root = default_runtime_root().expanduser().resolve()
+    try:
+        artifact = load_campaign(
+            args.campaign_id,
+            Path(args.generated_root),
+        )
+        package = resolve_installed_experiment_package(runtime_root, args.package)
+        with campaign_execution_lock(artifact):
+            adjudicated = create_campaign_adjudication(artifact, package)
+    except (
+        campaign_error,
+        experiment_package_error,
+        experiment_package_store_error,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    population = adjudicated.manifest["population"]
+    identity = adjudicated.manifest["adjudication"]
+    print("Campaign adjudication created:")
+    print(f"  id:                   {adjudicated.adjudication_id}")
+    print(f"  campaign:             {artifact.campaign_id}")
+    print(f"  acquisition package:  {identity['acquisition_package_sha256']}")
+    print(f"  adjudicator package:  {identity['adjudicator_package_sha256']}")
+    print(f"  adjudicated:          {population['adjudicated']}/{population['total']}")
+    print(f"  changed runs:         {population['changed_runs']}")
+    print(f"  changed judgments:    {population['changed_judgments']}")
+    print(f"  manifest:             {adjudicated.manifest_path}")
+    return 0
+
+
 def _campaign_merge(args: argparse.Namespace) -> int:
     try:
         artifact = load_campaign(
@@ -523,6 +590,7 @@ def _campaign_merge(args: argparse.Namespace) -> int:
             merged = create_campaign_merge(
                 artifact,
                 allow_partial=bool(args.allow_partial),
+                adjudication_id=args.adjudication,
             )
     except (campaign_error, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -535,6 +603,8 @@ def _campaign_merge(args: argparse.Namespace) -> int:
     print(f"  completeness:    {merged.manifest['merge']['completeness']}")
     print(f"  observed:        {population['observed']}/{population['total']}")
     print(f"  pending:         {population['pending']}")
+    if "adjudication" in merged.manifest:
+        print(f"  adjudication:    {merged.manifest['adjudication']['id']}")
     print(f"  manifest:        {merged.manifest_path}")
     print(f"  runs:            {merged.path / 'runs'}")
     return 0

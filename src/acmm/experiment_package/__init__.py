@@ -1,3 +1,8 @@
+from acmm.experiment_package.adjudication import (
+    experiment_adjudication_error,
+    loaded_experiment_adjudicator,
+    load_staged_experiment_adjudicator,
+)
 from acmm.experiment_package.resources import (
     acquire_staged_integration_resources,
     apply_staged_integration_resources,
@@ -26,6 +31,7 @@ from acmm.experiment_package.loader import (
     load_experiment_package,
 )
 from acmm.experiment_package.model import (
+    experiment_adjudication_component,
     experiment_analysis_component,
     experiment_campaign_materialization,
     experiment_integration_component,
@@ -67,6 +73,9 @@ from acmm.experiment_package.staging import (
 
 
 __all__ = [
+    "load_staged_experiment_adjudicator",
+    "loaded_experiment_adjudicator",
+    "experiment_adjudication_error",
     "deployment_provenance",
     "experiment_deployment_provenance",
     "experiment_package_provenance",
@@ -89,6 +98,7 @@ __all__ = [
     "compose_staged_experiment_profile_integrations",
     "compose_staged_experiment_manager_integrations",
     "compose_staged_subject_admission_controller",
+    "experiment_adjudication_component",
     "experiment_analysis_component",
     "experiment_campaign_materialization",
     "experiment_integration_component",

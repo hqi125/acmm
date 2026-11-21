@@ -28,10 +28,11 @@ from acmm.record.validator import (
 )
 
 
-CAMPAIGN_MERGE_SCHEMA_VERSION = "0.2"
+CAMPAIGN_MERGE_SCHEMA_VERSION = "0.3"
 _CAMPAIGN_MERGE_SCHEMA_FILES = {
     "0.1": "campaign-merge-v0.1.schema.json",
     "0.2": "campaign-merge-v0.2.schema.json",
+    "0.3": "campaign-merge-v0.3.schema.json",
 }
 
 
@@ -44,7 +45,7 @@ class campaign_merge_artifact:
 
 
 @dataclass(frozen=True)
-class _accepted_observation:
+class accepted_campaign_observation:
     logical_run_id: str
     run_index: int
     subject_id: str
@@ -66,6 +67,7 @@ def create_campaign_merge(
     allow_partial: bool = False,
     merge_id: str | None = None,
     now: Callable[[], datetime] | None = None,
+    adjudication_id: str | None = None,
 ) -> campaign_merge_artifact:
     status = inspect_campaign_status(artifact)
     if status.runs.active or status.executions.active:
@@ -84,7 +86,11 @@ def create_campaign_merge(
             f"total={status.runs.total}."
         )
 
-    accepted = _collect_accepted_observations(artifact)
+    contract = _load_yaml_mapping(
+        artifact.path / artifact.manifest["campaign"]["contract_artifact"],
+        "frozen campaign Contract",
+    )
+    accepted = collect_accepted_campaign_observations(artifact)
     expected_observed = set(status.observed_run_ids)
     actual_observed = set(accepted)
     if actual_observed != expected_observed:
@@ -96,6 +102,15 @@ def create_campaign_merge(
         if unexpected:
             details.append("unexpected accepted observation(s): " + ", ".join(unexpected))
         raise campaign_error("Campaign merge observation mismatch: " + "; ".join(details))
+
+    adjudication_manifest = None
+    adjudication_judgments: dict[str, list[dict[str, Any]]] = {}
+    if adjudication_id is not None:
+        adjudication_manifest, adjudication_judgments = _load_adjudication_overlay(
+            artifact,
+            adjudication_id,
+            accepted,
+        )
 
     realized_merge_id = merge_id if merge_id is not None else str(uuid.uuid4())
     _validate_identifier("merge ID", realized_merge_id)
@@ -133,6 +148,26 @@ def create_campaign_merge(
             destination = temp_dir / "runs" / destination_name
             _copy_result_tree(observation.source_result_dir, destination)
             merged_record = destination / "run_record.yaml"
+            revised_judgments = adjudication_judgments.get(logical_run_id)
+            if revised_judgments is not None:
+                merged_value = load_run_record(merged_record)
+                merged_value["judgments"] = revised_judgments
+                merged_record.write_text(
+                    yaml.safe_dump(merged_value, sort_keys=False),
+                    encoding="utf-8",
+                )
+                validation = validate_run_record(
+                    merged_value,
+                    load_run_record_schema(default_run_record_schema_path()),
+                    contract,
+                    expected_contract_sha256=artifact.manifest["package"]["contract_sha256"],
+                )
+                if not validation.is_valid:
+                    issue = validation.errors[0]
+                    raise campaign_error(
+                        f"Adjudicated merged Run Record '{merged_record}' is invalid at "
+                        f"'{issue.path}': [{issue.code}] {issue.message}"
+                    )
             observations.append(
                 {
                     "logical_run_id": logical_run_id,
@@ -188,6 +223,21 @@ def create_campaign_merge(
             },
             "observations": observations,
         }
+        if adjudication_manifest is not None:
+            identity = adjudication_manifest["adjudication"]
+            adjudication_path = (
+                artifact.path
+                / "adjudications"
+                / f"adjudication_{identity['id']}"
+                / "campaign_adjudication.json"
+            )
+            manifest["adjudication"] = {
+                "id": identity["id"],
+                "manifest": _relative_to_campaign(artifact, adjudication_path),
+                "manifest_sha256": _sha256_file(adjudication_path),
+                "adjudicator_package_sha256": identity["adjudicator_package_sha256"],
+                "adjudication_component_sha256": identity["adjudication_component_sha256"],
+            }
         validate_campaign_merge_manifest(manifest)
         _write_json(temp_dir / "campaign_merge.json", manifest)
         os.rename(temp_dir, final_dir)
@@ -229,16 +279,16 @@ def validate_campaign_merge_manifest(manifest: Mapping[str, Any]) -> None:
         )
 
 
-def _collect_accepted_observations(
+def collect_accepted_campaign_observations(
     artifact: campaign_artifact,
-) -> dict[str, _accepted_observation]:
+) -> dict[str, accepted_campaign_observation]:
     contract = _load_yaml_mapping(
         artifact.path / artifact.manifest["campaign"]["contract_artifact"],
         "frozen campaign Contract",
     )
     record_schema = load_run_record_schema(default_run_record_schema_path())
     logical_by_id = {item["run_id"]: item for item in artifact.manifest["runs"]}
-    accepted: dict[str, _accepted_observation] = {}
+    accepted: dict[str, accepted_campaign_observation] = {}
     executions_root = artifact.path / "executions"
     if not executions_root.exists():
         return accepted
@@ -475,7 +525,7 @@ def _collect_accepted_observations(
                 raise campaign_error(
                     f"Campaign execution '{campaign_execution_path}' has invalid execution identity."
                 )
-            accepted[logical_run_id] = _accepted_observation(
+            accepted[logical_run_id] = accepted_campaign_observation(
                 logical_run_id=logical_run_id,
                 run_index=run_index,
                 subject_id=logical["subject_id"],
@@ -492,6 +542,56 @@ def _collect_accepted_observations(
             )
 
     return accepted
+
+
+def _load_adjudication_overlay(
+    artifact: campaign_artifact,
+    adjudication_id: str,
+    accepted: Mapping[str, accepted_campaign_observation],
+) -> tuple[Mapping[str, Any], dict[str, list[dict[str, Any]]]]:
+    from acmm.campaign.adjudication import load_campaign_adjudication
+
+    adjudication = load_campaign_adjudication(artifact, adjudication_id)
+    manifest = adjudication.manifest
+    runs = manifest.get("runs")
+    if not isinstance(runs, list) or len(runs) != len(accepted):
+        raise campaign_error(
+            "Campaign adjudication does not cover the complete accepted observation set."
+        )
+    overlays: dict[str, list[dict[str, Any]]] = {}
+    for entry in runs:
+        if not isinstance(entry, Mapping):
+            raise campaign_error("Campaign adjudication contains malformed run entries.")
+        logical_run_id = entry.get("logical_run_id")
+        if not isinstance(logical_run_id, str) or logical_run_id not in accepted:
+            raise campaign_error("Campaign adjudication references an unknown logical run.")
+        observation = accepted[logical_run_id]
+        if entry.get("source_run_record_sha256") != _sha256_file(observation.source_run_record_path):
+            raise campaign_error(
+                f"Campaign adjudication source Run Record changed for '{logical_run_id}'."
+            )
+        relative = entry.get("adjudication_artifact")
+        expected = entry.get("adjudication_artifact_sha256")
+        if not isinstance(relative, str) or not isinstance(expected, str):
+            raise campaign_error("Campaign adjudication run artifact metadata is invalid.")
+        path = _safe_session_artifact(adjudication.path, relative)
+        if not path.is_file() or path.is_symlink() or _sha256_file(path) != expected:
+            raise campaign_error(
+                f"Campaign adjudication artifact integrity check failed for '{logical_run_id}'."
+            )
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise campaign_error(f"Could not read Campaign adjudication artifact '{path}': {exc}") from exc
+        revised = value.get("revised_judgments") if isinstance(value, Mapping) else None
+        if not isinstance(revised, list) or not all(isinstance(item, dict) for item in revised):
+            raise campaign_error(
+                f"Campaign adjudication artifact '{path}' has invalid revised judgments."
+            )
+        overlays[logical_run_id] = revised
+    if set(overlays) != set(accepted):
+        raise campaign_error("Campaign adjudication does not exactly cover accepted observations.")
+    return manifest, overlays
 
 
 def _successful_environment_finalization(result_dir: Path) -> bool:

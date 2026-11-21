@@ -291,11 +291,19 @@ def test_package_manifest_schema_v0_4_adds_campaign_materialization() -> None:
     assert "campaign" in schema["properties"]
 
 
+def test_package_manifest_schema_v0_5_adds_adjudication_component() -> None:
+    schema = load_package_manifest_schema("0.5")
+
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert schema["properties"]["schema_version"]["const"] == "0.5"
+    assert "adjudication" in schema["properties"]
+
+
 def test_manifest_rejects_unsupported_schema_version(tmp_path: Path) -> None:
     package_root = tmp_path / "package"
     _write_package(package_root, full=False)
     (package_root / "experiment-package.yaml").write_text(
-        'schema_version: "0.5"\n'
+        'schema_version: "0.6"\n'
         f"experiment_id: {EXPERIMENT_ID}\n"
         "contract: experiment.yaml\n",
         encoding="utf-8",
@@ -303,7 +311,7 @@ def test_manifest_rejects_unsupported_schema_version(tmp_path: Path) -> None:
 
     with pytest.raises(
         experiment_package_error,
-        match="Unsupported Experiment Package schema_version '0.5'",
+        match="Unsupported Experiment Package schema_version '0.6'",
     ):
         load_experiment_package(
             package_root,
@@ -358,3 +366,34 @@ def test_package_schema_v0_4_loads_campaign_materialization(tmp_path: Path) -> N
 
     assert package.campaign_materialization is not None
     assert package.campaign_materialization.group_by == ("scenario_id",)
+
+
+def test_package_schema_v0_5_loads_adjudication_component(tmp_path: Path) -> None:
+    package_root = tmp_path / "package"
+    _write_package(package_root, full=True)
+    (package_root / "experiment-package.yaml").write_text(
+        'schema_version: "0.5"\n'
+        f"experiment_id: {EXPERIMENT_ID}\n"
+        "contract: experiment.yaml\n"
+        "runtime:\n"
+        '  api_version: "0.1"\n'
+        "  root: runtime\n"
+        "  entrypoint: build_runtime\n"
+        "adjudication:\n"
+        '  api_version: "0.1"\n'
+        "  root: runtime\n"
+        "  entrypoint: build_adjudicator\n",
+        encoding="utf-8",
+    )
+
+    package = load_experiment_package(
+        package_root,
+        contract_schema_path=CONTRACT_SCHEMA,
+    )
+
+    assert package.schema_version == "0.5"
+    assert package.adjudication is not None
+    assert package.adjudication.api_version == "0.1"
+    assert package.adjudication.root == package_root.resolve() / "runtime"
+    assert package.adjudication.entrypoint == "build_adjudicator"
+    assert len(package.adjudication.sha256) == 64

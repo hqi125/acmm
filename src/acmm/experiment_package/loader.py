@@ -11,9 +11,11 @@ import yaml
 
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import load_schema_for_contract, validate_contract
+from acmm.adjudication_api import EXPERIMENT_ADJUDICATION_API_VERSION
 from acmm.experiment_api import EXPERIMENT_RUNTIME_API_VERSION
 from acmm.integration_api import EXPERIMENT_INTEGRATION_API_VERSION
 from acmm.experiment_package.model import (
+    experiment_adjudication_component,
     experiment_analysis_component,
     experiment_campaign_materialization,
     experiment_integration_component,
@@ -88,6 +90,7 @@ def load_experiment_package(
 
     secrets = _load_package_secrets(manifest.get("secrets"))
     runtime = _load_runtime_component(root, manifest.get("runtime"))
+    adjudication = _load_adjudication_component(root, manifest.get("adjudication"))
     integrations = _load_integration_components(
         root,
         manifest.get("integrations"),
@@ -105,6 +108,7 @@ def load_experiment_package(
         package_sha256=package_tree_sha256(root),
         secrets=secrets,
         runtime=runtime,
+        adjudication=adjudication,
         integrations=integrations,
         analysis=analysis,
         campaign_materialization=campaign_materialization,
@@ -260,6 +264,38 @@ def _load_package_secrets(data: Any) -> tuple[experiment_package_secret, ...]:
         )
     return tuple(secrets)
 
+
+
+def _load_adjudication_component(
+    package_root: Path,
+    data: Any,
+) -> experiment_adjudication_component | None:
+    if data is None:
+        return None
+    if not isinstance(data, dict):
+        raise experiment_package_error("adjudication must be a mapping.")
+
+    api_version = str(data["api_version"])
+    if api_version != EXPERIMENT_ADJUDICATION_API_VERSION:
+        raise experiment_package_error(
+            f"Unsupported adjudication API version '{api_version}'."
+        )
+    root = _resolve_directory(package_root, data["root"], "adjudication.root")
+    entrypoint = str(data["entrypoint"])
+    if not entrypoint.isidentifier():
+        raise experiment_package_error(
+            "adjudication.entrypoint must be a valid Python identifier."
+        )
+    if not (root / "__init__.py").is_file():
+        raise experiment_package_error(
+            f"adjudication.root '{root}' must contain '__init__.py'."
+        )
+    return experiment_adjudication_component(
+        api_version=api_version,
+        root=root,
+        entrypoint=entrypoint,
+        sha256=component_tree_sha256(root),
+    )
 
 def _load_runtime_component(
     package_root: Path,

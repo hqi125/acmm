@@ -8,6 +8,14 @@ from acmm.validation import validation_issue
 
 
 @dataclass(frozen=True)
+class experiment_adjudication_component:
+    api_version: str
+    root: Path
+    entrypoint: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class experiment_runtime_component:
     api_version: str
     root: Path
@@ -62,6 +70,7 @@ class experiment_package:
     package_sha256: str
     secrets: tuple[experiment_package_secret, ...]
     runtime: experiment_runtime_component | None
+    adjudication: experiment_adjudication_component | None
     integrations: tuple[experiment_integration_component, ...]
     analysis: tuple[experiment_analysis_component, ...]
     campaign_materialization: experiment_campaign_materialization | None
