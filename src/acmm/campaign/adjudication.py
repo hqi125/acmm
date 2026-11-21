@@ -22,13 +22,21 @@ from acmm.campaign.model import campaign_artifact, campaign_error
 from acmm.evidence.interpretation import interpret_scenario_evidence
 from acmm.experiment_package.adjudication import load_staged_experiment_adjudicator
 from acmm.experiment_package.model import experiment_package
+from acmm.experiment_package.staging import (
+    open_staged_experiment_package,
+    stage_experiment_package,
+)
 from acmm.record.loader import load_run_record
 from acmm.runtime import execution as runtime_execution
 from acmm.runtime.interfaces import captured_evidence
 from acmm.runtime.registry import execution_registry
 
 
-CAMPAIGN_ADJUDICATION_SCHEMA_VERSION = "0.1"
+CAMPAIGN_ADJUDICATION_SCHEMA_VERSION = "0.2"
+_CAMPAIGN_ADJUDICATION_SCHEMA_FILES = {
+    "0.1": "campaign-adjudication-v0.1.schema.json",
+    "0.2": "campaign-adjudication-v0.2.schema.json",
+}
 
 
 @dataclass(frozen=True)
@@ -45,6 +53,7 @@ def create_campaign_adjudication(
     *,
     adjudication_id: str | None = None,
     now: Callable[[], datetime] | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> campaign_adjudication_artifact:
     status = inspect_campaign_status(artifact)
     if status.runs.active or status.executions.active:
@@ -107,6 +116,16 @@ def create_campaign_adjudication(
     temp_dir = Path(tempfile.mkdtemp(prefix=f".adjudication_{realized_id}.tmp-", dir=root))
 
     try:
+        if progress is not None:
+            progress("Adjudication: snapshotting adjudicator package...")
+        staged_snapshot = stage_experiment_package(
+            package,
+            temp_dir / "package_store",
+        )
+        if staged_snapshot.package_sha256 != package.package_sha256:
+            raise campaign_error(
+                "Campaign adjudication package snapshot SHA-256 does not match the source package."
+            )
         (temp_dir / "runs").mkdir(parents=True, exist_ok=True)
         entries: list[dict[str, Any]] = []
         changed_runs = 0
@@ -115,7 +134,9 @@ def create_campaign_adjudication(
             item["run_id"]: position
             for position, item in enumerate(artifact.manifest["runs"])
         }
-        for logical_run_id in sorted(accepted, key=logical_order.__getitem__):
+        ordered_run_ids = sorted(accepted, key=logical_order.__getitem__)
+        total_runs = len(ordered_run_ids)
+        for position, logical_run_id in enumerate(ordered_run_ids, start=1):
             observation = accepted[logical_run_id]
             record = load_run_record(observation.source_run_record_path)
             subject = subjects.get(observation.subject_id)
@@ -191,6 +212,8 @@ def create_campaign_adjudication(
                     "changed_opportunities": [item["opportunity_id"] for item in changes],
                 }
             )
+            if progress is not None and _progress_checkpoint(position, total_runs):
+                progress(f"Adjudication: {position}/{total_runs} observations processed...")
 
         manifest = {
             "schema_version": CAMPAIGN_ADJUDICATION_SCHEMA_VERSION,
@@ -204,6 +227,7 @@ def create_campaign_adjudication(
                 "contract_sha256": frozen_contract_sha,
                 "acquisition_package_sha256": artifact.manifest["package"]["sha256"],
                 "adjudicator_package_sha256": package.package_sha256,
+                "adjudicator_snapshot_artifact": "package_store",
                 "adjudication_component_sha256": package.adjudication.sha256,
                 "adjudication_api_version": package.adjudication.api_version,
             },
@@ -233,11 +257,13 @@ def create_campaign_adjudication(
 
 
 def validate_campaign_adjudication_manifest(manifest: Mapping[str, Any]) -> None:
-    if manifest.get("schema_version") != CAMPAIGN_ADJUDICATION_SCHEMA_VERSION:
+    version = manifest.get("schema_version")
+    schema_file = _CAMPAIGN_ADJUDICATION_SCHEMA_FILES.get(str(version))
+    if schema_file is None:
         raise campaign_error(
-            f"Unsupported Campaign Adjudication schema_version '{manifest.get('schema_version')}'."
+            f"Unsupported Campaign Adjudication schema_version '{version}'."
         )
-    schema_path = Path(__file__).with_name("schemas") / "campaign-adjudication-v0.1.schema.json"
+    schema_path = Path(__file__).with_name("schemas") / schema_file
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
     errors = sorted(Draft202012Validator(schema).iter_errors(manifest), key=lambda item: list(item.path))
@@ -267,12 +293,57 @@ def load_campaign_adjudication(
         raise campaign_error("Campaign adjudication belongs to a different Campaign.")
     if identity["contract_sha256"] != artifact.manifest["package"]["contract_sha256"]:
         raise campaign_error("Campaign adjudication Contract does not match frozen Campaign.")
+    if manifest.get("schema_version") == "0.2":
+        snapshot_artifact = identity.get("adjudicator_snapshot_artifact")
+        if not isinstance(snapshot_artifact, str) or not snapshot_artifact:
+            raise campaign_error("Campaign adjudication package snapshot metadata is invalid.")
+        snapshot_root = _safe_adjudication_artifact(path, snapshot_artifact)
+        try:
+            snapshotted = open_staged_experiment_package(
+                snapshot_root,
+                artifact.experiment_id,
+                identity["adjudicator_package_sha256"],
+            )
+        except (OSError, ValueError) as exc:
+            raise campaign_error(
+                f"Campaign adjudication package snapshot is invalid: {exc}"
+            ) from exc
+        if snapshotted.contract_sha256 != identity["contract_sha256"]:
+            raise campaign_error(
+                "Campaign adjudication package snapshot Contract does not match adjudication provenance."
+            )
     return campaign_adjudication_artifact(
         adjudication_id=adjudication_id,
         path=path,
         manifest_path=manifest_path,
         manifest=manifest,
     )
+
+
+def _progress_checkpoint(position: int, total: int) -> bool:
+    if total <= 0 or position >= total:
+        return True
+    interval = 50 if total >= 100 else 25 if total >= 50 else 10 if total >= 20 else 0
+    return interval > 0 and position % interval == 0
+
+
+def _safe_adjudication_artifact(adjudication_dir: Path, relative: str) -> Path:
+    path = Path(relative)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise campaign_error(f"Unsafe Campaign adjudication artifact path: '{relative}'.")
+    candidate = adjudication_dir / path
+    if candidate.is_symlink():
+        raise campaign_error(
+            f"Campaign adjudication artifact must not be a symbolic link: '{relative}'."
+        )
+    resolved = candidate.resolve()
+    try:
+        resolved.relative_to(adjudication_dir.resolve())
+    except ValueError as exc:
+        raise campaign_error(
+            f"Campaign adjudication artifact escapes its directory: '{relative}'."
+        ) from exc
+    return resolved
 
 
 def _load_evidence(

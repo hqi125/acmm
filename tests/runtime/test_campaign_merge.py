@@ -385,3 +385,26 @@ def test_campaign_merge_v0_1_manifest_remains_valid(tmp_path: Path, monkeypatch)
 
     validate_campaign_merge_manifest(legacy)
 
+
+
+def test_campaign_merge_reports_coarse_progress(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package, _ = install_test_package(tmp_path, monkeypatch)
+    artifact = create_campaign(
+        package,
+        tmp_path / "generated",
+        campaign_id="campaign-a",
+    )
+    runs = frozen_campaign_plan(artifact).runs
+    _execute_campaign_runs(artifact, package, runs, "execution-a")
+    lines: list[str] = []
+
+    create_campaign_merge(
+        artifact,
+        merge_id="merge-progress",
+        progress=lines.append,
+    )
+
+    assert lines == [f"Merge: {len(runs)}/{len(runs)} observations assembled..."]

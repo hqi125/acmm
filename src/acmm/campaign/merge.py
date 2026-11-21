@@ -68,6 +68,7 @@ def create_campaign_merge(
     merge_id: str | None = None,
     now: Callable[[], datetime] | None = None,
     adjudication_id: str | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> campaign_merge_artifact:
     status = inspect_campaign_status(artifact)
     if status.runs.active or status.executions.active:
@@ -142,7 +143,9 @@ def create_campaign_merge(
             item["run_id"]: position
             for position, item in enumerate(artifact.manifest["runs"])
         }
-        for logical_run_id in sorted(accepted, key=logical_order.__getitem__):
+        ordered_run_ids = sorted(accepted, key=logical_order.__getitem__)
+        total_observations = len(ordered_run_ids)
+        for position, logical_run_id in enumerate(ordered_run_ids, start=1):
             observation = accepted[logical_run_id]
             destination_name = f"run_{observation.run_index:06d}_{logical_run_id}"
             destination = temp_dir / "runs" / destination_name
@@ -200,6 +203,8 @@ def create_campaign_merge(
                     "merged_run_record_sha256": _sha256_file(merged_record),
                 }
             )
+            if progress is not None and _progress_checkpoint(position, total_observations):
+                progress(f"Merge: {position}/{total_observations} observations assembled...")
 
         completeness = "complete" if status.runs.observed == status.runs.total else "partial"
         manifest = {
@@ -592,6 +597,13 @@ def _load_adjudication_overlay(
     if set(overlays) != set(accepted):
         raise campaign_error("Campaign adjudication does not exactly cover accepted observations.")
     return manifest, overlays
+
+
+def _progress_checkpoint(position: int, total: int) -> bool:
+    if total <= 0 or position >= total:
+        return True
+    interval = 50 if total >= 100 else 25 if total >= 50 else 10 if total >= 20 else 0
+    return interval > 0 and position % interval == 0
 
 
 def _successful_environment_finalization(result_dir: Path) -> bool:

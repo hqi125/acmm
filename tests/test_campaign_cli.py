@@ -203,3 +203,52 @@ def test_campaign_resume_replays_only_pending_source_selection(
     assert tuple(run.run_index for run in context.selected_runs) == (
         runs[1].run_index,
     )
+
+
+def test_campaign_execute_preview_is_side_effect_free(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    package, _ = install_test_package(tmp_path, monkeypatch)
+    generated_root = tmp_path / "generated"
+    from acmm.campaign.model import create_campaign
+
+    artifact = create_campaign(
+        package,
+        generated_root,
+        campaign_id="campaign-preview",
+    )
+
+    def forbidden_reconcile(_artifact):
+        raise AssertionError("preview must not reconcile campaign state")
+
+    def forbidden_run(*_args, **_kwargs):
+        raise AssertionError("preview must not invoke experiment execution")
+
+    monkeypatch.setattr("acmm.campaign.cli.reconcile_campaign", forbidden_reconcile)
+    monkeypatch.setattr("acmm.cli._run_experiment", forbidden_run)
+
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "campaign",
+            "execute",
+            artifact.campaign_id,
+            "--preview",
+            "--run-index",
+            "0-1",
+            "--generated-root",
+            str(generated_root),
+        ]
+    )
+
+    assert args.handler(args) == 0
+    output = capsys.readouterr().out
+    assert "Campaign execution preview:" in output
+    assert "matched:           2" in output
+    assert "eligible pending:  2" in output
+    assert f"package:          {package.package_sha256}" in output
+    assert "run indices:      0-1" in output
+    assert "No execution started (--preview)." in output
+    assert not (artifact.path / "executions").exists()

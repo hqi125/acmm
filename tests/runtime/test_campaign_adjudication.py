@@ -6,7 +6,10 @@ from pathlib import Path
 
 import yaml
 
-from acmm.campaign.adjudication import create_campaign_adjudication
+from acmm.campaign.adjudication import (
+    create_campaign_adjudication,
+    load_campaign_adjudication,
+)
 from acmm.campaign.execution import (
     create_campaign_execution_context,
     finalize_campaign_execution,
@@ -282,3 +285,121 @@ def test_campaign_adjudication_reuses_frozen_runtime_evaluation_path(
 
     assert adjudication.manifest["population"]["adjudicated"] == 6
     assert len(calls) == 6
+
+
+def test_campaign_adjudication_snapshots_exact_adjudicator_package(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    acquisition, _ = install_test_package(
+        tmp_path,
+        monkeypatch,
+        source_name="acquisition-source",
+    )
+    artifact = create_campaign(
+        acquisition,
+        tmp_path / "generated",
+        campaign_id="campaign-a",
+    )
+    _execute_all(artifact, acquisition)
+    revised, _ = install_test_package(
+        tmp_path,
+        monkeypatch,
+        runtime_source=REVISED_RUNTIME,
+        source_name="revised-source",
+        with_adjudication=True,
+    )
+
+    adjudication = create_campaign_adjudication(
+        artifact,
+        revised,
+        adjudication_id="revision-snapshot",
+    )
+
+    identity = adjudication.manifest["adjudication"]
+    assert adjudication.manifest["schema_version"] == "0.2"
+    assert identity["adjudicator_snapshot_artifact"] == "package_store"
+    snapshot_root = (
+        adjudication.path
+        / "package_store"
+        / "_experiment_packages"
+        / revised.experiment_id
+        / revised.package_sha256
+    )
+    assert snapshot_root.is_dir()
+    assert (snapshot_root / "experiment-package.yaml").is_file()
+
+    loaded = load_campaign_adjudication(artifact, adjudication.adjudication_id)
+    assert loaded.manifest["adjudication"]["adjudicator_package_sha256"] == revised.package_sha256
+
+
+def test_campaign_adjudication_reports_coarse_progress(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    acquisition, _ = install_test_package(
+        tmp_path,
+        monkeypatch,
+        source_name="acquisition-source",
+    )
+    artifact = create_campaign(
+        acquisition,
+        tmp_path / "generated",
+        campaign_id="campaign-a",
+    )
+    _execute_all(artifact, acquisition)
+    revised, _ = install_test_package(
+        tmp_path,
+        monkeypatch,
+        runtime_source=REVISED_RUNTIME,
+        source_name="revised-source",
+        with_adjudication=True,
+    )
+    lines: list[str] = []
+
+    create_campaign_adjudication(
+        artifact,
+        revised,
+        adjudication_id="revision-progress",
+        progress=lines.append,
+    )
+
+    assert lines[0] == "Adjudication: snapshotting adjudicator package..."
+    assert lines[-1] == "Adjudication: 6/6 observations processed..."
+
+
+def test_campaign_adjudication_v0_1_manifest_remains_valid(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    acquisition, _ = install_test_package(
+        tmp_path,
+        monkeypatch,
+        source_name="acquisition-source",
+    )
+    artifact = create_campaign(
+        acquisition,
+        tmp_path / "generated",
+        campaign_id="campaign-a",
+    )
+    _execute_all(artifact, acquisition)
+    revised, _ = install_test_package(
+        tmp_path,
+        monkeypatch,
+        runtime_source=REVISED_RUNTIME,
+        source_name="revised-source",
+        with_adjudication=True,
+    )
+    adjudication = create_campaign_adjudication(
+        artifact,
+        revised,
+        adjudication_id="revision-legacy-schema",
+    )
+    legacy = dict(adjudication.manifest)
+    legacy["schema_version"] = "0.1"
+    legacy["adjudication"] = dict(legacy["adjudication"])
+    legacy["adjudication"].pop("adjudicator_snapshot_artifact")
+
+    from acmm.campaign.adjudication import validate_campaign_adjudication_manifest
+
+    validate_campaign_adjudication_manifest(legacy)

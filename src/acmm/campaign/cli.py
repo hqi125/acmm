@@ -111,6 +111,15 @@ def register_campaign_commands(subparsers: argparse._SubParsersAction) -> None:
         metavar="N|START-END",
         help="Filter by frozen 1-based repetition number or inclusive range.",
     )
+    execute_parser.add_argument(
+        "--preview",
+        action="store_true",
+        help=(
+            "Show the frozen Campaign selection and execution plan without "
+            "reconciliation, package activation, materialization, provider calls, "
+            "or durable execution creation."
+        ),
+    )
     _add_campaign_execution_options(execute_parser)
     execute_parser.set_defaults(handler=_campaign_execute)
 
@@ -344,6 +353,40 @@ def _campaign_execute(args: argparse.Namespace) -> int:
 
 
 def _campaign_execute_locked(args: argparse.Namespace, artifact) -> int:
+    if bool(getattr(args, "preview", False)):
+        selected = select_campaign_runs(
+            artifact,
+            run_selectors=args.run_index,
+            subject_selectors=args.subject,
+            subject_run_selectors=args.subject_run_index,
+            scenario_selectors=args.scenario,
+            repetition_selectors=args.repetition,
+        )
+        status = inspect_campaign_status(artifact)
+        eligible = eligible_campaign_runs(artifact, selected, status)
+        eligible = order_campaign_runs_for_execution(artifact, eligible)
+        _print_campaign_execution_selection(
+            artifact,
+            selected,
+            eligible,
+            status,
+            heading="Campaign execution preview:",
+        )
+        print(f"  package:          {artifact.manifest['package']['sha256']}")
+        print(f"  design digest:    {artifact.manifest['campaign']['design_digest']}")
+        print(f"  run indices:      {_format_run_indices(eligible)}")
+        groups = _eligible_materialization_groups(artifact, eligible)
+        print(f"  materializations: {len(groups)}")
+        for key, count in groups:
+            print(f"    {key}: {count} run(s)")
+        if status.recovery.required:
+            print(
+                f"  recovery required: {status.recovery.required} "
+                "(preview reports only; no reconciliation performed)"
+            )
+        print("No execution started (--preview).")
+        return 0
+
     reconciliation = reconcile_campaign(artifact)
     selected = select_campaign_runs(
         artifact,
@@ -368,6 +411,22 @@ def _campaign_execute_locked(args: argparse.Namespace, artifact) -> int:
             + ", ".join(reconciliation.externally_recovered_execution_ids)
         )
 
+    _print_campaign_execution_selection(
+        artifact,
+        selected,
+        eligible,
+        status,
+        heading="Campaign execution selection:",
+    )
+
+    if not eligible:
+        print("No eligible pending logical runs require execution.")
+        return 0
+
+    return _execute_campaign_runs(args, artifact, eligible)
+
+
+def _print_campaign_execution_selection(artifact, selected, eligible, status, *, heading: str) -> None:
     selected_ids = {run.run_index for run in selected}
     logical_by_index = {
         item["run_index"]: item["run_id"]
@@ -376,7 +435,7 @@ def _campaign_execute_locked(args: argparse.Namespace, artifact) -> int:
     observed = set(status.observed_run_ids)
     active = set(status.active_run_ids)
 
-    print("Campaign execution selection:")
+    print(heading)
     print(f"  campaign:          {artifact.campaign_id}")
     print(f"  matched:           {len(selected)}")
     print(f"  eligible pending:  {len(eligible)}")
@@ -401,11 +460,33 @@ def _campaign_execute_locked(args: argparse.Namespace, artifact) -> int:
         )
     )
 
-    if not eligible:
-        print("No eligible pending logical runs require execution.")
-        return 0
 
-    return _execute_campaign_runs(args, artifact, eligible)
+def _format_run_indices(runs) -> str:
+    values = sorted({int(run.run_index) for run in runs})
+    if not values:
+        return "none"
+    ranges: list[str] = []
+    start = previous = values[0]
+    for value in values[1:]:
+        if value == previous + 1:
+            previous = value
+            continue
+        ranges.append(str(start) if start == previous else f"{start}-{previous}")
+        start = previous = value
+    ranges.append(str(start) if start == previous else f"{start}-{previous}")
+    return ", ".join(ranges)
+
+
+def _eligible_materialization_groups(artifact, runs) -> tuple[tuple[str, int], ...]:
+    keys_by_index = {
+        int(item["run_index"]): str(item["materialization_key"])
+        for item in artifact.manifest["runs"]
+    }
+    counts: dict[str, int] = {}
+    for run in runs:
+        key = keys_by_index[int(run.run_index)]
+        counts[key] = counts.get(key, 0) + 1
+    return tuple(counts.items())
 
 
 def _campaign_resume(args: argparse.Namespace) -> int:
@@ -555,7 +636,11 @@ def _campaign_adjudicate(args: argparse.Namespace) -> int:
         )
         package = resolve_installed_experiment_package(runtime_root, args.package)
         with campaign_execution_lock(artifact):
-            adjudicated = create_campaign_adjudication(artifact, package)
+            adjudicated = create_campaign_adjudication(
+                artifact,
+                package,
+                progress=lambda message: print(message, flush=True),
+            )
     except (
         campaign_error,
         experiment_package_error,
@@ -591,6 +676,7 @@ def _campaign_merge(args: argparse.Namespace) -> int:
                 artifact,
                 allow_partial=bool(args.allow_partial),
                 adjudication_id=args.adjudication,
+                progress=lambda message: print(message, flush=True),
             )
     except (campaign_error, OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
