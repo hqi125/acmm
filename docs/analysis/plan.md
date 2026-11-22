@@ -7,7 +7,7 @@ experiment/campaign acquisition artifacts directly.
 ```text
 acmm analyze \
     ~/acmm_generated/exports/<experiment_id>/campaign_<campaign_id>/merge_<merge_id> \
-    --plan analysis/plans/standard_v0_2.yaml
+    --plan analysis/plans/standard_v0_4.yaml
 ```
 
 The default result root is `<export>/analysis_output`. Each run is published into an immutable
@@ -31,20 +31,26 @@ directory and published atomically. A failed/interrupted analysis is retained as
 ## Plan schemas
 
 Plan schema 0.1 remains supported for the original requirement/dimension/availability/interaction
-workflow. Plan schema 0.2 is additive: it adds normalized tool-trajectory analysis and selectable
-R-rendered plots while retaining the 0.1 analysis/report semantics.
+workflow. Plan schema 0.2 added normalized tool-trajectory analysis and selectable R-rendered plots.
+Plan schema 0.3 is a presentation-compatible extension: it adds explicit plot-format selection,
+PNG-only defaults, and a grouped GOBPFR dimension-profile plot while retaining all 0.2 analysis and
+report semantics. Plan schema 0.4 refines the generic trajectory presentation without changing the
+trajectory tables: it adds a dedicated per-run result-error-rate plot and a per-subject raw tool-name
+composition plot that avoids cross-adapter tool-name canonicalization.
 
 The repository provides:
 
 ```text
 analysis/plans/standard_v0_1.yaml
 analysis/plans/standard_v0_2.yaml
+analysis/plans/standard_v0_3.yaml
+analysis/plans/standard_v0_4.yaml
 ```
 
-The v0.2 standard plan is the preferred campaign-analysis starting point:
+The v0.4 standard plan is the preferred campaign-analysis starting point:
 
 ```yaml
-schema_version: '0.2'
+schema_version: '0.4'
 population:
   policy: strict
 defaults:
@@ -52,6 +58,8 @@ defaults:
     replicates: 2000
     seed: 12345
     confidence_level: 0.95
+  plot_formats:
+    - png
 analyses:
   - kind: requirement_estimates
   - kind: requirement_uncertainty
@@ -71,10 +79,14 @@ plots:
     estimand: opportunity
     aggregation_method: arithmetic
     include_intervals: true
+  - kind: dimension_profile
+    estimand: opportunity
+    aggregation_method: arithmetic
   - kind: availability
   - kind: trajectory_run_metrics
     metric: tool_calls
-  - kind: trajectory_tool_usage
+  - kind: trajectory_error_rate
+  - kind: trajectory_tool_composition
     top_n: 12
 ```
 
@@ -94,22 +106,28 @@ The generic analysis kinds are:
 
 The report kinds are `compliance_workbook`, `availability_workbook`, and `interaction_workbook`.
 Workbooks are intentionally tabular/presentation-oriented. Core does not embed analysis charts into
-the Excel files; selectable figures are rendered by R as standalone PNG and PDF artifacts.
+the Excel files; selectable figures are rendered by R as standalone artifacts under `figures/`.
 
 ## Plot modules
 
-Plan schema 0.2 exposes generic R plot modules through `plots:`. Each requested plot is a normal
-analysis stage with deterministic dependencies, progress output, logs, manifest provenance, and
-hashed PNG/PDF outputs under `figures/`.
+Plan schemas 0.2 through 0.4 expose generic R plot modules through `plots:`. Each requested plot is a
+normal analysis stage with deterministic dependencies, progress output, logs, manifest provenance,
+and hashed figure outputs. Schema 0.2 preserves the historical PNG+PDF pair. Schemas 0.3 and 0.4 default to PNG only and
+allow `defaults.plot_formats` or a per-plot `formats` override using `png` and/or `pdf`. PDF is
+therefore opt-in in the preferred standard plan.
 
 Implemented plot kinds are:
 
 - `run_duration`: selected-run duration distribution by subject;
 - `requirement_compliance`: requirement estimates with optional bootstrap intervals;
 - `dimension_scores`: one selected estimand/aggregation method with optional intervals;
+- `dimension_profile` (schema 0.3): grouped-bar GOBPFR point-estimate profile for one estimand and aggregation method;
 - `availability`: first-attempt versus final-after-retry availability by subject;
 - `trajectory_run_metrics`: selected-run distribution for one generic trajectory metric;
-- `trajectory_tool_usage`: top-N tool-call volume by subject.
+- `trajectory_tool_usage`: historical cross-subject top-N raw tool-call volume view;
+- `trajectory_error_rate` (schema 0.4): per-run tool-result error-rate distribution by subject;
+- `trajectory_tool_composition` (schema 0.4): separate per-subject top-N raw tool-name shares. Raw
+  names are intentionally not canonicalized across adapters.
 
 Trajectory run metrics currently selectable for plotting are `tool_calls`, `distinct_tools`,
 `error_rate`, `repeated_calls`, and `unmatched_calls`. `repeated_calls` means repeated use of a tool

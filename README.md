@@ -864,7 +864,7 @@ acmm export run ~/acmm_generated/results/<experiment-id>/execution_<uuid>
 python tools/analyze_execution.py ~/acmm_generated/results/<experiment-id>/execution_<uuid>
 
 acmm export campaign <campaign-dir> <merge-dir>
-acmm analyze <campaign-export-dir> --plan analysis/plans/standard_v0_2.yaml
+acmm analyze <campaign-export-dir> --plan analysis/plans/standard_v0_4.yaml
 ```
 
 The general Core analysis pipeline owns normalized export, availability, requirement estimates,

@@ -187,6 +187,15 @@ _STAGE_DEFINITIONS: dict[str, _stage_definition] = {
             "figures/compliance/dimension_scores.pdf",
         ),
     ),
+    "plot_dimension_profile": _stage_definition(
+        kind="plot_dimension_profile",
+        label="GOBPFR dimension profile plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/compliance/dimension_profile.png",
+            "figures/compliance/dimension_profile.pdf",
+        ),
+    ),
     "plot_availability": _stage_definition(
         kind="plot_availability",
         label="availability plot",
@@ -212,6 +221,24 @@ _STAGE_DEFINITIONS: dict[str, _stage_definition] = {
         expected_outputs=(
             "figures/trajectory/trajectory_tool_usage.png",
             "figures/trajectory/trajectory_tool_usage.pdf",
+        ),
+    ),
+    "plot_trajectory_error_rate": _stage_definition(
+        kind="plot_trajectory_error_rate",
+        label="trajectory result-error-rate plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/trajectory/trajectory_error_rate.png",
+            "figures/trajectory/trajectory_error_rate.pdf",
+        ),
+    ),
+    "plot_trajectory_tool_composition": _stage_definition(
+        kind="plot_trajectory_tool_composition",
+        label="trajectory tool-composition plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/trajectory/trajectory_tool_composition.png",
+            "figures/trajectory/trajectory_tool_composition.pdf",
         ),
     ),
     "compliance_workbook": _stage_definition(
@@ -313,12 +340,13 @@ def run_analysis_plan(
                 interaction_design=copied_interaction_design,
                 progress=emit,
             )
-            _validate_stage_outputs(staging_dir, definition)
+            expected_outputs = _expected_outputs_for_stage(stage_kind, plan)
+            _validate_stage_outputs(staging_dir, definition, expected_outputs)
             completed_stages.append(
                 {
                     "kind": stage_kind,
                     "status": "completed",
-                    "outputs": list(definition.expected_outputs),
+                    "outputs": list(expected_outputs),
                 }
             )
             emit(f"[{index}/{total_stages}] completed {definition.label}.")
@@ -530,9 +558,12 @@ def _stage_command(
         "plot_run_duration": "run_duration",
         "plot_requirement_compliance": "requirement_compliance",
         "plot_dimension_scores": "dimension_scores",
+        "plot_dimension_profile": "dimension_profile",
         "plot_availability": "availability",
         "plot_trajectory_run_metrics": "trajectory_run_metrics",
         "plot_trajectory_tool_usage": "trajectory_tool_usage",
+        "plot_trajectory_error_rate": "trajectory_error_rate",
+        "plot_trajectory_tool_composition": "trajectory_tool_composition",
     }
     plot_kind = plot_stage_to_kind.get(stage_kind)
     if plot_kind is not None:
@@ -541,7 +572,13 @@ def _stage_command(
             raise analysis_run_error(
                 f"Plot stage '{stage_kind}' resolved without a matching plot request."
             )
-        command = [rscript, str(script), str(analysis_dir), plot_kind]
+        command = [
+            rscript,
+            str(script),
+            str(analysis_dir),
+            plot_kind,
+            ",".join(request.formats),
+        ]
         if plot_kind == "run_duration":
             command.extend([str(export_dir), plan.population_policy])
         elif plot_kind == "requirement_compliance":
@@ -559,9 +596,18 @@ def _stage_command(
                     "true" if request.include_intervals else "false",
                 ]
             )
+        elif plot_kind == "dimension_profile":
+            command.extend(
+                [
+                    request.estimand or "opportunity",
+                    request.aggregation_method or "arithmetic",
+                ]
+            )
         elif plot_kind == "trajectory_run_metrics":
             command.append(request.metric or "tool_calls")
         elif plot_kind == "trajectory_tool_usage":
+            command.append(str(request.top_n or 12))
+        elif plot_kind == "trajectory_tool_composition":
             command.append(str(request.top_n or 12))
         return tuple(command)
 
@@ -634,6 +680,8 @@ def _scope_for_stage(kind: str) -> str:
         "trajectory",
         "plot_trajectory_run_metrics",
         "plot_trajectory_tool_usage",
+        "plot_trajectory_error_rate",
+        "plot_trajectory_tool_composition",
     }:
         return TRAJECTORY_SCOPE
     return COMPLIANCE_SCOPE
@@ -940,13 +988,55 @@ def _publish_failed(staging_dir: Path, failed_dir: Path) -> None:
         pass
 
 
+_PLOT_OUTPUT_STEM_BY_STAGE = {
+    "plot_run_duration": "figures/operations/run_duration",
+    "plot_requirement_compliance": "figures/compliance/requirement_compliance",
+    "plot_dimension_scores": "figures/compliance/dimension_scores",
+    "plot_dimension_profile": "figures/compliance/dimension_profile",
+    "plot_availability": "figures/availability/availability",
+    "plot_trajectory_run_metrics": "figures/trajectory/trajectory_run_metrics",
+    "plot_trajectory_tool_usage": "figures/trajectory/trajectory_tool_usage",
+    "plot_trajectory_error_rate": "figures/trajectory/trajectory_error_rate",
+    "plot_trajectory_tool_composition": "figures/trajectory/trajectory_tool_composition",
+}
+
+
+def _expected_outputs_for_stage(
+    stage_kind: str,
+    plan: analysis_plan,
+) -> tuple[str, ...]:
+    stem = _PLOT_OUTPUT_STEM_BY_STAGE.get(stage_kind)
+    if stem is None:
+        return _STAGE_DEFINITIONS[stage_kind].expected_outputs
+
+    plot_kind = {
+        "plot_run_duration": "run_duration",
+        "plot_requirement_compliance": "requirement_compliance",
+        "plot_dimension_scores": "dimension_scores",
+        "plot_dimension_profile": "dimension_profile",
+        "plot_availability": "availability",
+        "plot_trajectory_run_metrics": "trajectory_run_metrics",
+        "plot_trajectory_tool_usage": "trajectory_tool_usage",
+        "plot_trajectory_error_rate": "trajectory_error_rate",
+        "plot_trajectory_tool_composition": "trajectory_tool_composition",
+    }[stage_kind]
+    request = plan.plot(plot_kind)
+    if request is None:
+        raise analysis_run_error(
+            f"Plot stage '{stage_kind}' resolved without a matching plot request."
+        )
+    return tuple(f"{stem}.{format_name}" for format_name in request.formats)
+
+
 def _validate_stage_outputs(
     analysis_dir: Path,
     definition: _stage_definition,
+    expected_outputs: Sequence[str] | None = None,
 ) -> None:
+    required = tuple(expected_outputs or definition.expected_outputs)
     missing = [
         relative
-        for relative in definition.expected_outputs
+        for relative in required
         if not (analysis_dir / relative).is_file()
     ]
     if missing:
@@ -1040,6 +1130,7 @@ def _build_analysis_manifest(
                         "include_intervals": request.include_intervals,
                         "metric": request.metric,
                         "top_n": request.top_n,
+                        "formats": list(request.formats),
                     }.items()
                     if value is not None
                 }

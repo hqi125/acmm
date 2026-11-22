@@ -1,0 +1,382 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acmm.local/schemas/analysis-plan-v0.3.json",
+  "title": "ACMM Analysis Plan v0.3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "population",
+    "analyses"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.3"
+    },
+    "population": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy"
+      ],
+      "properties": {
+        "policy": {
+          "enum": [
+            "strict",
+            "available-valid"
+          ]
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bootstrap": {
+          "$ref": "#/$defs/bootstrap"
+        },
+        "plot_formats": {
+          "$ref": "#/$defs/plotFormats"
+        }
+      }
+    },
+    "analyses": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/analysis"
+      }
+    },
+    "reports": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/report"
+      }
+    },
+    "plots": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/plot"
+      }
+    }
+  },
+  "$defs": {
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "replicates": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "confidence_level": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        }
+      }
+    },
+    "analysis": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "requirement_estimates"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "requirement_uncertainty"
+            },
+            "bootstrap": {
+              "$ref": "#/$defs/bootstrap"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dimension_scores"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dimension_uncertainty"
+            },
+            "bootstrap": {
+              "$ref": "#/$defs/bootstrap"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "availability"
+            },
+            "bootstrap": {
+              "$ref": "#/$defs/bootstrap"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "design"
+          ],
+          "properties": {
+            "kind": {
+              "const": "interaction"
+            },
+            "design": {
+              "type": "string",
+              "minLength": 1
+            },
+            "bootstrap": {
+              "$ref": "#/$defs/bootstrap"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "trajectory"
+            }
+          }
+        }
+      ]
+    },
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "compliance_workbook",
+            "availability_workbook",
+            "interaction_workbook"
+          ]
+        }
+      }
+    },
+    "plot": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "run_duration"
+            },
+            "formats": {
+              "$ref": "#/$defs/plotFormats"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "requirement_compliance"
+            },
+            "estimand": {
+              "enum": [
+                "opportunity",
+                "run",
+                "scenario"
+              ]
+            },
+            "include_intervals": {
+              "type": "boolean"
+            },
+            "formats": {
+              "$ref": "#/$defs/plotFormats"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dimension_scores"
+            },
+            "estimand": {
+              "enum": [
+                "opportunity",
+                "run",
+                "scenario"
+              ]
+            },
+            "aggregation_method": {
+              "enum": [
+                "arithmetic",
+                "geometric",
+                "harmonic",
+                "minimum"
+              ]
+            },
+            "include_intervals": {
+              "type": "boolean"
+            },
+            "formats": {
+              "$ref": "#/$defs/plotFormats"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dimension_profile"
+            },
+            "estimand": {
+              "enum": [
+                "opportunity",
+                "run",
+                "scenario"
+              ]
+            },
+            "aggregation_method": {
+              "enum": [
+                "arithmetic",
+                "geometric",
+                "harmonic",
+                "minimum"
+              ]
+            },
+            "formats": {
+              "$ref": "#/$defs/plotFormats"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "availability"
+            },
+            "formats": {
+              "$ref": "#/$defs/plotFormats"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "trajectory_run_metrics"
+            },
+            "metric": {
+              "enum": [
+                "tool_calls",
+                "distinct_tools",
+                "error_rate",
+                "repeated_calls",
+                "unmatched_calls"
+              ]
+            },
+            "formats": {
+              "$ref": "#/$defs/plotFormats"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "trajectory_tool_usage"
+            },
+            "top_n": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            },
+            "formats": {
+              "$ref": "#/$defs/plotFormats"
+            }
+          }
+        }
+      ]
+    },
+    "plotFormats": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "png",
+          "pdf"
+        ]
+      }
+    }
+  }
+}

@@ -1493,13 +1493,19 @@ utils::write.csv(
 acmm_plot_run_duration(campaignTrajectoryLoaded, plotSmokeRoot, "strict")
 acmm_plot_trajectory_run_metrics(plotSmokeRoot, "tool_calls")
 acmm_plot_trajectory_tool_usage(plotSmokeRoot, 2L)
+acmm_plot_trajectory_error_rate(plotSmokeRoot)
+acmm_plot_trajectory_tool_composition(plotSmokeRoot, 2L)
 for (artifact in c(
     "figures/operations/run_duration.png",
     "figures/operations/run_duration.pdf",
     "figures/trajectory/trajectory_run_metrics.png",
     "figures/trajectory/trajectory_run_metrics.pdf",
     "figures/trajectory/trajectory_tool_usage.png",
-    "figures/trajectory/trajectory_tool_usage.pdf"
+    "figures/trajectory/trajectory_tool_usage.pdf",
+    "figures/trajectory/trajectory_error_rate.png",
+    "figures/trajectory/trajectory_error_rate.pdf",
+    "figures/trajectory/trajectory_tool_composition.png",
+    "figures/trajectory/trajectory_tool_composition.pdf"
 ))
 {
     assert_true(
@@ -1509,3 +1515,17 @@ for (artifact in c(
 }
 
 cat("ACMM R analysis tests passed.\n")
+
+assert_equal(
+    acmm_plot_subject_labels(c(
+        "agent_zero_gpt_oss120b",
+        "hermes_gpt_oss120b",
+        "open_webui_gpt_oss120b"
+    )),
+    c("agent_zero", "hermes", "open_webui")
+)
+assert_equal(
+    acmm_order_dimensions(c("recovery", "goal", "boundary", "fidelity", "procedure", "obligation")),
+    c("goal", "obligation", "boundary", "procedure", "fidelity", "recovery")
+)
+assert_equal(acmm_normalize_plot_formats(c("PNG", "pdf", "png")), c("png", "pdf"))

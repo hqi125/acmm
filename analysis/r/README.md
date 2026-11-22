@@ -234,11 +234,15 @@ functions and scripts remain the statistical implementation; the Core CLI valida
 resolves dependencies, runs only the requested generic stages, preserves full R logs, and publishes an
 immutable analysis manifest. See `docs/analysis/plan.md`.
 
-The repository provides `analysis/plans/standard_v0_1.yaml` for the established general workflow and
-`analysis/plans/standard_v0_2.yaml` for the same workflow plus normalized trajectory analysis and
-selectable R-rendered figures. Both use explicit population policies; the v0.2 standard plan uses
-`strict` plus the established 2000-replicate, seed-12345, 95% bootstrap settings. Use
-`available-valid` explicitly for a partial population; the plan runner does not silently fall back.
+The repository provides `analysis/plans/standard_v0_1.yaml` for the established general workflow,
+`analysis/plans/standard_v0_2.yaml` for normalized trajectory analysis plus selectable R-rendered
+figures, and `analysis/plans/standard_v0_3.yaml` for the first polished figure workflow, and
+`analysis/plans/standard_v0_4.yaml` for the preferred trajectory-presentation refinement. The v0.4
+standard plan keeps the established `strict`, 2000-replicate, seed-12345, 95% bootstrap settings and
+PNG-only default, retains the grouped GOBPFR dimension profile, and replaces the cross-subject top-tool
+ranking with per-subject raw tool-name composition plus a dedicated result-error-rate distribution.
+PDF remains available as an explicit v0.3/v0.4 plot format. Use `available-valid` explicitly for a partial population; the plan
+runner does not silently fall back.
 
 The standalone R scripts below remain supported for direct development and debugging.
 

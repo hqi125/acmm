@@ -12,19 +12,21 @@ source(file.path(analysisRoot, "R", "bootstrap.R"))
 source_acmm_analysis(analysisRoot)
 
 arguments <- commandArgs(trailingOnly = TRUE)
-if (length(arguments) < 2)
+if (length(arguments) < 3)
 {
     stop(
         paste0(
             "Usage: Rscript analysis/r/scripts/plot_analysis.R ",
-            "<analysis-output-directory> <plot-kind> [plot-arguments...]"
+            "<analysis-output-directory> <plot-kind> <formats> [plot-arguments...]"
         )
     )
 }
 
 outputRoot <- normalizePath(arguments[[1]], winslash = "/", mustWork = TRUE)
 plotKind <- arguments[[2]]
-plotArguments <- if (length(arguments) > 2) arguments[3:length(arguments)] else character(0)
+formats <- strsplit(arguments[[3]], ",", fixed = TRUE)[[1]]
+formats <- acmm_normalize_plot_formats(formats)
+plotArguments <- if (length(arguments) > 3) arguments[4:length(arguments)] else character(0)
 
 cat("ACMM_PROGRESS: Rendering R plot '", plotKind, "'...\n", sep = "")
 flush(stdout())
@@ -39,34 +41,54 @@ if (identical(plotKind, "run_duration"))
         plotArguments[[1]],
         populationPolicy = plotArguments[[2]]
     )
-    acmm_plot_run_duration(exportData, outputRoot, plotArguments[[2]])
+    acmm_plot_run_duration(exportData, outputRoot, plotArguments[[2]], formats)
 } else if (identical(plotKind, "requirement_compliance"))
 {
     estimand <- if (length(plotArguments) >= 1) plotArguments[[1]] else "scenario"
     includeIntervals <- if (length(plotArguments) >= 2) identical(plotArguments[[2]], "true") else TRUE
-    acmm_plot_requirement_compliance(outputRoot, estimand, includeIntervals)
+    acmm_plot_requirement_compliance(outputRoot, estimand, includeIntervals, formats)
 } else if (identical(plotKind, "dimension_scores"))
 {
     estimand <- if (length(plotArguments) >= 1) plotArguments[[1]] else "opportunity"
     aggregationMethod <- if (length(plotArguments) >= 2) plotArguments[[2]] else "arithmetic"
     includeIntervals <- if (length(plotArguments) >= 3) identical(plotArguments[[3]], "true") else TRUE
-    acmm_plot_dimension_scores(outputRoot, estimand, aggregationMethod, includeIntervals)
+    acmm_plot_dimension_scores(outputRoot, estimand, aggregationMethod, includeIntervals, formats)
+} else if (identical(plotKind, "dimension_profile"))
+{
+    estimand <- if (length(plotArguments) >= 1) plotArguments[[1]] else "opportunity"
+    aggregationMethod <- if (length(plotArguments) >= 2) plotArguments[[2]] else "arithmetic"
+    acmm_plot_dimension_profile(outputRoot, estimand, aggregationMethod, formats)
 } else if (identical(plotKind, "availability"))
 {
-    acmm_plot_availability(outputRoot)
+    acmm_plot_availability(outputRoot, formats)
 } else if (identical(plotKind, "trajectory_run_metrics"))
 {
     metric <- if (length(plotArguments) >= 1) plotArguments[[1]] else "tool_calls"
-    acmm_plot_trajectory_run_metrics(outputRoot, metric)
+    acmm_plot_trajectory_run_metrics(outputRoot, metric, formats)
 } else if (identical(plotKind, "trajectory_tool_usage"))
 {
     topN <- if (length(plotArguments) >= 1) as.integer(plotArguments[[1]]) else 12L
     acmm_assert(!is.na(topN) && topN >= 1, "trajectory_tool_usage top_n must be positive.")
-    acmm_plot_trajectory_tool_usage(outputRoot, topN)
+    acmm_plot_trajectory_tool_usage(outputRoot, topN, formats)
+} else if (identical(plotKind, "trajectory_error_rate"))
+{
+    acmm_plot_trajectory_error_rate(outputRoot, formats)
+} else if (identical(plotKind, "trajectory_tool_composition"))
+{
+    topN <- if (length(plotArguments) >= 1) as.integer(plotArguments[[1]]) else 12L
+    acmm_assert(!is.na(topN) && topN >= 1, "trajectory_tool_composition top_n must be positive.")
+    acmm_plot_trajectory_tool_composition(outputRoot, topN, formats)
 } else
 {
     stop(paste0("Unsupported plot kind '", plotKind, "'."))
 }
 
-cat("ACMM_PROGRESS: R plot '", plotKind, "' complete (PNG + PDF).\n", sep = "")
+cat(
+    "ACMM_PROGRESS: R plot '",
+    plotKind,
+    "' complete (",
+    paste(toupper(formats), collapse = " + "),
+    ").\n",
+    sep = ""
+)
 flush(stdout())

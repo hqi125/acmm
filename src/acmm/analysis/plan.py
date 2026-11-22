@@ -9,8 +9,8 @@ import jsonschema
 import yaml
 
 
-ANALYSIS_PLAN_SCHEMA_VERSION = "0.2"
-ANALYSIS_PLAN_SCHEMA_VERSIONS = ("0.1", "0.2")
+ANALYSIS_PLAN_SCHEMA_VERSION = "0.4"
+ANALYSIS_PLAN_SCHEMA_VERSIONS = ("0.1", "0.2", "0.3", "0.4")
 DEFAULT_BOOTSTRAP_REPLICATES = 2000
 DEFAULT_BOOTSTRAP_SEED = 12345
 DEFAULT_CONFIDENCE_LEVEL = 0.95
@@ -33,18 +33,24 @@ PLOT_KINDS = (
     "run_duration",
     "requirement_compliance",
     "dimension_scores",
+    "dimension_profile",
     "availability",
     "trajectory_run_metrics",
     "trajectory_tool_usage",
+    "trajectory_error_rate",
+    "trajectory_tool_composition",
 )
 
 _PLOT_STAGE_BY_KIND = {
     "run_duration": "plot_run_duration",
     "requirement_compliance": "plot_requirement_compliance",
     "dimension_scores": "plot_dimension_scores",
+    "dimension_profile": "plot_dimension_profile",
     "availability": "plot_availability",
     "trajectory_run_metrics": "plot_trajectory_run_metrics",
     "trajectory_tool_usage": "plot_trajectory_tool_usage",
+    "trajectory_error_rate": "plot_trajectory_error_rate",
+    "trajectory_tool_composition": "plot_trajectory_tool_composition",
 }
 
 _STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
@@ -64,9 +70,12 @@ _STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "plot_run_duration": (),
     "plot_requirement_compliance": ("requirement_estimates",),
     "plot_dimension_scores": ("dimension_scores",),
+    "plot_dimension_profile": ("dimension_scores",),
     "plot_availability": ("availability",),
     "plot_trajectory_run_metrics": ("trajectory",),
     "plot_trajectory_tool_usage": ("trajectory",),
+    "plot_trajectory_error_rate": ("trajectory",),
+    "plot_trajectory_tool_composition": ("trajectory",),
 }
 
 
@@ -96,6 +105,7 @@ class plot_request:
     include_intervals: bool | None = None
     metric: str | None = None
     top_n: int | None = None
+    formats: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -109,6 +119,7 @@ class analysis_plan:
     analyses: tuple[analysis_request, ...]
     reports: tuple[str, ...]
     plots: tuple[plot_request, ...]
+    plot_formats: tuple[str, ...]
     resolved_stages: tuple[str, ...]
 
     def analysis(self, kind: str) -> analysis_request | None:
@@ -130,6 +141,10 @@ def default_analysis_plan_schema_path(schema_version: str = ANALYSIS_PLAN_SCHEMA
         return root / "analysis_plan.schema.json"
     if schema_version == "0.2":
         return root / "analysis_plan_v0_2.schema.json"
+    if schema_version == "0.3":
+        return root / "analysis_plan_v0_3.schema.json"
+    if schema_version == "0.4":
+        return root / "analysis_plan_v0_4.schema.json"
     raise analysis_plan_error(
         f"Unsupported analysis plan schema_version '{schema_version}'."
     )
@@ -198,6 +213,10 @@ def load_analysis_plan(
 
     defaults = value.get("defaults", {})
     default_bootstrap = _bootstrap_parameters(defaults.get("bootstrap", {}), None)
+    default_plot_formats = _plot_formats(
+        defaults.get("plot_formats"),
+        ("png",) if schema_version in {"0.3", "0.4"} else ("png", "pdf"),
+    )
     requests: list[analysis_request] = []
 
     for item in analyses_value:
@@ -240,6 +259,7 @@ def load_analysis_plan(
                 ),
                 metric=item.get("metric"),
                 top_n=int(item["top_n"]) if "top_n" in item else None,
+                formats=_plot_formats(item.get("formats"), default_plot_formats),
             )
         )
 
@@ -262,6 +282,7 @@ def load_analysis_plan(
         analyses=tuple(requests),
         reports=tuple(report_kinds),
         plots=tuple(plots),
+        plot_formats=default_plot_formats,
         resolved_stages=resolved_stages,
     )
 
@@ -297,6 +318,20 @@ def _bootstrap_parameters(
             override.get("confidence_level", base.confidence_level)
         ),
     )
+
+
+def _plot_formats(value: Any, inherited: tuple[str, ...]) -> tuple[str, ...]:
+    if value is None:
+        return inherited
+    formats = tuple(dict.fromkeys(str(item).lower() for item in value))
+    if not formats:
+        raise analysis_plan_error("At least one plot format is required.")
+    unsupported = [item for item in formats if item not in {"png", "pdf"}]
+    if unsupported:
+        raise analysis_plan_error(
+            "Unsupported plot format(s): " + ", ".join(unsupported) + "."
+        )
+    return formats
 
 
 def _resolve_plan_relative_path(plan_path: Path, value: str) -> Path:

@@ -159,3 +159,88 @@ plots:
         "dimension_scores",
         "plot_dimension_scores",
     )
+
+
+def test_standard_v03_defaults_to_png_and_adds_dimension_profile() -> None:
+    plan = load_analysis_plan(ROOT / "analysis" / "plans" / "standard_v0_3.yaml")
+
+    assert plan.schema_version == "0.3"
+    assert plan.plot_formats == ("png",)
+    profile = plan.plot("dimension_profile")
+    assert profile is not None
+    assert profile.estimand == "opportunity"
+    assert profile.aggregation_method == "arithmetic"
+    assert profile.formats == ("png",)
+    assert "plot_dimension_profile" in plan.resolved_stages
+
+
+def test_v03_plot_formats_can_enable_pdf_per_plot(tmp_path: Path) -> None:
+    plan_path = _write(
+        tmp_path / "plan.yaml",
+        """schema_version: '0.3'
+population:
+  policy: strict
+defaults:
+  plot_formats:
+    - png
+analyses:
+  - kind: requirement_estimates
+plots:
+  - kind: run_duration
+    formats:
+      - png
+      - pdf
+""",
+    )
+
+    plan = load_analysis_plan(plan_path)
+
+    request = plan.plot("run_duration")
+    assert request is not None
+    assert request.formats == ("png", "pdf")
+
+
+def test_standard_v04_replaces_cross_subject_tool_ranking_with_composition() -> None:
+    plan = load_analysis_plan(ROOT / "analysis" / "plans" / "standard_v0_4.yaml")
+
+    assert plan.schema_version == "0.4"
+    assert plan.plot_formats == ("png",)
+    assert plan.plot("trajectory_tool_usage") is None
+    error_plot = plan.plot("trajectory_error_rate")
+    assert error_plot is not None
+    assert error_plot.formats == ("png",)
+    composition_plot = plan.plot("trajectory_tool_composition")
+    assert composition_plot is not None
+    assert composition_plot.top_n == 12
+    assert composition_plot.formats == ("png",)
+    assert "plot_trajectory_error_rate" in plan.resolved_stages
+    assert "plot_trajectory_tool_composition" in plan.resolved_stages
+    assert "plot_trajectory_tool_usage" not in plan.resolved_stages
+
+
+def test_v04_tool_composition_accepts_independent_top_n(tmp_path: Path) -> None:
+    plan_path = _write(
+        tmp_path / "plan.yaml",
+        """schema_version: '0.4'
+population:
+  policy: strict
+analyses:
+  - kind: trajectory
+plots:
+  - kind: trajectory_error_rate
+  - kind: trajectory_tool_composition
+    top_n: 9
+""",
+    )
+
+    plan = load_analysis_plan(plan_path)
+
+    assert plan.plot("trajectory_error_rate") is not None
+    composition = plan.plot("trajectory_tool_composition")
+    assert composition is not None
+    assert composition.top_n == 9
+    assert plan.resolved_stages == (
+        "trajectory",
+        "plot_trajectory_error_rate",
+        "plot_trajectory_tool_composition",
+    )

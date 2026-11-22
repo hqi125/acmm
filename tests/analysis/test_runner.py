@@ -67,7 +67,7 @@ def test_analysis_plan_run_publishes_manifest_and_hashed_artifacts(
         stage_kind = str(kwargs["stage_kind"])
         analysis_dir = Path(kwargs["analysis_dir"])
         stages.append(stage_kind)
-        for relative in runner._STAGE_DEFINITIONS[stage_kind].expected_outputs:
+        for relative in runner._expected_outputs_for_stage(stage_kind, kwargs["plan"]):
             path = analysis_dir / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"{stage_kind}\n", encoding="utf-8", newline="")
@@ -115,7 +115,7 @@ def test_analysis_run_refuses_to_overwrite_same_fingerprint(
     def execute_stage(**kwargs: object) -> None:
         stage_kind = str(kwargs["stage_kind"])
         analysis_dir = Path(kwargs["analysis_dir"])
-        for relative in runner._STAGE_DEFINITIONS[stage_kind].expected_outputs:
+        for relative in runner._expected_outputs_for_stage(stage_kind, kwargs["plan"]):
             path = analysis_dir / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture\n", encoding="utf-8", newline="")
@@ -217,7 +217,7 @@ def test_v02_plan_records_plot_requests_and_resolved_trajectory_stages(
         stage_kind = str(kwargs["stage_kind"])
         analysis_dir = Path(kwargs["analysis_dir"])
         stages.append(stage_kind)
-        for relative in runner._STAGE_DEFINITIONS[stage_kind].expected_outputs:
+        for relative in runner._expected_outputs_for_stage(stage_kind, kwargs["plan"]):
             path = analysis_dir / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture\n", encoding="utf-8", newline="")
@@ -237,8 +237,16 @@ def test_v02_plan_records_plot_requests_and_resolved_trajectory_stages(
     manifest = yaml.safe_load(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["plan"]["requested_analyses"] == ["trajectory"]
     assert manifest["plan"]["requested_plots"] == [
-        {"kind": "trajectory_run_metrics", "metric": "error_rate"},
-        {"kind": "trajectory_tool_usage", "top_n": 7},
+        {
+            "kind": "trajectory_run_metrics",
+            "metric": "error_rate",
+            "formats": ["png", "pdf"],
+        },
+        {
+            "kind": "trajectory_tool_usage",
+            "top_n": 7,
+            "formats": ["png", "pdf"],
+        },
     ]
 
 
@@ -259,7 +267,7 @@ def test_plot_stage_command_uses_plan_parameters(tmp_path: Path) -> None:
         None,
     )
 
-    assert command[-4:] == ("dimension_scores", "scenario", "minimum", "false")
+    assert command[-5:] == ("dimension_scores", "png,pdf", "scenario", "minimum", "false")
 
 
 def test_trajectory_plan_rejects_legacy_campaign_export_before_runtime_probe(
@@ -315,8 +323,99 @@ plots:
         None,
     )
 
-    assert command[-3:] == (
+    assert command[-4:] == (
         "run_duration",
+        "png,pdf",
         str(tmp_path / "export"),
         "available-valid",
+    )
+
+
+def test_v03_plot_stage_outputs_follow_requested_formats(tmp_path: Path) -> None:
+    plan_path = tmp_path / "plan.yaml"
+    plan_path.write_text(
+        """schema_version: '0.3'
+population:
+  policy: strict
+defaults:
+  plot_formats:
+    - png
+analyses:
+  - kind: requirement_estimates
+plots:
+  - kind: dimension_profile
+    estimand: opportunity
+    aggregation_method: arithmetic
+""",
+        encoding="utf-8",
+        newline="",
+    )
+    plan = runner.load_analysis_plan(plan_path)
+
+    assert runner._expected_outputs_for_stage(
+        "plot_dimension_profile", plan
+    ) == ("figures/compliance/dimension_profile.png",)
+    command = runner._stage_command(
+        "plot_dimension_profile",
+        tmp_path / "export",
+        tmp_path / "analysis",
+        plan,
+        "Rscript",
+        None,
+    )
+    assert command[-4:] == (
+        "dimension_profile",
+        "png",
+        "opportunity",
+        "arithmetic",
+    )
+
+
+def test_v04_trajectory_plot_stage_commands_and_outputs(tmp_path: Path) -> None:
+    plan_path = tmp_path / "plan.yaml"
+    plan_path.write_text(
+        """schema_version: '0.4'
+population:
+  policy: strict
+analyses:
+  - kind: trajectory
+plots:
+  - kind: trajectory_error_rate
+  - kind: trajectory_tool_composition
+    top_n: 10
+""",
+        encoding="utf-8",
+        newline="",
+    )
+    plan = runner.load_analysis_plan(plan_path)
+
+    assert runner._expected_outputs_for_stage(
+        "plot_trajectory_error_rate", plan
+    ) == ("figures/trajectory/trajectory_error_rate.png",)
+    assert runner._expected_outputs_for_stage(
+        "plot_trajectory_tool_composition", plan
+    ) == ("figures/trajectory/trajectory_tool_composition.png",)
+
+    error_command = runner._stage_command(
+        "plot_trajectory_error_rate",
+        tmp_path / "export",
+        tmp_path / "analysis",
+        plan,
+        "Rscript",
+        None,
+    )
+    assert error_command[-2:] == ("trajectory_error_rate", "png")
+
+    composition_command = runner._stage_command(
+        "plot_trajectory_tool_composition",
+        tmp_path / "export",
+        tmp_path / "analysis",
+        plan,
+        "Rscript",
+        None,
+    )
+    assert composition_command[-3:] == (
+        "trajectory_tool_composition",
+        "png",
+        "10",
     )
