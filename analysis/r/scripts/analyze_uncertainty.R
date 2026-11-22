@@ -54,7 +54,7 @@ print_acmm_population_summary(population)
 cat("Bootstrap replicates:", bootstrapReplicates, "\n")
 cat("Seed:", seed, "\n")
 cat("Confidence level:", confidenceLevel, "\n")
-cat("Computing hierarchical intervals...\n")
+cat("ACMM_PROGRESS: Computing hierarchical requirement intervals...\n")
 flush(stdout())
 
 intervals <- interval_acmm_hierarchical(
@@ -64,6 +64,8 @@ intervals <- interval_acmm_hierarchical(
     seed = seed
 )
 
+cat("ACMM_PROGRESS: Hierarchical requirement intervals complete.\n")
+flush(stdout())
 cat("Hierarchical interval computation complete.\n\n")
 if (length(arguments) == 5)
 {

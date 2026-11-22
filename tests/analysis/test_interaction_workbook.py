@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import csv
 from pathlib import Path
+import shutil
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -271,3 +272,24 @@ def test_build_interaction_workbook_creates_separate_report(tmp_path: Path) -> N
     assert "ACMM Interaction Analysis" in shared_strings
     assert "Boundary cell rates" in shared_strings
     assert image_names
+
+def test_build_interaction_workbook_accepts_explicit_analysis_root(
+    tmp_path: Path,
+) -> None:
+    export_dir = tmp_path / "export"
+    design_path = _write_fixture(export_dir)
+    analysis_root = tmp_path / "analysis_run"
+    shutil.copytree(export_dir / "analysis_output", analysis_root)
+    shutil.rmtree(export_dir / "analysis_output")
+    output_path = analysis_root / "interaction_analysis.xlsx"
+
+    result = build_interaction_workbook(
+        export_dir,
+        output_path,
+        design_path,
+        analysis_root=analysis_root,
+    )
+
+    assert result.output_path == output_path
+    assert output_path.is_file()
+

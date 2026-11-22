@@ -47,6 +47,26 @@ def test_export_campaign_command_parses_independent_campaign_arguments() -> None
     assert args.output_root == "exports-test"
 
 
+
+def test_analyze_command_parses_plan_and_export_arguments() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "analyze",
+            "exports/example/campaign_123/merge_456",
+            "--plan",
+            "analysis-plan.yaml",
+            "--output-root",
+            "analysis-results",
+        ]
+    )
+
+    assert args.command == "analyze"
+    assert args.export == "exports/example/campaign_123/merge_456"
+    assert args.plan == "analysis-plan.yaml"
+    assert args.output_root == "analysis-results"
+
+
 def test_run_command_accepts_repeated_run_indices() -> None:
     parser = _build_parser()
     args = parser.parse_args(

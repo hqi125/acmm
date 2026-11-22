@@ -1,5 +1,10 @@
 # ACMM Engineering Tools
 
+`acmm analyze <export-dir> --plan <plan.yaml>` is the preferred first-class generic analysis
+orchestration path. `analyze_execution.py` remains as the historical execution-only convenience
+wrapper and retains its established automatic strict/available-valid fallback behavior.
+
+
 The `tools/` directory contains engineering and analysis utilities. These programs are not research
 Experiment Packages unless explicitly stated otherwise.
 

@@ -11,6 +11,10 @@ from typing import Any, Mapping
 
 from acmm.analysis.campaign_export import export_campaign
 from acmm.analysis.export import analysis_export_error, export_execution
+from acmm.analysis.runner import (
+    analysis_run_error,
+    run_analysis_plan,
+)
 from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.contract.loader import contract_load_error, load_contract
 from acmm.contract.validator import (
@@ -2197,6 +2201,39 @@ def _run_export_campaign(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def _run_analyze(args: argparse.Namespace) -> int:
+    try:
+        result = run_analysis_plan(
+            export_dir=Path(args.export),
+            plan_path=Path(args.plan),
+            output_root=(
+                Path(args.output_root)
+                if args.output_root is not None
+                else None
+            ),
+            plan_schema_path=(
+                Path(args.plan_schema)
+                if args.plan_schema is not None
+                else None
+            ),
+            progress=lambda message: print(
+                f"Analysis: {message}",
+                flush=True,
+            ),
+        )
+    except analysis_run_error as exc:
+        print(f"ERROR: Analysis failed: {exc}", file=sys.stderr)
+        return exc.exit_code if exc.exit_code > 0 else 1
+
+    print("Analysis completed successfully.")
+    print(f"  analysis id:      {result.analysis_id}")
+    print(f"  population:       {result.population_policy}")
+    print(f"  output:           {result.output_dir}")
+    print(f"  manifest:         {result.manifest_path}")
+    print(f"  resolved stages:  {len(result.resolved_stages)}")
+    return 0
+
 def _run_validate_record(args: argparse.Namespace) -> int:
     record_path = Path(args.record)
     contract_path = Path(args.contract)
@@ -2525,6 +2562,40 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     export_campaign_parser.set_defaults(handler=_run_export_campaign)
+
+
+    analyze_parser = subparsers.add_parser(
+        "analyze",
+        help=(
+            "Run a versioned generic analysis plan against one deterministic "
+            "ACMM export."
+        ),
+    )
+    analyze_parser.add_argument(
+        "export",
+        help=(
+            "Path to an analysis export directory containing export_manifest.yaml."
+        ),
+    )
+    analyze_parser.add_argument(
+        "--plan",
+        required=True,
+        help="Path to an analysis-plan YAML file.",
+    )
+    analyze_parser.add_argument(
+        "--output-root",
+        help=(
+            "Optional analysis result root. Defaults to <export>/analysis_output."
+        ),
+    )
+    analyze_parser.add_argument(
+        "--plan-schema",
+        help=(
+            "Optional analysis-plan JSON Schema override. Defaults to the bundled "
+            "schema for plan schema_version 0.1."
+        ),
+    )
+    analyze_parser.set_defaults(handler=_run_analyze)
 
     record_parser = subparsers.add_parser(
         "validate-record",

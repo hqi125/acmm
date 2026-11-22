@@ -44,12 +44,16 @@ exportData <- load_acmm_export(
     exportDir,
     populationPolicy = populationPolicy
 )
+cat("ACMM_PROGRESS: Computing availability intervals and sensitivity tables...\n")
+flush(stdout())
 availability <- analyze_acmm_availability(
     exportData,
     confidenceLevel = confidenceLevel,
     bootstrapReplicates = bootstrapReplicates,
     seed = seed
 )
+cat("ACMM_PROGRESS: Availability analysis computation complete.\n")
+flush(stdout())
 
 if (!dir.exists(dataDir))
 {

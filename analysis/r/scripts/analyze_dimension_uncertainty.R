@@ -56,7 +56,7 @@ cat("Seed:", seed, "\n")
 cat("Confidence level:", confidenceLevel, "\n")
 cat("Weighting: equal\n")
 cat("Methods:", paste(acmmDimensionMethods, collapse = ", "), "\n")
-cat("Computing hierarchical dimension-score intervals...\n")
+cat("ACMM_PROGRESS: Computing hierarchical dimension-score intervals...\n")
 flush(stdout())
 
 intervals <- interval_acmm_dimension_scores_hierarchical(
@@ -66,6 +66,8 @@ intervals <- interval_acmm_dimension_scores_hierarchical(
     seed = seed
 )
 
+cat("ACMM_PROGRESS: Hierarchical dimension-score intervals complete.\n")
+flush(stdout())
 cat("Hierarchical dimension-score interval computation complete.\n\n")
 if (length(arguments) == 5)
 {

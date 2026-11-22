@@ -131,12 +131,16 @@ factorSpec <- design$factors
 interactionData <- acmm_interaction_attach_factors(population, factorSpec)
 cellEstimates <- acmm_interaction_cell_estimates(interactionData)
 simpleEffects <- acmm_interaction_simple_effects(interactionData, cellEstimates)
+cat("ACMM_PROGRESS: Computing block-bootstrap interaction intervals...\n")
+flush(stdout())
 interactionTable <- interval_acmm_interaction_block_bootstrap(
     interactionData,
     bootstrapReplicates = bootstrapReplicates,
     seed = seed,
     confidenceLevel = confidenceLevel
 )
+cat("ACMM_PROGRESS: Interaction bootstrap computation complete.\n")
+flush(stdout())
 
 if (!dir.exists(dataDir))
 {

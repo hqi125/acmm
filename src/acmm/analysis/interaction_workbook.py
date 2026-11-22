@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from acmm.analysis.layout import INTERACTION_SCOPE, analysis_data_dir
+from acmm.analysis.layout import INTERACTION_SCOPE, analysis_data_dir, analysis_data_dir_from_root
 
 
 INTERACTION_WORKBOOK_NAME = "interaction_analysis.xlsx"
@@ -88,10 +88,19 @@ def build_interaction_workbook(
     export_dir: str | Path,
     output_path: str | Path | None = None,
     design_path: str | Path | None = None,
+    analysis_root: str | Path | None = None,
 ) -> interaction_workbook_result:
     source_dir = Path(export_dir)
-    analysis_dir = source_dir / "analysis_output"
-    data_dir = analysis_data_dir(source_dir, INTERACTION_SCOPE)
+    analysis_dir = (
+        Path(analysis_root)
+        if analysis_root is not None
+        else source_dir / "analysis_output"
+    )
+    data_dir = (
+        analysis_data_dir_from_root(analysis_dir, INTERACTION_SCOPE)
+        if analysis_root is not None
+        else analysis_data_dir(source_dir, INTERACTION_SCOPE)
+    )
     target_path = (
         Path(output_path)
         if output_path is not None

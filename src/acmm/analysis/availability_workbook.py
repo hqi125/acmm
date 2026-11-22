@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from acmm.analysis.layout import AVAILABILITY_SCOPE, analysis_data_dir
+from acmm.analysis.layout import AVAILABILITY_SCOPE, analysis_data_dir, analysis_data_dir_from_root
 
 
 AVAILABILITY_WORKBOOK_NAME = "availability_analysis.xlsx"
@@ -103,10 +103,19 @@ class _csv_table:
 def build_availability_workbook(
     export_dir: str | Path,
     output_path: str | Path | None = None,
+    analysis_root: str | Path | None = None,
 ) -> availability_workbook_result:
     source_dir = Path(export_dir)
-    analysis_dir = source_dir / "analysis_output"
-    data_dir = analysis_data_dir(source_dir, AVAILABILITY_SCOPE)
+    analysis_dir = (
+        Path(analysis_root)
+        if analysis_root is not None
+        else source_dir / "analysis_output"
+    )
+    data_dir = (
+        analysis_data_dir_from_root(analysis_dir, AVAILABILITY_SCOPE)
+        if analysis_root is not None
+        else analysis_data_dir(source_dir, AVAILABILITY_SCOPE)
+    )
     target_path = (
         Path(output_path)
         if output_path is not None

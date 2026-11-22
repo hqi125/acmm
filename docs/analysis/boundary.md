@@ -184,3 +184,17 @@ automatic causal labels. A harness-visible failure can still originate in subjec
 attribution requires evidence-backed diagnosis outside the availability rate itself.
 
 See `docs/analysis/availability.md` for the formal definitions and reporting rules.
+
+## First-class generic analysis orchestration
+
+The statistical implementation remains in the Core repository's `analysis/r` workspace.
+`acmm analyze <export-dir> --plan <plan.yaml>` adds only generic orchestration/provenance in
+`src/acmm`: schema validation, dependency resolution, subprocess execution, progress forwarding,
+atomic publication, and artifact hashing. It does not move statistical estimators into the Python
+experiment runtime.
+
+Experiment-specific scientific choices are expressed as downstream plan/design data. For example, a
+2 x 2 interaction design may be referenced by an analysis plan, while the executable interaction
+implementation remains generic Core R code. No post-acquisition analysis code or plan is required to
+be added to a frozen Experiment Package.
+

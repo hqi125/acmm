@@ -220,6 +220,20 @@ The test runner creates its own temporary exports and does not depend on any res
 It also checks Wilson reference values, single-scenario bootstrap refusal, deterministic seeded
 hierarchical resampling, and preservation of the caller's R random-number state.
 
+## First-class analysis plans
+
+The preferred orchestration surface is now `acmm analyze <export-dir> --plan <plan.yaml>`. The R
+functions and scripts remain the statistical implementation; the Core CLI validates a versioned plan,
+resolves dependencies, runs only the requested generic stages, preserves full R logs, and publishes an
+immutable analysis manifest. See `docs/analysis/plan.md`.
+
+The repository provides `analysis/plans/standard_v0_1.yaml`, which reproduces the established general
+requirement/dimension/availability workflow with an explicit `strict` population and the established
+2000-replicate, seed-12345, 95% bootstrap settings. Use `available-valid` explicitly for a partial
+population; the plan runner does not silently fall back.
+
+The standalone R scripts below remain supported for direct development and debugging.
+
 ## Analyze an export
 
 Basic point estimates:

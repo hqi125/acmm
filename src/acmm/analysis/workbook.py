@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from acmm.analysis.layout import COMPLIANCE_SCOPE, analysis_data_dir
+from acmm.analysis.layout import COMPLIANCE_SCOPE, analysis_data_dir, analysis_data_dir_from_root
 
 
 WORKBOOK_NAME = "analysis_report.xlsx"
@@ -133,12 +133,21 @@ class _csv_table:
 def build_analysis_workbook(
     export_dir: str | Path,
     output_path: str | Path | None = None,
+    analysis_root: str | Path | None = None,
 ) -> analysis_workbook_result:
     """Build a presentation workbook from one completed normalized analysis export."""
 
     source_dir = Path(export_dir)
-    analysis_dir = source_dir / "analysis_output"
-    data_dir = analysis_data_dir(source_dir, COMPLIANCE_SCOPE)
+    analysis_dir = (
+        Path(analysis_root)
+        if analysis_root is not None
+        else source_dir / "analysis_output"
+    )
+    data_dir = (
+        analysis_data_dir_from_root(analysis_dir, COMPLIANCE_SCOPE)
+        if analysis_root is not None
+        else analysis_data_dir(source_dir, COMPLIANCE_SCOPE)
+    )
     target_path = (
         Path(output_path)
         if output_path is not None

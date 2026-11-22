@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+import shutil
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -346,3 +347,23 @@ def test_build_availability_workbook_creates_separate_report(tmp_path: Path) -> 
     assert "ACMM Availability Analysis" in shared_strings
     assert "Sensitivity envelope" in shared_strings
     assert "fixture failure" in shared_strings
+
+def test_build_availability_workbook_accepts_explicit_analysis_root(
+    tmp_path: Path,
+) -> None:
+    export_dir = tmp_path / "export"
+    _write_fixture(export_dir)
+    analysis_root = tmp_path / "analysis_run"
+    shutil.copytree(export_dir / "analysis_output", analysis_root)
+    shutil.rmtree(export_dir / "analysis_output")
+    output_path = analysis_root / "availability_analysis.xlsx"
+
+    result = build_availability_workbook(
+        export_dir,
+        output_path,
+        analysis_root=analysis_root,
+    )
+
+    assert result.output_path == output_path
+    assert output_path.is_file()
+
