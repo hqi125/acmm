@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import json
 import uuid
 
 import pytest
@@ -1761,12 +1762,19 @@ def test_execute_experiment_uses_pph_below_execution_entry_point(
 
     assert result.slots[0].is_resolved
     assert waits == []
-    trajectory = list((generated / "provider_pressure").rglob("*.yaml"))
-    names = {path.name for path in trajectory}
-    assert "profile-state.yaml" in names
-    assert "trajectory-index.yaml" in names
-    snapshots = [path for path in trajectory if path.parent.name == "trajectory"]
-    assert len(snapshots) == 3
+    pressure_root = generated / "provider_pressure"
+    profiles = list(pressure_root.rglob("store_v2/profile-state.yaml"))
+    lineages = list(pressure_root.rglob("store_v2/lineage.json"))
+    checkpoints = list(pressure_root.rglob("store_v2/checkpoints/checkpoint_*.json"))
+    segments = list(pressure_root.rglob("store_v2/segments/segment_*.jsonl"))
+    assert len(profiles) == 1
+    assert len(lineages) == 1
+    lineage_doc = json.loads(lineages[0].read_text(encoding="utf-8"))
+    assert lineage_doc["segment_policy"]["preset"] == "balanced"
+    assert lineage_doc["segment_policy"]["max_bytes"] == 8 * 1024 * 1024
+    assert lineage_doc["segment_policy"]["max_records"] == 2048
+    assert len(checkpoints) == 3
+    assert segments
 
 
 def test_provider_pressure_generated_root_is_shared_between_run_and_campaign(

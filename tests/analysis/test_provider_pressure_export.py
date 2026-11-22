@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from acmm.analysis.export import analysis_export_error
+import acmm.analysis.provider_pressure_export as provider_pressure_export_module
 from acmm.analysis.provider_pressure_export import export_provider_pressure
 
 
@@ -214,12 +215,13 @@ def test_provider_pressure_export_validates_chain_and_normalizes_tables(tmp_path
     assert result.signal_rows == 1
     assert result.decision_rows == 1
     assert result.pacing_event_rows == 1
+    assert result.pacing_summary_rows == 1
     assert result.output_dir.parent.name == "provider_pressure"
     assert messages[0].startswith("discovering")
     assert messages[-1].startswith("publishing")
 
     manifest = yaml.safe_load(result.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == "0.2"
+    assert manifest["schema_version"] == "0.4"
     assert manifest["source"]["kind"] == "provider_pressure"
     assert manifest["source"]["lineage_count"] == 1
     assert manifest["source"]["snapshot_count"] == 2
@@ -238,6 +240,10 @@ def test_provider_pressure_export_validates_chain_and_normalizes_tables(tmp_path
     pacing = _rows(result.pacing_events_path)
     assert pacing[0]["reason"] == "learned_provider_pressure"
     assert pacing[0]["subject_id"] == "subject_a"
+    pacing_summary = _rows(result.pacing_summary_path)
+    assert pacing_summary[0]["reason"] == "learned_provider_pressure"
+    assert pacing_summary[0]["pacing_events"] == "1"
+    assert pacing_summary[0]["pacing_seconds"] == "5.0"
 
     second_root = tmp_path / "exports2"
     second = export_provider_pressure(lineage, second_root)
@@ -257,3 +263,17 @@ def test_provider_pressure_export_rejects_tampered_snapshot(tmp_path: Path) -> N
         export_provider_pressure(tmp_path / "provider_pressure", tmp_path / "exports")
 
 
+
+
+def test_provider_pressure_export_refuses_oversized_legacy_yaml_before_safe_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_lineage(tmp_path)
+    monkeypatch.setattr(
+        provider_pressure_export_module,
+        "LEGACY_PROVIDER_PRESSURE_SAFE_LOAD_MAX_BYTES",
+        1,
+    )
+    with pytest.raises(analysis_export_error, match="Upgrade the Provider Pressure store first"):
+        export_provider_pressure(tmp_path / "provider_pressure", tmp_path / "exports")

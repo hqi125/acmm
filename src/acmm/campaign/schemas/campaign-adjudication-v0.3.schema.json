@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ACMM Campaign Adjudication v0.3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "adjudication",
+    "population",
+    "runs_artifact"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.3"
+    },
+    "adjudication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "campaign_id",
+        "experiment_id",
+        "created_at",
+        "campaign_manifest_sha256",
+        "design_digest",
+        "contract_sha256",
+        "acquisition_package_sha256",
+        "adjudicator_package_sha256",
+        "adjudicator_snapshot_artifact",
+        "adjudication_component_sha256",
+        "adjudication_api_version"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "campaign_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "experiment_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "created_at": {
+          "type": "string",
+          "minLength": 1
+        },
+        "campaign_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "design_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "contract_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "acquisition_package_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "adjudicator_package_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "adjudicator_snapshot_artifact": {
+          "const": "package_store"
+        },
+        "adjudication_component_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "adjudication_api_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "population": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "adjudicated",
+        "changed_runs",
+        "changed_judgments"
+      ],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "adjudicated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_runs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "changed_judgments": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "runs_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "rows"
+      ],
+      "properties": {
+        "path": {
+          "const": "runs.jsonl"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "runEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logical_run_id",
+        "run_index",
+        "subject_id",
+        "scenario_id",
+        "repetition",
+        "source_execution_id",
+        "source_run_id",
+        "source_run_record",
+        "source_run_record_sha256",
+        "evidence_sha256",
+        "adjudication_artifact",
+        "adjudication_artifact_sha256",
+        "changed",
+        "changed_opportunities"
+      ],
+      "properties": {
+        "logical_run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "subject_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scenario_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repetition": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_execution_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_run_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_run_record": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_run_record_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "evidence_sha256": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "adjudication_artifact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "adjudication_artifact_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "changed_opportunities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

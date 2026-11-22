@@ -11,6 +11,12 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 from jsonschema import Draft202012Validator
 import yaml
 
+from acmm.runtime.provider_pressure_segment_store import (
+    STORE_DIR_NAME as PROVIDER_PRESSURE_STORE_DIR_NAME,
+    segmented_provider_pressure_store,
+    provider_pressure_store_v2_error,
+)
+
 from acmm.analysis.export import (
     analysis_export_error,
     _csv_table_writer,
@@ -20,7 +26,8 @@ from acmm.analysis.export import (
 )
 
 
-PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION = "0.2"
+PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION = "0.4"
+LEGACY_PROVIDER_PRESSURE_SAFE_LOAD_MAX_BYTES = 16 * 1024 * 1024
 
 LINEAGE_COLUMNS = (
     "export_schema_version",
@@ -173,6 +180,19 @@ PACING_COLUMNS = (
     "metadata_json",
 )
 
+
+PACING_SUMMARY_COLUMNS = (
+    "export_schema_version",
+    "lineage_id",
+    "sequence",
+    "created_at",
+    "source_execution_id",
+    "source",
+    "reason",
+    "pacing_events",
+    "pacing_seconds",
+)
+
 _TOTAL_FIELDS = (
     "observations",
     "reward_events",
@@ -194,6 +214,7 @@ class provider_pressure_export_result:
     signals_path: Path
     decisions_path: Path
     pacing_events_path: Path
+    pacing_summary_path: Path
     manifest_path: Path
     lineage_rows: int
     snapshot_rows: int
@@ -201,6 +222,7 @@ class provider_pressure_export_result:
     signal_rows: int
     decision_rows: int
     pacing_event_rows: int
+    pacing_summary_rows: int
 
 
 @dataclass(frozen=True)
@@ -221,6 +243,15 @@ def export_provider_pressure(
     if not source_root.is_dir():
         raise analysis_export_error(
             f"Provider Pressure root does not exist: '{source_root}'."
+        )
+
+    segmented_roots = _discover_segmented_lineage_roots(source_root)
+    if segmented_roots:
+        return _export_segmented_provider_pressure(
+            source_root,
+            Path(output_root).expanduser().resolve(),
+            segmented_roots,
+            progress=progress,
         )
 
     _progress(progress, "discovering Provider Pressure trajectory lineages...")
@@ -296,6 +327,9 @@ def export_provider_pressure(
                 "pacing_events": stack.enter_context(
                     _csv_table_writer(staging_dir / "pacing_events.csv", PACING_COLUMNS)
                 ),
+                "pacing_summary": stack.enter_context(
+                    _csv_table_writer(staging_dir / "pacing_summary.csv", PACING_SUMMARY_COLUMNS)
+                ),
             }
 
             for lineage in lineages:
@@ -315,7 +349,11 @@ def export_provider_pressure(
                     writers["features"].write_many(_feature_rows(lineage, snapshot))
                     writers["signals"].write_many(_signal_rows(lineage, snapshot))
                     writers["decisions"].write_many(_decision_rows(lineage, snapshot))
-                    writers["pacing_events"].write_many(_pacing_rows(lineage, snapshot))
+                    pacing_summary: dict[tuple[str, str], dict[str, Any]] = {}
+                    for pacing_row in _pacing_rows(lineage, snapshot):
+                        writers["pacing_events"].write(pacing_row)
+                        _accumulate_pacing_summary(pacing_summary, pacing_row)
+                    writers["pacing_summary"].write_many(pacing_summary.values())
 
                     processed += 1
                     if snapshot_count >= 50 and processed < snapshot_count and processed % report_every == 0:
@@ -370,6 +408,7 @@ def export_provider_pressure(
         signals_path=output_dir / "signals.csv",
         decisions_path=output_dir / "decisions.csv",
         pacing_events_path=output_dir / "pacing_events.csv",
+        pacing_summary_path=output_dir / "pacing_summary.csv",
         manifest_path=output_dir / "export_manifest.yaml",
         lineage_rows=counts["lineages"],
         snapshot_rows=counts["snapshots"],
@@ -377,7 +416,408 @@ def export_provider_pressure(
         signal_rows=counts["signals"],
         decision_rows=counts["decisions"],
         pacing_event_rows=counts["pacing_events"],
+        pacing_summary_rows=counts["pacing_summary"],
     )
+
+
+def _discover_segmented_lineage_roots(root: Path) -> tuple[Path, ...]:
+    candidates: set[Path] = set()
+    if root.name == PROVIDER_PRESSURE_STORE_DIR_NAME and (root / "lineage.json").is_file():
+        candidates.add(root.resolve())
+    direct = root / PROVIDER_PRESSURE_STORE_DIR_NAME / "lineage.json"
+    if direct.is_file() and not direct.is_symlink():
+        candidates.add(direct.parent.resolve())
+    for path in root.rglob("lineage.json"):
+        if path.is_symlink() or not path.is_file() or path.parent.name != PROVIDER_PRESSURE_STORE_DIR_NAME:
+            continue
+        candidates.add(path.parent.resolve())
+    return tuple(sorted(candidates, key=lambda item: item.as_posix()))
+
+
+def _export_segmented_provider_pressure(
+    source_root: Path,
+    output_root: Path,
+    store_roots: tuple[Path, ...],
+    *,
+    progress: Callable[[str], None] | None,
+) -> provider_pressure_export_result:
+    _progress(progress, f"discovering {len(store_roots)} segmented Provider Pressure lineage(s)...")
+    descriptors: list[tuple[str, Path, dict[str, str], segmented_provider_pressure_store, dict[str, Any]]] = []
+    for store_root in store_roots:
+        try:
+            lineage_doc = json.loads((store_root / "lineage.json").read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise analysis_export_error(f"Could not read segmented Provider Pressure lineage '{store_root}': {exc}") from exc
+        if not isinstance(lineage_doc, dict):
+            raise analysis_export_error(f"Segmented Provider Pressure lineage '{store_root}' is malformed.")
+        identity = _identity(lineage_doc.get("identity"))
+        lineage_id = _lineage_id(identity)
+        store = segmented_provider_pressure_store(store_root.parent, identity)
+        descriptors.append((lineage_id, store_root, identity, store, lineage_doc))
+
+    source_digest = _segmented_source_digest(descriptors)
+    export_id = source_digest[:16]
+    output_dir = output_root / "provider_pressure" / f"export_{export_id}"
+    checkpoint_count = sum(
+        int(lineage_doc.get("latest_checkpoint_sequence", -1)) + 1
+        for _, _, _, _, lineage_doc in descriptors
+    )
+    _progress(
+        progress,
+        f"stream-validating {checkpoint_count} checkpoint(s) and bounded event segments...",
+    )
+
+    source_lineages: list[dict[str, Any]] = []
+    with _staged_export_directory(output_dir) as staging_dir:
+        with ExitStack() as stack:
+            writers = {
+                "lineages": stack.enter_context(_csv_table_writer(staging_dir / "lineages.csv", LINEAGE_COLUMNS)),
+                "snapshots": stack.enter_context(_csv_table_writer(staging_dir / "snapshots.csv", SNAPSHOT_COLUMNS)),
+                "features": stack.enter_context(_csv_table_writer(staging_dir / "features.csv", FEATURE_COLUMNS)),
+                "signals": stack.enter_context(_csv_table_writer(staging_dir / "signals.csv", SIGNAL_COLUMNS)),
+                "decisions": stack.enter_context(_csv_table_writer(staging_dir / "decisions.csv", DECISION_COLUMNS)),
+                "pacing_events": stack.enter_context(_csv_table_writer(staging_dir / "pacing_events.csv", PACING_COLUMNS)),
+                "pacing_summary": stack.enter_context(_csv_table_writer(staging_dir / "pacing_summary.csv", PACING_SUMMARY_COLUMNS)),
+            }
+            processed = 0
+            report_every = max(25, checkpoint_count // 10) if checkpoint_count else 1
+            for lineage_id, store_root, identity, store, lineage_doc in descriptors:
+                checkpoints = store.iter_checkpoints()
+                events = iter(store.iter_events())
+                next_event = next(events, None)
+                previous_profile: Mapping[str, Any] | None = None
+                latest_checkpoint = None
+                lineage_checkpoint_count = 0
+                for checkpoint in checkpoints:
+                    latest_checkpoint = checkpoint
+                    lineage_checkpoint_count += 1
+                    signal_count = 0
+                    decision_count = 0
+                    pacing_count = 0
+                    pacing_summary: dict[tuple[str, str], dict[str, Any]] = {}
+                    while next_event is not None and next_event.sequence <= checkpoint.event_sequence:
+                        payload = _strip_migration_marker(next_event.payload)
+                        if next_event.kind == "signal":
+                            writers["signals"].write(
+                                _segmented_signal_row(lineage_id, checkpoint.sequence, next_event, payload)
+                            )
+                            signal_count += 1
+                        elif next_event.kind == "decision":
+                            writers["decisions"].write(
+                                _segmented_decision_row(lineage_id, checkpoint.sequence, next_event, payload)
+                            )
+                            decision_count += 1
+                        elif next_event.kind == "pacing":
+                            pacing_row = _segmented_pacing_row(
+                                lineage_id, checkpoint.sequence, next_event, payload
+                            )
+                            writers["pacing_events"].write(pacing_row)
+                            _accumulate_pacing_summary(pacing_summary, pacing_row)
+                            pacing_count += 1
+                        next_event = next(events, None)
+                    writers["pacing_summary"].write_many(pacing_summary.values())
+                    before = previous_profile if previous_profile is not None else checkpoint.profile
+                    writers["snapshots"].write(
+                        _segmented_snapshot_row(
+                            lineage_id,
+                            identity,
+                            checkpoint,
+                            before,
+                            signal_count=signal_count,
+                            decision_count=decision_count,
+                            pacing_count=pacing_count,
+                        )
+                    )
+                    writers["features"].write_many(
+                        _segmented_feature_rows(lineage_id, checkpoint, before)
+                    )
+                    previous_profile = checkpoint.profile
+                    processed += 1
+                    if checkpoint_count >= 50 and processed < checkpoint_count and processed % report_every == 0:
+                        _progress(progress, f"stream-validated and normalized {processed}/{checkpoint_count} checkpoint(s)...")
+                if next_event is not None:
+                    raise analysis_export_error(
+                        f"Segmented Provider Pressure lineage '{store_root}' has event(s) beyond its latest checkpoint. "
+                        "Finalize or repair the active execution before export."
+                    )
+                latest_sequence = latest_checkpoint.sequence if latest_checkpoint is not None else -1
+                latest_sha = latest_checkpoint.checkpoint_sha256 if latest_checkpoint is not None else ""
+                lineage_row = {
+                    "export_schema_version": PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION,
+                    "lineage_id": lineage_id,
+                    **identity,
+                    "snapshot_count": lineage_checkpoint_count,
+                    "latest_sequence": latest_sequence,
+                    "latest_snapshot_sha256": latest_sha,
+                }
+                writers["lineages"].write(lineage_row)
+                source_lineages.append({
+                    "lineage_id": lineage_id,
+                    **identity,
+                    "snapshot_count": lineage_checkpoint_count,
+                    "latest_sequence": latest_sequence,
+                    "latest_snapshot_sha256": latest_sha,
+                    "store_schema_version": str(lineage_doc.get("schema_version", "")),
+                })
+
+        manifest = {
+            "schema_version": PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION,
+            "source": {
+                "kind": "provider_pressure",
+                "storage_kind": "segmented",
+                "source_digest_sha256": source_digest,
+                "lineage_count": len(descriptors),
+                "snapshot_count": checkpoint_count,
+                "trajectory_schema_versions": ["segmented-0.2"],
+                "lineages": source_lineages,
+            },
+            "tables": {
+                name: writer.manifest()
+                for name, writer in writers.items()
+            },
+        }
+        _write_export_bytes(staging_dir / "export_manifest.yaml", yaml.safe_dump(manifest, sort_keys=False).encode("utf-8"))
+        counts = {name: writer.rows for name, writer in writers.items()}
+
+    _progress(
+        progress,
+        (
+            "publishing Provider Pressure export: "
+            f"{counts['lineages']} lineage(s), {counts['snapshots']} checkpoint(s), "
+            f"{counts['signals']} signal(s), {counts['decisions']} decision(s), "
+            f"{counts['pacing_events']} pacing event(s)..."
+        ),
+    )
+    return provider_pressure_export_result(
+        export_id=export_id,
+        output_dir=output_dir,
+        lineages_path=output_dir / "lineages.csv",
+        snapshots_path=output_dir / "snapshots.csv",
+        features_path=output_dir / "features.csv",
+        signals_path=output_dir / "signals.csv",
+        decisions_path=output_dir / "decisions.csv",
+        pacing_events_path=output_dir / "pacing_events.csv",
+        pacing_summary_path=output_dir / "pacing_summary.csv",
+        manifest_path=output_dir / "export_manifest.yaml",
+        lineage_rows=counts["lineages"],
+        snapshot_rows=counts["snapshots"],
+        feature_rows=counts["features"],
+        signal_rows=counts["signals"],
+        decision_rows=counts["decisions"],
+        pacing_event_rows=counts["pacing_events"],
+        pacing_summary_rows=counts["pacing_summary"],
+    )
+
+
+def _segmented_snapshot_row(
+    lineage_id: str,
+    identity: Mapping[str, str],
+    checkpoint,
+    before: Mapping[str, Any],
+    *,
+    signal_count: int,
+    decision_count: int,
+    pacing_count: int,
+) -> dict[str, Any]:
+    source = dict(checkpoint.source_metadata)
+    after = checkpoint.profile
+    before_totals = _mapping(before.get("totals"))
+    after_totals = _mapping(after.get("totals"))
+    row: dict[str, Any] = {
+        "export_schema_version": PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION,
+        "lineage_id": lineage_id,
+        **identity,
+        "trajectory_schema_version": "segmented-0.2",
+        "sequence": checkpoint.sequence,
+        "created_at": checkpoint.created_at,
+        "source_kind": checkpoint.source_kind,
+        "source_execution_id": checkpoint.source_execution_id,
+        "execution_status": checkpoint.execution_status,
+        "snapshot_sha256": checkpoint.checkpoint_sha256,
+        "parent_sha256": checkpoint.parent_checkpoint_sha256 or "",
+        "experiment_id": source.get("experiment_id", ""),
+        "package_sha256": source.get("package_sha256") or "",
+        "selected_run_count": len(source.get("selected_run_indices", ())) if isinstance(source.get("selected_run_indices"), list) else "",
+        "session_dir": source.get("session_dir", ""),
+        "signal_count": signal_count,
+        "decision_count": decision_count,
+        "pacing_event_count": pacing_count,
+        "source_metadata_json": _json_cell(source),
+        "model_state_before_json": _json_cell(_mapping(before.get("model_state"))),
+        "model_state_after_json": _json_cell(_mapping(after.get("model_state"))),
+    }
+    for field in _TOTAL_FIELDS:
+        before_value = _number(before_totals.get(field, 0))
+        after_value = _number(after_totals.get(field, 0))
+        row[f"{field}_before"] = before_value
+        row[f"{field}_after"] = after_value
+        row[f"{field}_delta"] = after_value - before_value
+    return row
+
+
+def _segmented_feature_rows(lineage_id: str, checkpoint, before: Mapping[str, Any]) -> Iterator[dict[str, Any]]:
+    before_features = _mapping(before.get("features"))
+    after_features = _mapping(checkpoint.profile.get("features"))
+    for name in sorted(set(before_features) | set(after_features)):
+        prior = _mapping(before_features.get(name))
+        after = _mapping(after_features.get(name))
+        score_before = _number(prior.get("score", 0))
+        score_after = _number(after.get("score", 0))
+        yield {
+            "export_schema_version": PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION,
+            "lineage_id": lineage_id,
+            "sequence": checkpoint.sequence,
+            "created_at": checkpoint.created_at,
+            "source_kind": checkpoint.source_kind,
+            "source_execution_id": checkpoint.source_execution_id,
+            "feature": name,
+            "score_before": score_before,
+            "score_after": score_after,
+            "score_delta": score_after - score_before,
+            "observations_after": _number(after.get("observations", 0)),
+            "rewards_after": _number(after.get("rewards", 0)),
+            "punishments_after": _number(after.get("punishments", 0)),
+            "confidence_after": _number(after.get("confidence", 0)),
+            "runtime_pressure_events_after": _number(after.get("runtime_pressure_events", 0)),
+            "runtime_pressure_seconds_after": _number(after.get("runtime_pressure_seconds", 0)),
+            "pph_actuation_events_after": _number(after.get("pph_actuation_events", 0)),
+            "pph_actuation_seconds_after": _number(after.get("pph_actuation_seconds", 0)),
+            "state_before_json": _json_cell(prior),
+            "state_after_json": _json_cell(after),
+        }
+
+
+def _segmented_signal_row(lineage_id: str, checkpoint_sequence: int, event, record: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "export_schema_version": PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION,
+        "lineage_id": lineage_id,
+        "sequence": checkpoint_sequence,
+        "created_at": event.created_at,
+        "source_kind": record.get("source_kind", ""),
+        "source_execution_id": record.get("source_execution_id", event.execution_id),
+        "signal_index": event.sequence,
+        "kind": record.get("kind", ""),
+        "count": record.get("count", ""),
+        "severity": record.get("severity", ""),
+        "pressure_duration_seconds": record.get("pressure_duration_seconds", ""),
+        "features_json": _json_cell(_mapping(record.get("features"))),
+        "metadata_json": _json_cell(_mapping(record.get("metadata"))),
+        "observation_metadata_json": _json_cell(_mapping(record.get("observation_metadata"))),
+        "record_json": _json_cell(record),
+    }
+
+
+def _segmented_decision_row(lineage_id: str, checkpoint_sequence: int, event, record: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "export_schema_version": PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION,
+        "lineage_id": lineage_id,
+        "sequence": checkpoint_sequence,
+        "created_at": event.created_at,
+        "source_execution_id": event.execution_id,
+        "decision_index": event.sequence,
+        "decision_kind": record.get("decision_kind", ""),
+        "run_index": record.get("run_index", ""),
+        "subject_id": record.get("subject_id", ""),
+        "scenario_id": record.get("scenario_id", ""),
+        "action_id": record.get("action_id", ""),
+        "decision_id": record.get("decision_id", ""),
+        "outcome": record.get("outcome", ""),
+        "effective_pressure": record.get("effective_pressure", ""),
+        "event_pph_pressure": record.get("event_pph_pressure", ""),
+        "event_pph_wait_seconds": record.get("event_pph_wait_seconds", ""),
+        "app_suspension_seconds": record.get("app_suspension_seconds", ""),
+        "baseline_spacing_wait_seconds": record.get("baseline_spacing_wait_seconds", ""),
+        "total_admission_wait_seconds": record.get("total_admission_wait_seconds", ""),
+        "recommended_wait_seconds": record.get("recommended_wait_seconds", ""),
+        "provider_wait_seconds": record.get("provider_wait_seconds", record.get("wait_seconds", "")),
+        "underprediction_seconds": record.get("underprediction_seconds", ""),
+        "features_json": _json_cell(_mapping(record.get("features"))),
+        "metadata_json": _json_cell(_mapping(record.get("metadata"))),
+        "model_state_metadata_json": _json_cell(_mapping(record.get("model_state_metadata"))),
+        "record_json": _json_cell(record),
+    }
+
+
+def _segmented_pacing_row(lineage_id: str, checkpoint_sequence: int, event, record: Mapping[str, Any]) -> dict[str, Any]:
+    metadata = _mapping(record.get("metadata"))
+    return {
+        "export_schema_version": PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION,
+        "lineage_id": lineage_id,
+        "sequence": checkpoint_sequence,
+        "created_at": event.created_at,
+        "source_execution_id": event.execution_id,
+        "pacing_index": event.sequence,
+        "source": record.get("source", ""),
+        "reason": record.get("reason", ""),
+        "duration_seconds": record.get("duration_seconds", ""),
+        "action_id": record.get("action_id", ""),
+        "run_index": metadata.get("run_index", ""),
+        "subject_id": metadata.get("subject_id", ""),
+        "scenario_id": metadata.get("scenario_id", ""),
+        "decision_id": metadata.get("decision_id", ""),
+        "features_json": _json_cell(_mapping(record.get("features"))),
+        "metadata_json": _json_cell(metadata),
+    }
+
+
+
+def _accumulate_pacing_summary(
+    summary: dict[tuple[str, str], dict[str, Any]],
+    row: Mapping[str, Any],
+) -> None:
+    source = str(row.get("source") or "")
+    reason = str(row.get("reason") or "")
+    key = (source, reason)
+    current = summary.get(key)
+    if current is None:
+        current = {
+            "export_schema_version": PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION,
+            "lineage_id": row.get("lineage_id", ""),
+            "sequence": row.get("sequence", ""),
+            "created_at": row.get("created_at", ""),
+            "source_execution_id": row.get("source_execution_id", ""),
+            "source": source,
+            "reason": reason,
+            "pacing_events": 0,
+            "pacing_seconds": 0.0,
+        }
+        summary[key] = current
+    current["pacing_events"] = int(current["pacing_events"]) + 1
+    current["pacing_seconds"] = float(current["pacing_seconds"]) + float(
+        _number(row.get("duration_seconds", 0))
+    )
+
+def _strip_migration_marker(value: Mapping[str, Any]) -> dict[str, Any]:
+    result = dict(value)
+    result.pop("_migration", None)
+    return result
+
+
+def _segmented_source_digest(descriptors) -> str:
+    """Fingerprint immutable lineage heads without enumerating history files.
+
+    The terminal event/checkpoint hashes authenticate their respective hash chains.
+    Full chain integrity is still verified while exporting, but export identity no
+    longer requires collecting or sorting an ever-growing file list.
+    """
+    digest = hashlib.sha256()
+    for lineage_id, _store_root, identity, _store, lineage_doc in sorted(
+        descriptors, key=lambda item: item[0]
+    ):
+        head = {
+            "lineage_id": lineage_id,
+            "identity": identity,
+            "schema_version": lineage_doc.get("schema_version"),
+            "latest_event_sequence": lineage_doc.get("latest_event_sequence"),
+            "latest_event_sha256": lineage_doc.get("latest_event_sha256"),
+            "latest_checkpoint_sequence": lineage_doc.get("latest_checkpoint_sequence"),
+            "latest_checkpoint_sha256": lineage_doc.get("latest_checkpoint_sha256"),
+        }
+        digest.update(
+            json.dumps(head, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+        )
+    return digest.hexdigest()
+
 
 def _discover_lineage_roots(root: Path) -> tuple[Path, ...]:
     candidates: list[Path] = []
@@ -826,6 +1266,16 @@ def _validate_schema(name: str, document: Mapping[str, Any]) -> None:
 
 def _load_yaml_mapping(path: Path, label: str) -> dict[str, Any]:
     try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise analysis_export_error(f"Could not inspect {label} '{path}': {exc}") from exc
+    if size > LEGACY_PROVIDER_PRESSURE_SAFE_LOAD_MAX_BYTES:
+        raise analysis_export_error(
+            f"Legacy {label} '{path}' is {size} bytes and is intentionally not loaded "
+            "as one YAML object. Upgrade the Provider Pressure store first with "
+            "'python tools/upgrade_provider_pressure_store.py <provider-pressure-root>'."
+        )
+    try:
         with path.open("r", encoding="utf-8") as file:
             value = yaml.safe_load(file)
     except (OSError, yaml.YAMLError) as exc:
@@ -856,6 +1306,14 @@ def _number(value: Any) -> float | int:
     except (TypeError, ValueError):
         return 0.0
 
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _progress(callback: Callable[[str], None] | None, message: str) -> None:

@@ -653,8 +653,7 @@ def _reconcile_one_execution(
                     ):
                         artifact_finalized_indices.add(index)
 
-    event_log = read_campaign_events(session_dir / "campaign_events.jsonl")
-    for event in event_log.events:
+    for event in iter_campaign_events(session_dir / "campaign_events.jsonl"):
         index = event.get("run_index")
         if not isinstance(index, int) or isinstance(index, bool):
             continue
@@ -687,9 +686,12 @@ def _reconcile_one_execution(
     if detail:
         manifest["execution"]["detail"] = detail
     elif state == "interrupted_unclean":
+        truncated_tail = _campaign_event_journal_has_truncated_tail(
+            session_dir / "campaign_events.jsonl"
+        )
         manifest["execution"]["detail"] = (
             "reconciled unfinished execution at the last durable journal checkpoint"
-            + ("; incomplete trailing journal event ignored" if event_log.truncated_tail else "")
+            + ("; incomplete trailing journal event ignored" if truncated_tail else "")
         )
     manifest["schema_version"] = CAMPAIGN_EXECUTION_SCHEMA_VERSION
     manifest["outcomes"] = {
@@ -738,41 +740,62 @@ def _load_campaign_execution_manifest(path: Path) -> dict[str, Any]:
     return manifest
 
 
-def read_campaign_events(path: Path) -> campaign_event_log:
+def iter_campaign_events(path: Path):
     if not path.is_file():
-        return campaign_event_log(events=(), truncated_tail=False)
+        return
+    expected_sequence = 1
     try:
-        data = path.read_bytes()
+        with path.open("rb") as file:
+            while True:
+                raw_line = file.readline()
+                if not raw_line:
+                    break
+                if not raw_line.endswith(b"\n"):
+                    # A non-newline-terminated final record is an interrupted tail and is
+                    # intentionally ignored. Durable records are newline terminated.
+                    break
+                try:
+                    line = raw_line[:-1].decode("ascii")
+                    item = json.loads(line)
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise campaign_error(
+                        f"Campaign event journal '{path}' is corrupted before its durable tail."
+                    ) from exc
+                if not isinstance(item, dict):
+                    raise campaign_error(
+                        f"Campaign event journal '{path}' contains a non-object event."
+                    )
+                if item.get("sequence") != expected_sequence:
+                    raise campaign_error(
+                        f"Campaign event journal '{path}' sequence is discontinuous at "
+                        f"{expected_sequence}."
+                    )
+                expected_sequence += 1
+                yield item
     except OSError as exc:
         raise campaign_error(f"Could not read campaign event journal '{path}': {exc}") from exc
 
-    truncated_tail = bool(data) and not data.endswith(b"\n")
-    lines = data.splitlines()
-    events: list[dict[str, Any]] = []
-    expected_sequence = 1
-    for position, raw_line in enumerate(lines):
-        is_last = position == len(lines) - 1
-        if is_last and truncated_tail:
-            break
-        try:
-            line = raw_line.decode("ascii")
-            item = json.loads(line)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise campaign_error(
-                f"Campaign event journal '{path}' is corrupted before its durable tail."
-            ) from exc
-        if not isinstance(item, dict):
-            raise campaign_error(
-                f"Campaign event journal '{path}' contains a non-object event."
-            )
-        if item.get("sequence") != expected_sequence:
-            raise campaign_error(
-                f"Campaign event journal '{path}' sequence is discontinuous at "
-                f"{expected_sequence}."
-            )
-        expected_sequence += 1
-        events.append(item)
-    return campaign_event_log(events=tuple(events), truncated_tail=truncated_tail)
+
+def _campaign_event_journal_has_truncated_tail(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        with path.open("rb") as file:
+            file.seek(0, os.SEEK_END)
+            size = file.tell()
+            if size == 0:
+                return False
+            file.seek(-1, os.SEEK_END)
+            return file.read(1) != b"\n"
+    except OSError as exc:
+        raise campaign_error(f"Could not inspect campaign event journal '{path}': {exc}") from exc
+
+
+def read_campaign_events(path: Path) -> campaign_event_log:
+    return campaign_event_log(
+        events=tuple(iter_campaign_events(path)),
+        truncated_tail=_campaign_event_journal_has_truncated_tail(path),
+    )
 
 
 def _append_json_line(path: Path, value: Mapping[str, Any]) -> None:
@@ -826,6 +849,7 @@ __all__ = [
     "campaign_event_journal",
     "campaign_event_log",
     "read_campaign_events",
+    "iter_campaign_events",
     "campaign_execution_lock",
     "campaign_execution_context",
     "campaign_status_snapshot",

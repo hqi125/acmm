@@ -32,10 +32,11 @@ from acmm.runtime.interfaces import captured_evidence
 from acmm.runtime.registry import execution_registry
 
 
-CAMPAIGN_ADJUDICATION_SCHEMA_VERSION = "0.2"
+CAMPAIGN_ADJUDICATION_SCHEMA_VERSION = "0.3"
 _CAMPAIGN_ADJUDICATION_SCHEMA_FILES = {
     "0.1": "campaign-adjudication-v0.1.schema.json",
     "0.2": "campaign-adjudication-v0.2.schema.json",
+    "0.3": "campaign-adjudication-v0.3.schema.json",
 }
 
 
@@ -55,6 +56,8 @@ def create_campaign_adjudication(
     now: Callable[[], datetime] | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> campaign_adjudication_artifact:
+    if progress is not None:
+        progress("Adjudication: inspecting Campaign completeness and frozen provenance...")
     status = inspect_campaign_status(artifact)
     if status.runs.active or status.executions.active:
         raise campaign_error(
@@ -82,6 +85,8 @@ def create_campaign_adjudication(
             f"Adjudicator package '{package.package_sha256}' does not declare adjudication code."
         )
 
+    if progress is not None:
+        progress("Adjudication: loading adjudicator and resolving accepted observations...")
     loaded = load_staged_experiment_adjudicator(package)
     accepted = collect_accepted_campaign_observations(artifact)
     if set(accepted) != set(status.observed_run_ids):
@@ -127,64 +132,67 @@ def create_campaign_adjudication(
                 "Campaign adjudication package snapshot SHA-256 does not match the source package."
             )
         (temp_dir / "runs").mkdir(parents=True, exist_ok=True)
-        entries: list[dict[str, Any]] = []
+        runs_index_path = temp_dir / "runs.jsonl"
         changed_runs = 0
         changed_judgments = 0
+        adjudicated_runs = 0
         logical_order = {
             item["run_id"]: position
             for position, item in enumerate(artifact.manifest["runs"])
         }
         ordered_run_ids = sorted(accepted, key=logical_order.__getitem__)
         total_runs = len(ordered_run_ids)
-        for position, logical_run_id in enumerate(ordered_run_ids, start=1):
-            observation = accepted[logical_run_id]
-            record = load_run_record(observation.source_run_record_path)
-            subject = subjects.get(observation.subject_id)
-            scenario = scenarios.get(observation.scenario_id)
-            if not isinstance(subject, dict) or not isinstance(scenario, dict):
-                raise campaign_error(
-                    f"Frozen Contract is missing subject/scenario for logical run '{logical_run_id}'."
-                )
+        if progress is not None:
+            progress(f"Adjudication: evaluating {total_runs} accepted observation(s)...")
+        with runs_index_path.open("wb") as runs_index_handle:
+            for position, logical_run_id in enumerate(ordered_run_ids, start=1):
+                observation = accepted[logical_run_id]
+                record = load_run_record(observation.source_run_record_path)
+                subject = subjects.get(observation.subject_id)
+                scenario = scenarios.get(observation.scenario_id)
+                if not isinstance(subject, dict) or not isinstance(scenario, dict):
+                    raise campaign_error(
+                        f"Frozen Contract is missing subject/scenario for logical run '{logical_run_id}'."
+                    )
 
-            evidence = _load_evidence(observation, record)
-            interpreted = interpret_scenario_evidence(scenario, evidence)
-            revised = runtime_execution._evaluate_opportunities(
-                contract,
-                subject,
-                scenario,
-                evidence,
-                interpreted,
-                replay_registry,
-            )
-            original = record.get("judgments")
-            if not isinstance(original, list):
-                raise campaign_error(
-                    f"Accepted Run Record '{observation.source_run_record_path}' has invalid judgments."
+                evidence = _load_evidence(observation, record)
+                interpreted = interpret_scenario_evidence(scenario, evidence)
+                revised = runtime_execution._evaluate_opportunities(
+                    contract,
+                    subject,
+                    scenario,
+                    evidence,
+                    interpreted,
+                    replay_registry,
                 )
-            changes = _judgment_changes(original, revised)
-            if changes:
-                changed_runs += 1
-                changed_judgments += len(changes)
+                original = record.get("judgments")
+                if not isinstance(original, list):
+                    raise campaign_error(
+                        f"Accepted Run Record '{observation.source_run_record_path}' has invalid judgments."
+                    )
+                changes = _judgment_changes(original, revised)
+                if changes:
+                    changed_runs += 1
+                    changed_judgments += len(changes)
 
-            run_name = f"run_{observation.run_index:06d}_{logical_run_id}.json"
-            run_path = temp_dir / "runs" / run_name
-            run_payload = {
-                "schema_version": "0.1",
-                "logical_run_id": logical_run_id,
-                "run_index": observation.run_index,
-                "subject_id": observation.subject_id,
-                "scenario_id": observation.scenario_id,
-                "repetition": observation.repetition,
-                "source_execution_id": observation.source_execution_id,
-                "source_run_id": observation.source_run_id,
-                "source_run_record_sha256": _sha256_file(observation.source_run_record_path),
-                "original_judgments": original,
-                "revised_judgments": revised,
-                "changes": changes,
-            }
-            _write_json(run_path, run_payload)
-            entries.append(
-                {
+                run_name = f"run_{observation.run_index:06d}_{logical_run_id}.json"
+                run_path = temp_dir / "runs" / run_name
+                run_payload = {
+                    "schema_version": "0.1",
+                    "logical_run_id": logical_run_id,
+                    "run_index": observation.run_index,
+                    "subject_id": observation.subject_id,
+                    "scenario_id": observation.scenario_id,
+                    "repetition": observation.repetition,
+                    "source_execution_id": observation.source_execution_id,
+                    "source_run_id": observation.source_run_id,
+                    "source_run_record_sha256": _sha256_file(observation.source_run_record_path),
+                    "original_judgments": original,
+                    "revised_judgments": revised,
+                    "changes": changes,
+                }
+                _write_json(run_path, run_payload)
+                entry = {
                     "logical_run_id": logical_run_id,
                     "run_index": observation.run_index,
                     "subject_id": observation.subject_id,
@@ -211,10 +219,15 @@ def create_campaign_adjudication(
                     "changed": bool(changes),
                     "changed_opportunities": [item["opportunity_id"] for item in changes],
                 }
-            )
-            if progress is not None and _progress_checkpoint(position, total_runs):
-                progress(f"Adjudication: {position}/{total_runs} observations processed...")
+                _append_json_line_handle(runs_index_handle, entry)
+                adjudicated_runs += 1
+                if progress is not None and _progress_checkpoint(position, total_runs):
+                    progress(f"Adjudication: {position}/{total_runs} observations processed...")
+            runs_index_handle.flush()
+            os.fsync(runs_index_handle.fileno())
 
+        if progress is not None:
+            progress("Adjudication: validating and publishing bounded adjudication artifacts...")
         manifest = {
             "schema_version": CAMPAIGN_ADJUDICATION_SCHEMA_VERSION,
             "adjudication": {
@@ -233,11 +246,15 @@ def create_campaign_adjudication(
             },
             "population": {
                 "total": status.runs.total,
-                "adjudicated": len(entries),
+                "adjudicated": adjudicated_runs,
                 "changed_runs": changed_runs,
                 "changed_judgments": changed_judgments,
             },
-            "runs": entries,
+            "runs_artifact": {
+                "path": "runs.jsonl",
+                "sha256": _sha256_file(runs_index_path),
+                "rows": adjudicated_runs,
+            },
         }
         validate_campaign_adjudication_manifest(manifest)
         _write_json(temp_dir / "campaign_adjudication.json", manifest)
@@ -293,7 +310,7 @@ def load_campaign_adjudication(
         raise campaign_error("Campaign adjudication belongs to a different Campaign.")
     if identity["contract_sha256"] != artifact.manifest["package"]["contract_sha256"]:
         raise campaign_error("Campaign adjudication Contract does not match frozen Campaign.")
-    if manifest.get("schema_version") == "0.2":
+    if manifest.get("schema_version") in {"0.2", "0.3"}:
         snapshot_artifact = identity.get("adjudicator_snapshot_artifact")
         if not isinstance(snapshot_artifact, str) or not snapshot_artifact:
             raise campaign_error("Campaign adjudication package snapshot metadata is invalid.")
@@ -318,6 +335,73 @@ def load_campaign_adjudication(
         manifest_path=manifest_path,
         manifest=manifest,
     )
+
+
+def iter_campaign_adjudication_runs(
+    adjudication: campaign_adjudication_artifact,
+):
+    manifest = adjudication.manifest
+    version = str(manifest.get("schema_version", ""))
+    if version in {"0.1", "0.2"}:
+        runs = manifest.get("runs")
+        if not isinstance(runs, list):
+            raise campaign_error("Campaign adjudication contains malformed run entries.")
+        for entry in runs:
+            if not isinstance(entry, Mapping):
+                raise campaign_error("Campaign adjudication contains malformed run entries.")
+            yield dict(entry)
+        return
+    if version != "0.3":
+        raise campaign_error(f"Unsupported Campaign Adjudication schema_version '{version}'.")
+    artifact_meta = manifest.get("runs_artifact")
+    if not isinstance(artifact_meta, Mapping):
+        raise campaign_error("Campaign adjudication run artifact metadata is invalid.")
+    relative = artifact_meta.get("path")
+    expected_sha = artifact_meta.get("sha256")
+    expected_rows = artifact_meta.get("rows")
+    if not isinstance(relative, str) or not isinstance(expected_sha, str) or not isinstance(expected_rows, int):
+        raise campaign_error("Campaign adjudication run artifact metadata is invalid.")
+    path = _safe_adjudication_artifact(adjudication.path, relative)
+    if not path.is_file() or path.is_symlink():
+        raise campaign_error(f"Campaign adjudication run index does not exist safely: '{path}'.")
+    if _sha256_file(path) != expected_sha:
+        raise campaign_error("Campaign adjudication run index integrity check failed.")
+    validator = _adjudication_run_entry_validator()
+    count = 0
+    with path.open("rb") as handle:
+        for raw in handle:
+            if not raw.endswith(b"\n"):
+                raise campaign_error("Campaign adjudication run index has a truncated tail.")
+            try:
+                entry = json.loads(raw.decode("ascii"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise campaign_error(f"Campaign adjudication run index is malformed: {exc}") from exc
+            if not isinstance(entry, dict):
+                raise campaign_error("Campaign adjudication run index contains a non-object row.")
+            errors = sorted(validator.iter_errors(entry), key=lambda item: list(item.path))
+            if errors:
+                first = errors[0]
+                location = ".".join(str(part) for part in first.absolute_path) or "$"
+                raise campaign_error(
+                    f"Campaign adjudication run index validation failed at '{location}': {first.message}"
+                )
+            count += 1
+            yield entry
+    if count != expected_rows:
+        raise campaign_error(
+            f"Campaign adjudication run index row count mismatch: expected {expected_rows}, observed {count}."
+        )
+
+
+def _adjudication_run_entry_validator() -> Draft202012Validator:
+    schema_path = Path(__file__).with_name("schemas") / "campaign-adjudication-v0.3.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    return Draft202012Validator(schema["$defs"]["runEntry"])
+
+
+def _append_json_line_handle(handle, value: Mapping[str, Any]) -> None:
+    data = (json.dumps(dict(value), ensure_ascii=True, separators=(",", ":")) + "\n").encode("ascii")
+    handle.write(data)
 
 
 def _progress_checkpoint(position: int, total: int) -> bool:
@@ -496,4 +580,5 @@ __all__ = [
     "create_campaign_adjudication",
     "load_campaign_adjudication",
     "validate_campaign_adjudication_manifest",
+    "iter_campaign_adjudication_runs",
 ]

@@ -16,7 +16,11 @@ from acmm.campaign.execution import (
     initialize_campaign_execution,
     reconcile_campaign_executions,
 )
-from acmm.campaign.merge import create_campaign_merge, validate_campaign_merge_manifest
+from acmm.campaign.merge import (
+    create_campaign_merge,
+    iter_campaign_merge_observations,
+    validate_campaign_merge_manifest,
+)
 from acmm.campaign.model import campaign_error, create_campaign
 from acmm.runtime.experiment_execution import execute_experiment
 from acmm.runtime.interfaces import (
@@ -146,8 +150,9 @@ def test_partial_campaign_merge_copies_only_accepted_observations_with_provenanc
 
     assert merged.manifest["merge"]["completeness"] == "partial"
     assert merged.manifest["population"]["observed"] == 1
-    assert len(merged.manifest["observations"]) == 1
-    observation = merged.manifest["observations"][0]
+    observations = list(iter_campaign_merge_observations(merged.path, merged.manifest))
+    assert len(observations) == 1
+    observation = observations[0]
     assert observation["logical_run_id"] == artifact.manifest["runs"][0]["run_id"]
     assert observation["source_execution_id"] == "execution-a"
     merged_result = merged.path / observation["merged_result"]
@@ -178,7 +183,7 @@ def test_complete_campaign_merge_contains_every_logical_run(
         "observed": len(runs),
         "pending": 0,
     }
-    assert len(merged.manifest["observations"]) == len(runs)
+    assert len(list(iter_campaign_merge_observations(merged.path, merged.manifest))) == len(runs)
 
 
 def test_campaign_merge_rejects_duplicate_accepted_observation(
@@ -231,7 +236,7 @@ def test_partial_campaign_merge_with_no_observations_has_stable_runs_directory(
     )
 
     assert merged.manifest["population"]["observed"] == 0
-    assert merged.manifest["observations"] == []
+    assert list(iter_campaign_merge_observations(merged.path, merged.manifest)) == []
     assert (merged.path / "runs").is_dir()
 
 
@@ -323,9 +328,10 @@ def test_campaign_merge_accepts_reconciled_observation_after_finalization_journa
         allow_partial=True,
         merge_id="merge-a",
     )
-    assert [item["logical_run_id"] for item in merged.manifest["observations"]] == [
-        logical_run_id
-    ]
+    assert [
+        item["logical_run_id"]
+        for item in iter_campaign_merge_observations(merged.path, merged.manifest)
+    ] == [logical_run_id]
 
 
 def test_campaign_merge_rejects_tampered_diagnostic_artifact(
@@ -382,6 +388,8 @@ def test_campaign_merge_v0_1_manifest_remains_valid(tmp_path: Path, monkeypatch)
     legacy["schema_version"] = "0.1"
     legacy["population"] = dict(legacy["population"])
     legacy["population"]["blocked"] = 0
+    legacy["observations"] = list(iter_campaign_merge_observations(merged.path, merged.manifest))
+    legacy.pop("observations_artifact", None)
 
     validate_campaign_merge_manifest(legacy)
 
@@ -407,4 +415,6 @@ def test_campaign_merge_reports_coarse_progress(
         progress=lines.append,
     )
 
-    assert lines == [f"Merge: {len(runs)}/{len(runs)} observations assembled..."]
+    assert lines[0] == "Merge: inspecting Campaign completeness and source provenance..."
+    assert f"Merge: {len(runs)}/{len(runs)} observations assembled..." in lines
+    assert lines[-1] == "Merge: validating and publishing bounded merge artifacts..."

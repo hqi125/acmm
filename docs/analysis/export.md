@@ -25,6 +25,23 @@ acmm export campaign \
     ~/acmm_generated/<experiment_id>/campaign_<campaign_id>/merged/merge_<merge_id>
 ```
 
+Provider Pressure export (schema 0.4):
+
+```text
+acmm export provider-pressure ~/acmm_generated/provider_pressure
+```
+
+The Provider Pressure exporter prefers the bounded segmented `store_v2` trajectory format. Legacy
+trajectory stores remain readable only while individual legacy YAML artifacts stay below the
+defensive safe-load bound. Upgrade an oversized legacy store offline with:
+
+```text
+python tools/upgrade_provider_pressure_store.py ~/acmm_generated/provider_pressure
+```
+
+The upgrader writes `store_v2` beside the immutable legacy files, never deletes or rewrites the
+legacy source, and resumes from sealed checkpoints after interruption.
+
 By default the export is published under:
 
 ```text
@@ -76,6 +93,37 @@ The exporter verifies that the merge belongs to the supplied Campaign and binds 
 experiment ID, design digest, package/Contract provenance, Campaign-manifest hash, population, source
 execution artifacts, source Run Record hashes, merged Run Record hashes, and optional adjudication
 provenance. A mismatch is fatal rather than reconciled heuristically.
+
+## Provider Pressure export
+
+Provider Pressure export is a separate source family from run and Campaign export. Schema 0.4
+normalizes one or more Provider Pressure lineages into:
+
+```text
+lineages.csv
+snapshots.csv
+features.csv
+signals.csv
+decisions.csv
+pacing_events.csv
+pacing_summary.csv
+export_manifest.yaml
+```
+
+For native `store_v2` input, the exporter walks checkpoints and segmented event records
+incrementally, verifies event/checkpoint hash chains, and keeps memory bounded to the current
+source record plus small aggregation state. `pacing_summary.csv` is produced while streaming so
+ordinary pressure analysis and plots do not need to materialize the full raw pacing-event table.
+The raw event tables remain available for audit.
+
+The export manifest binds the terminal lineage/checkpoint/event identity rather than enumerating an
+ever-growing source tree. Full chain integrity is still verified while the source is traversed.
+Provider-specific opaque model state is not interpreted by the generic exporter.
+
+Large legacy YAML trajectory snapshots are intentionally not passed to `yaml.safe_load()`. If a
+legacy artifact exceeds the defensive bound, export fails with instructions to use the offline
+upgrade tool. This prevents a normal export command from reproducing the unbounded YAML-object
+materialization failure that motivated the segmented store.
 
 ## Validation gate
 

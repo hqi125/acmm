@@ -219,50 +219,82 @@ acmm_provider_pressure_summary <- function(exportDir, progress = NULL)
     }
     summary <- summary[order(summary$lineage_id, summary$sequence), , drop = FALSE]
 
-    report("Aggregating Provider Pressure pacing events...")
-    pacing <- acmm_provider_pressure_read_columns(
-        exportDir,
-        "pacing_events.csv",
-        c(
-            "lineage_id",
-            "sequence",
-            "created_at",
-            "source_execution_id",
-            "source",
-            "reason",
-            "duration_seconds"
-        )
-    )
-    pacingSummary <- data.frame(
-        lineage_id = character(0),
-        sequence = integer(0),
-        created_at = character(0),
-        source_execution_id = character(0),
-        source = character(0),
-        reason = character(0),
-        pacing_events = integer(0),
-        pacing_seconds = numeric(0),
-        stringsAsFactors = FALSE
-    )
-    if (nrow(pacing) > 0)
+    compactPacingPath <- file.path(exportDir, "pacing_summary.csv")
+    if (file.exists(compactPacingPath))
     {
-        pacing$sequence <- as.integer(pacing$sequence)
-        pacing$duration_seconds <- as.numeric(pacing$duration_seconds)
-        pacing$pacing_events <- 1L
-        pacingSummary <- stats::aggregate(
-            cbind(pacing_events, pacing_seconds = duration_seconds) ~
-                lineage_id + sequence + created_at + source_execution_id + source + reason,
-            data = pacing,
-            FUN = sum
+        report("Reading compact Provider Pressure pacing summary...")
+        pacingSummary <- acmm_provider_pressure_read_columns(
+            exportDir,
+            "pacing_summary.csv",
+            c(
+                "lineage_id",
+                "sequence",
+                "created_at",
+                "source_execution_id",
+                "source",
+                "reason",
+                "pacing_events",
+                "pacing_seconds"
+            )
         )
-        pacingSummary <- pacingSummary[
-            order(pacingSummary$lineage_id, pacingSummary$sequence, pacingSummary$reason),
-            ,
-            drop = FALSE
-        ]
+        if (nrow(pacingSummary) > 0)
+        {
+            pacingSummary$sequence <- as.integer(pacingSummary$sequence)
+            pacingSummary$pacing_events <- as.integer(pacingSummary$pacing_events)
+            pacingSummary$pacing_seconds <- as.numeric(pacingSummary$pacing_seconds)
+            pacingSummary <- pacingSummary[
+                order(pacingSummary$lineage_id, pacingSummary$sequence, pacingSummary$reason),
+                ,
+                drop = FALSE
+            ]
+        }
+    } else
+    {
+        report("Aggregating legacy Provider Pressure pacing events...")
+        pacing <- acmm_provider_pressure_read_columns(
+            exportDir,
+            "pacing_events.csv",
+            c(
+                "lineage_id",
+                "sequence",
+                "created_at",
+                "source_execution_id",
+                "source",
+                "reason",
+                "duration_seconds"
+            )
+        )
+        pacingSummary <- data.frame(
+            lineage_id = character(0),
+            sequence = integer(0),
+            created_at = character(0),
+            source_execution_id = character(0),
+            source = character(0),
+            reason = character(0),
+            pacing_events = integer(0),
+            pacing_seconds = numeric(0),
+            stringsAsFactors = FALSE
+        )
+        if (nrow(pacing) > 0)
+        {
+            pacing$sequence <- as.integer(pacing$sequence)
+            pacing$duration_seconds <- as.numeric(pacing$duration_seconds)
+            pacing$pacing_events <- 1L
+            pacingSummary <- stats::aggregate(
+                cbind(pacing_events, pacing_seconds = duration_seconds) ~
+                    lineage_id + sequence + created_at + source_execution_id + source + reason,
+                data = pacing,
+                FUN = sum
+            )
+            pacingSummary <- pacingSummary[
+                order(pacingSummary$lineage_id, pacingSummary$sequence, pacingSummary$reason),
+                ,
+                drop = FALSE
+            ]
+        }
+        rm(pacing)
+        invisible(gc(FALSE))
     }
-    rm(pacing)
-    invisible(gc(FALSE))
 
     report("Reading learned Provider Pressure feature trajectories...")
     featureColumns <- c(

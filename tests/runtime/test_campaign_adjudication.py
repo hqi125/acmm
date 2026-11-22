@@ -8,6 +8,7 @@ import yaml
 
 from acmm.campaign.adjudication import (
     create_campaign_adjudication,
+    iter_campaign_adjudication_runs,
     load_campaign_adjudication,
 )
 from acmm.campaign.execution import (
@@ -16,7 +17,7 @@ from acmm.campaign.execution import (
     frozen_campaign_plan,
     initialize_campaign_execution,
 )
-from acmm.campaign.merge import create_campaign_merge
+from acmm.campaign.merge import create_campaign_merge, iter_campaign_merge_observations
 from acmm.campaign.model import create_campaign
 from acmm.record.loader import load_run_record
 from acmm.runtime.experiment_execution import execute_experiment
@@ -198,7 +199,7 @@ def test_campaign_adjudication_is_immutable_and_merge_can_apply_revision(
         adjudication_id="revision-a",
     )
     assert merged.manifest["adjudication"]["id"] == "revision-a"
-    for observation in merged.manifest["observations"]:
+    for observation in iter_campaign_merge_observations(merged.path, merged.manifest):
         record = load_run_record(merged.path / observation["merged_result"] / "run_record.yaml")
         assert record["judgments"][0]["outcome"] == "violation"
 
@@ -317,7 +318,7 @@ def test_campaign_adjudication_snapshots_exact_adjudicator_package(
     )
 
     identity = adjudication.manifest["adjudication"]
-    assert adjudication.manifest["schema_version"] == "0.2"
+    assert adjudication.manifest["schema_version"] == "0.3"
     assert identity["adjudicator_snapshot_artifact"] == "package_store"
     snapshot_root = (
         adjudication.path
@@ -364,8 +365,10 @@ def test_campaign_adjudication_reports_coarse_progress(
         progress=lines.append,
     )
 
-    assert lines[0] == "Adjudication: snapshotting adjudicator package..."
-    assert lines[-1] == "Adjudication: 6/6 observations processed..."
+    assert lines[0] == "Adjudication: inspecting Campaign completeness and frozen provenance..."
+    assert "Adjudication: snapshotting adjudicator package..." in lines
+    assert "Adjudication: 6/6 observations processed..." in lines
+    assert lines[-1] == "Adjudication: validating and publishing bounded adjudication artifacts..."
 
 
 def test_campaign_adjudication_v0_1_manifest_remains_valid(
@@ -399,6 +402,8 @@ def test_campaign_adjudication_v0_1_manifest_remains_valid(
     legacy["schema_version"] = "0.1"
     legacy["adjudication"] = dict(legacy["adjudication"])
     legacy["adjudication"].pop("adjudicator_snapshot_artifact")
+    legacy["runs"] = list(iter_campaign_adjudication_runs(adjudication))
+    legacy.pop("runs_artifact", None)
 
     from acmm.campaign.adjudication import validate_campaign_adjudication_manifest
 

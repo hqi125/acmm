@@ -17,7 +17,7 @@ from jsonschema import Draft202012Validator
 from acmm.campaign.execution import (
     campaign_execution_outcomes,
     inspect_campaign_status,
-    read_campaign_events,
+    iter_campaign_events,
 )
 from acmm.campaign.model import campaign_artifact, campaign_error
 from acmm.record.loader import load_run_record, run_record_load_error
@@ -28,11 +28,12 @@ from acmm.record.validator import (
 )
 
 
-CAMPAIGN_MERGE_SCHEMA_VERSION = "0.3"
+CAMPAIGN_MERGE_SCHEMA_VERSION = "0.4"
 _CAMPAIGN_MERGE_SCHEMA_FILES = {
     "0.1": "campaign-merge-v0.1.schema.json",
     "0.2": "campaign-merge-v0.2.schema.json",
     "0.3": "campaign-merge-v0.3.schema.json",
+    "0.4": "campaign-merge-v0.4.schema.json",
 }
 
 
@@ -70,6 +71,8 @@ def create_campaign_merge(
     adjudication_id: str | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> campaign_merge_artifact:
+    if progress is not None:
+        progress("Merge: inspecting Campaign completeness and source provenance...")
     status = inspect_campaign_status(artifact)
     if status.runs.active or status.executions.active:
         raise campaign_error(
@@ -87,6 +90,8 @@ def create_campaign_merge(
             f"total={status.runs.total}."
         )
 
+    if progress is not None:
+        progress("Merge: resolving accepted observations and frozen Contract...")
     contract = _load_yaml_mapping(
         artifact.path / artifact.manifest["campaign"]["contract_artifact"],
         "frozen campaign Contract",
@@ -107,6 +112,8 @@ def create_campaign_merge(
     adjudication_manifest = None
     adjudication_judgments: dict[str, list[dict[str, Any]]] = {}
     if adjudication_id is not None:
+        if progress is not None:
+            progress("Merge: loading and validating adjudication overlay...")
         adjudication_manifest, adjudication_judgments = _load_adjudication_overlay(
             artifact,
             adjudication_id,
@@ -138,41 +145,44 @@ def create_campaign_merge(
         shutil.copy2(frozen_contract, temp_dir / "contract.yaml")
         (temp_dir / "runs").mkdir(parents=True, exist_ok=True)
 
-        observations: list[dict[str, Any]] = []
+        observations_path = temp_dir / "observations.jsonl"
+        observation_count = 0
         logical_order = {
             item["run_id"]: position
             for position, item in enumerate(artifact.manifest["runs"])
         }
         ordered_run_ids = sorted(accepted, key=logical_order.__getitem__)
         total_observations = len(ordered_run_ids)
-        for position, logical_run_id in enumerate(ordered_run_ids, start=1):
-            observation = accepted[logical_run_id]
-            destination_name = f"run_{observation.run_index:06d}_{logical_run_id}"
-            destination = temp_dir / "runs" / destination_name
-            _copy_result_tree(observation.source_result_dir, destination)
-            merged_record = destination / "run_record.yaml"
-            revised_judgments = adjudication_judgments.get(logical_run_id)
-            if revised_judgments is not None:
-                merged_value = load_run_record(merged_record)
-                merged_value["judgments"] = revised_judgments
-                merged_record.write_text(
-                    yaml.safe_dump(merged_value, sort_keys=False),
-                    encoding="utf-8",
-                )
-                validation = validate_run_record(
-                    merged_value,
-                    load_run_record_schema(default_run_record_schema_path()),
-                    contract,
-                    expected_contract_sha256=artifact.manifest["package"]["contract_sha256"],
-                )
-                if not validation.is_valid:
-                    issue = validation.errors[0]
-                    raise campaign_error(
-                        f"Adjudicated merged Run Record '{merged_record}' is invalid at "
-                        f"'{issue.path}': [{issue.code}] {issue.message}"
+        if progress is not None:
+            progress(f"Merge: assembling {total_observations} accepted observation(s)...")
+        with observations_path.open("wb") as observations_handle:
+            for position, logical_run_id in enumerate(ordered_run_ids, start=1):
+                observation = accepted[logical_run_id]
+                destination_name = f"run_{observation.run_index:06d}_{logical_run_id}"
+                destination = temp_dir / "runs" / destination_name
+                _copy_result_tree(observation.source_result_dir, destination)
+                merged_record = destination / "run_record.yaml"
+                revised_judgments = adjudication_judgments.get(logical_run_id)
+                if revised_judgments is not None:
+                    merged_value = load_run_record(merged_record)
+                    merged_value["judgments"] = revised_judgments
+                    merged_record.write_text(
+                        yaml.safe_dump(merged_value, sort_keys=False),
+                        encoding="utf-8",
                     )
-            observations.append(
-                {
+                    validation = validate_run_record(
+                        merged_value,
+                        load_run_record_schema(default_run_record_schema_path()),
+                        contract,
+                        expected_contract_sha256=artifact.manifest["package"]["contract_sha256"],
+                    )
+                    if not validation.is_valid:
+                        issue = validation.errors[0]
+                        raise campaign_error(
+                            f"Adjudicated merged Run Record '{merged_record}' is invalid at "
+                            f"'{issue.path}': [{issue.code}] {issue.message}"
+                        )
+                observation_entry = {
                     "logical_run_id": logical_run_id,
                     "run_index": observation.run_index,
                     "subject_id": observation.subject_id,
@@ -202,9 +212,12 @@ def create_campaign_merge(
                     "merged_result": destination.relative_to(temp_dir).as_posix(),
                     "merged_run_record_sha256": _sha256_file(merged_record),
                 }
-            )
-            if progress is not None and _progress_checkpoint(position, total_observations):
-                progress(f"Merge: {position}/{total_observations} observations assembled...")
+                _append_json_line_handle(observations_handle, observation_entry)
+                observation_count += 1
+                if progress is not None and _progress_checkpoint(position, total_observations):
+                    progress(f"Merge: {position}/{total_observations} observations assembled...")
+            observations_handle.flush()
+            os.fsync(observations_handle.fileno())
 
         completeness = "complete" if status.runs.observed == status.runs.total else "partial"
         manifest = {
@@ -226,7 +239,11 @@ def create_campaign_merge(
                 "observed": status.runs.observed,
                 "pending": status.runs.pending,
             },
-            "observations": observations,
+            "observations_artifact": {
+                "path": "observations.jsonl",
+                "sha256": _sha256_file(observations_path),
+                "rows": observation_count,
+            },
         }
         if adjudication_manifest is not None:
             identity = adjudication_manifest["adjudication"]
@@ -243,6 +260,8 @@ def create_campaign_merge(
                 "adjudicator_package_sha256": identity["adjudicator_package_sha256"],
                 "adjudication_component_sha256": identity["adjudication_component_sha256"],
             }
+        if progress is not None:
+            progress("Merge: validating and publishing bounded merge artifacts...")
         validate_campaign_merge_manifest(manifest)
         _write_json(temp_dir / "campaign_merge.json", manifest)
         os.rename(temp_dir, final_dir)
@@ -326,7 +345,7 @@ def collect_accepted_campaign_observations(
         if not observed_ids:
             continue
 
-        events = read_campaign_events(session_dir / "campaign_events.jsonl").events
+        events = iter_campaign_events(session_dir / "campaign_events.jsonl")
         slots_by_index: dict[int, Mapping[str, Any]] | None = None
         legacy_name = execution.get("experiment_execution_artifact")
         if not isinstance(legacy_name, str):
@@ -554,17 +573,17 @@ def _load_adjudication_overlay(
     adjudication_id: str,
     accepted: Mapping[str, accepted_campaign_observation],
 ) -> tuple[Mapping[str, Any], dict[str, list[dict[str, Any]]]]:
-    from acmm.campaign.adjudication import load_campaign_adjudication
+    from acmm.campaign.adjudication import (
+        iter_campaign_adjudication_runs,
+        load_campaign_adjudication,
+    )
 
     adjudication = load_campaign_adjudication(artifact, adjudication_id)
     manifest = adjudication.manifest
-    runs = manifest.get("runs")
-    if not isinstance(runs, list) or len(runs) != len(accepted):
-        raise campaign_error(
-            "Campaign adjudication does not cover the complete accepted observation set."
-        )
     overlays: dict[str, list[dict[str, Any]]] = {}
-    for entry in runs:
+    observed_entries = 0
+    for entry in iter_campaign_adjudication_runs(adjudication):
+        observed_entries += 1
         if not isinstance(entry, Mapping):
             raise campaign_error("Campaign adjudication contains malformed run entries.")
         logical_run_id = entry.get("logical_run_id")
@@ -594,9 +613,80 @@ def _load_adjudication_overlay(
                 f"Campaign adjudication artifact '{path}' has invalid revised judgments."
             )
         overlays[logical_run_id] = revised
+    if observed_entries != len(accepted):
+        raise campaign_error(
+            "Campaign adjudication does not cover the complete accepted observation set."
+        )
     if set(overlays) != set(accepted):
         raise campaign_error("Campaign adjudication does not exactly cover accepted observations.")
     return manifest, overlays
+
+
+def iter_campaign_merge_observations(
+    merge_dir: Path,
+    manifest: Mapping[str, Any],
+):
+    version = str(manifest.get("schema_version", ""))
+    if version in {"0.1", "0.2", "0.3"}:
+        observations = manifest.get("observations")
+        if not isinstance(observations, list):
+            raise campaign_error("Campaign merge contains malformed observations.")
+        for entry in observations:
+            if not isinstance(entry, Mapping):
+                raise campaign_error("Campaign merge contains malformed observations.")
+            yield dict(entry)
+        return
+    if version != "0.4":
+        raise campaign_error(f"Unsupported Campaign Merge schema_version '{version}'.")
+    artifact_meta = manifest.get("observations_artifact")
+    if not isinstance(artifact_meta, Mapping):
+        raise campaign_error("Campaign merge observation artifact metadata is invalid.")
+    relative = artifact_meta.get("path")
+    expected_sha = artifact_meta.get("sha256")
+    expected_rows = artifact_meta.get("rows")
+    if not isinstance(relative, str) or not isinstance(expected_sha, str) or not isinstance(expected_rows, int):
+        raise campaign_error("Campaign merge observation artifact metadata is invalid.")
+    path = _safe_session_artifact(merge_dir, relative)
+    if not path.is_file() or path.is_symlink():
+        raise campaign_error(f"Campaign merge observation index does not exist safely: '{path}'.")
+    if _sha256_file(path) != expected_sha:
+        raise campaign_error("Campaign merge observation index integrity check failed.")
+    validator = _merge_observation_validator()
+    count = 0
+    with path.open("rb") as handle:
+        for raw in handle:
+            if not raw.endswith(b"\n"):
+                raise campaign_error("Campaign merge observation index has a truncated tail.")
+            try:
+                entry = json.loads(raw.decode("ascii"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise campaign_error(f"Campaign merge observation index is malformed: {exc}") from exc
+            if not isinstance(entry, dict):
+                raise campaign_error("Campaign merge observation index contains a non-object row.")
+            errors = sorted(validator.iter_errors(entry), key=lambda item: list(item.path))
+            if errors:
+                first = errors[0]
+                location = ".".join(str(part) for part in first.absolute_path) or "$"
+                raise campaign_error(
+                    f"Campaign merge observation validation failed at '{location}': {first.message}"
+                )
+            count += 1
+            yield entry
+    if count != expected_rows:
+        raise campaign_error(
+            f"Campaign merge observation row count mismatch: expected {expected_rows}, observed {count}."
+        )
+
+
+def _merge_observation_validator() -> Draft202012Validator:
+    schema_path = Path(__file__).with_name("schemas") / "campaign-merge-v0.4.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    return Draft202012Validator(schema["$defs"]["observation"])
+
+
+def _append_json_line_handle(handle, value: Mapping[str, Any]) -> None:
+    data = (json.dumps(dict(value), ensure_ascii=True, separators=(",", ":")) + "\n").encode("ascii")
+    handle.write(data)
 
 
 def _progress_checkpoint(position: int, total: int) -> bool:
@@ -789,4 +879,5 @@ __all__ = [
     "campaign_merge_artifact",
     "create_campaign_merge",
     "validate_campaign_merge_manifest",
+    "iter_campaign_merge_observations",
 ]

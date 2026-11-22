@@ -890,9 +890,9 @@ def _validate_export_binding(manifest: Mapping[str, Any]) -> None:
         )
     source_kind = source.get("kind")
     if source_kind == "provider_pressure":
-        if schema_version not in {"0.1", "0.2"}:
+        if schema_version not in {"0.1", "0.2", "0.3", "0.4"}:
             raise analysis_run_error(
-                "Provider Pressure analysis exports require schema_version '0.1' or '0.2'.",
+                "Provider Pressure analysis exports require schema_version '0.1', '0.2', '0.3', or '0.4'.",
                 exit_code=2,
             )
         digest = source.get("source_digest_sha256")
@@ -903,7 +903,7 @@ def _validate_export_binding(manifest: Mapping[str, Any]) -> None:
             )
         return
 
-    if schema_version not in {"0.1", "0.2", "0.3"}:
+    if schema_version not in {"0.1", "0.2", "0.3", "0.4"}:
         raise analysis_run_error(
             f"Unsupported analysis export schema_version '{schema_version}'.",
             exit_code=2,

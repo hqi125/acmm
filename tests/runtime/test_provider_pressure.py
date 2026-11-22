@@ -162,17 +162,24 @@ def test_pph_replays_history_acts_on_action_and_exports_hash_chained_trajectory(
     )
     assert session.profile["features"]["operation.create"]["score"] == 2.4
 
-    snapshot = engine.execution_finalize(session, status="completed")
-    trajectory = sorted(snapshot.parent.glob("*.yaml"))
-    assert len(trajectory) == 3
-    bootstrap = yaml.safe_load(trajectory[0].read_text(encoding="utf-8"))
-    replay = yaml.safe_load(trajectory[1].read_text(encoding="utf-8"))
-    live = yaml.safe_load(trajectory[2].read_text(encoding="utf-8"))
-    assert replay["snapshot"]["parent_sha256"] == bootstrap["snapshot"]["snapshot_sha256"]
-    assert live["snapshot"]["parent_sha256"] == replay["snapshot"]["snapshot_sha256"]
-    assert live["learning_delta"]["signals"][0]["kind"] == "reward"
-    assert live["learning_delta"]["decisions"][1]["action_id"] == "operation.create"
-    assert live["learning_delta"]["pacing_events"][0]["source"] == "pph"
+    checkpoint_path = engine.execution_finalize(session, status="completed")
+    checkpoints = list(session.store.iter_checkpoints())
+    assert len(checkpoints) == 3
+    assert checkpoint_path == checkpoints[-1].path
+    assert [item.source_kind for item in checkpoints] == [
+        "bootstrap",
+        "historical_replay",
+        "live_execution",
+    ]
+    assert checkpoints[1].parent_checkpoint_sha256 == checkpoints[0].checkpoint_sha256
+    assert checkpoints[2].parent_checkpoint_sha256 == checkpoints[1].checkpoint_sha256
+    events = list(session.store.iter_events())
+    assert any(item.kind == "signal" and item.payload.get("kind") == "reward" for item in events)
+    assert any(
+        item.kind == "decision" and item.payload.get("action_id") == "operation.create"
+        for item in events
+    )
+    assert any(item.kind == "pacing" and item.payload.get("source") == "pph" for item in events)
 
 
 def test_pph_does_not_replay_same_historical_execution_twice(tmp_path: Path) -> None:
@@ -664,16 +671,15 @@ def test_app_suspension_is_independent_from_event_pph_without_episode_state(
     ] == 1
     assert session.profile["model_state"]["__core_app"]["open_probes"] == {}
     assert len(session.profile["model_state"]["__core_app"]["recent_probes"]) == 1
-    snapshot_path = engine.execution_finalize(session, status="completed")
-    snapshot = yaml.safe_load(snapshot_path.read_text(encoding="utf-8"))
-    assert snapshot["schema_version"] == "0.5"
-    assert snapshot["profile_after"]["model_state"]["adaptive_pressure_pocket"][
+    checkpoint_path = engine.execution_finalize(session, status="completed")
+    checkpoint = next(item for item in session.store.iter_checkpoints() if item.path == checkpoint_path)
+    assert checkpoint.profile["model_state"]["adaptive_pressure_pocket"][
         "closed_probe_count"
     ] == 1
     action_records = [
-        item
-        for item in snapshot["learning_delta"]["decisions"]
-        if item.get("decision_kind") == "action"
+        item.payload
+        for item in session.store.iter_events()
+        if item.kind == "decision" and item.payload.get("decision_kind") == "action"
     ]
     assert action_records[0]["event_pph_pressure"] == 2.5
     assert action_records[0]["event_pph_wait_seconds"] == 15.0
@@ -694,10 +700,10 @@ def test_pph_upgrades_v04_profile_with_empty_model_state(tmp_path: Path) -> None
     profile_path.write_text(yaml.safe_dump(value, sort_keys=False), encoding="utf-8")
 
     second = engine.execution_initialize(_execution_context(tmp_path, "second-upgrade"))
-    assert second.profile["schema_version"] == "0.5"
+    assert second.profile["schema_version"] == "0.6"
     assert second.profile["model_state"] == {}
     persisted = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
-    assert persisted["schema_version"] == "0.5"
+    assert persisted["schema_version"] == "0.6"
     assert persisted["model_state"] == {}
 
 

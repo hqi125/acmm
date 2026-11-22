@@ -2614,8 +2614,9 @@ def _build_parser() -> argparse.ArgumentParser:
     export_pressure_parser.add_argument(
         "pressure_root",
         help=(
-            "Path to provider_pressure/ or to one Provider Pressure lineage "
-            "directory containing trajectory-index.yaml."
+            "Path to provider_pressure/ or to one Provider Pressure lineage/store. "
+            "Segmented store_v2 is preferred; oversized legacy stores must be upgraded "
+            "with tools/upgrade_provider_pressure_store.py first."
         ),
     )
     export_pressure_parser.add_argument(

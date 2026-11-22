@@ -13,6 +13,7 @@ from acmm.campaign.execution import (
     campaign_event_journal,
     campaign_event_log,
     read_campaign_events,
+    iter_campaign_events,
     campaign_execution_context,
     campaign_execution_counts,
     campaign_execution_lock,
@@ -51,6 +52,7 @@ from acmm.campaign.model import (
 
 __all__ = [
     "read_campaign_events",
+    "iter_campaign_events",
     "campaign_event_log",
     "campaign_recovery_counts",
     "reconcile_campaign",

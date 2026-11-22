@@ -214,6 +214,10 @@ itself. In particular, an MCP transport may safely redeliver `/v1/feedback` afte
 failure while preserving the separate rule that ambiguous provider mutations are never
 automatically replayed.
 
+Provider Pressure history is persisted through a bounded segmented event/checkpoint store rather
+than cumulative execution snapshots. See `docs/runtime/provider_pressure_storage.md` for the
+storage, recovery, migration, and export invariants.
+
 ## Provider usage observability
 
 When selected subjects use an Ollama Cloud LLM baseline, `acmm run` creates a best-effort Ollama

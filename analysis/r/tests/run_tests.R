@@ -1692,6 +1692,21 @@ assert_equal(nrow(providerSummary$pacing_summary), 2L)
 assert_equal(providerSummary$feature_summary$final_score, 2.5)
 assert_equal(providerSummary$feature_summary$maximum_score, 2.5)
 
+providerCompactPacing <- providerSummary$pacing_summary
+providerCompactPacing$pacing_seconds <- providerCompactPacing$pacing_seconds + 1
+utils::write.csv(
+    providerCompactPacing,
+    file.path(providerPressureExportDir, "pacing_summary.csv"),
+    row.names = FALSE,
+    na = ""
+)
+providerCompactSummary <- acmm_provider_pressure_summary(providerPressureExportDir)
+assert_equal(
+    providerCompactSummary$pacing_summary$pacing_seconds,
+    providerCompactPacing$pacing_seconds
+)
+providerSummary <- providerCompactSummary
+
 providerPlotRoot <- file.path(root, "provider_pressure_plot_smoke")
 dir.create(file.path(providerPlotRoot, "data", "provider_pressure"), recursive = TRUE, showWarnings = FALSE)
 utils::write.csv(

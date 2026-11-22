@@ -93,5 +93,14 @@ Campaign execution without changing the logical experiment design.
 
 `acmm campaign merge` copies accepted observations into an immutable merged product. Complete
 merge requires every logical run to be observed. `--allow-partial` permits an explicitly partial
-merge and records total, observed, and pending population counts. Campaign Merge v0.2 retires the
-old `blocked` population field; v0.1 merge artifacts remain valid historical records.
+merge and records total, observed, and pending population counts.
+
+Future writes use Campaign Merge v0.4: the top-level manifest remains a small provenance header and
+references a hash-bound `observations.jsonl` collection instead of embedding an observation array.
+Campaign Merge v0.1-v0.3 artifacts remain readable historical records. The same bounded-collection
+rule applies to new Campaign Adjudication v0.3 artifacts, which reference `runs.jsonl` while keeping
+per-run adjudication artifacts immutable. Existing finalized adjudication/merge products are never
+rewritten merely to adopt the newer storage layout.
+
+Adjudication and merge commands emit coarse phase/progress messages during source validation,
+observation processing, and publication. They do not print per-file chatter.

@@ -23,7 +23,10 @@ from acmm.campaign.adjudication import validate_campaign_adjudication_manifest
 from acmm.campaign.execution import (
     validate_campaign_execution_manifest,
 )
-from acmm.campaign.merge import validate_campaign_merge_manifest
+from acmm.campaign.merge import (
+    iter_campaign_merge_observations,
+    validate_campaign_merge_manifest,
+)
 from acmm.campaign.model import validate_campaign_manifest
 from acmm.record.loader import load_run_record, run_record_load_error
 from acmm.record.validator import sha256_file, validate_run_record
@@ -514,9 +517,16 @@ def _validate_campaign_merge_binding(
         raise analysis_export_error(
             "Campaign merge population.total does not match campaign run_count."
         )
-    if population["observed"] != len(merge["observations"]):
+    merge_version = str(merge.get("schema_version", ""))
+    if merge_version == "0.4":
+        observations_meta = merge.get("observations_artifact")
+        observed_rows = observations_meta.get("rows") if isinstance(observations_meta, Mapping) else None
+    else:
+        observations_value = merge.get("observations")
+        observed_rows = len(observations_value) if isinstance(observations_value, list) else None
+    if population["observed"] != observed_rows:
         raise analysis_export_error(
-            "Campaign merge population.observed does not match observations length."
+            "Campaign merge population.observed does not match observation rows."
         )
     if population["pending"] != population["total"] - population["observed"]:
         raise analysis_export_error(
@@ -613,7 +623,9 @@ def _load_accepted_observations(
     records: dict[str, tuple[Path, Path]] = {}
     seen_run_ids: set[str] = set()
     seen_results: set[str] = set()
-    for position, observation_value in enumerate(merge["observations"]):
+    for position, observation_value in enumerate(
+        iter_campaign_merge_observations(merge_path, merge)
+    ):
         observation = dict(observation_value)
         logical_run_id = observation["logical_run_id"]
         if logical_run_id not in planned_by_id:

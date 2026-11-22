@@ -14,6 +14,12 @@ import threading
 from types import MappingProxyType
 from typing import Any, Callable, Iterator, Mapping, Protocol
 
+from acmm.runtime.provider_pressure_segment_store import (
+    STORE_SCHEMA_VERSION as PROVIDER_PRESSURE_STORE_SCHEMA_VERSION,
+    segmented_provider_pressure_store,
+    provider_pressure_store_upgrade_required,
+)
+
 import yaml
 from jsonschema import Draft202012Validator
 
@@ -23,11 +29,11 @@ except ImportError:  # pragma: no cover - Windows callers do not share WSL runti
     fcntl = None
 
 
-PROVIDER_PRESSURE_PROFILE_SCHEMA_VERSION = "0.5"
+PROVIDER_PRESSURE_PROFILE_SCHEMA_VERSION = "0.6"
 PROVIDER_PRESSURE_TRAJECTORY_SCHEMA_VERSION = "0.5"
 PROVIDER_PRESSURE_INDEX_SCHEMA_VERSION = "0.1"
 PROVIDER_PRESSURE_ROOT_NAME = "provider_pressure"
-_PROFILE_SCHEMA_NAME = "provider-pressure-profile-v0.5.schema.json"
+_PROFILE_SCHEMA_NAME = "provider-pressure-profile-v0.6.schema.json"
 _TRAJECTORY_SCHEMA_NAME = "provider-pressure-trajectory-v0.5.schema.json"
 _INDEX_SCHEMA_NAME = "provider-pressure-index-v0.1.schema.json"
 
@@ -599,6 +605,8 @@ class provider_pressure_execution_session:
     execution_signals: list[dict[str, Any]] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
     pacing_events: list[dict[str, Any]] = field(default_factory=list)
+    open_action_decisions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    next_action_ordinal: int = 0
     applied_historical_sources: list[str] = field(default_factory=list)
     baseline_last_request_at: datetime | None = None
     baseline_last_mutation_at: datetime | None = None
@@ -656,6 +664,12 @@ def _core_app_state_mutable(model_state: dict[str, Any]) -> dict[str, Any]:
 
 
 class provider_pressure_store:
+    """Bounded Provider Pressure persistence facade.
+
+    Legacy trajectory-index/snapshot stores are intentionally not extended in place.
+    They must be upgraded into the sibling store_v2 directory by the offline upgrader.
+    """
+
     def __init__(
         self,
         generated_root: Path,
@@ -666,7 +680,7 @@ class provider_pressure_store:
             f"{_safe_component(identity.model_version)}-"
             f"{identity.model_definition_sha256[:12]}"
         )
-        self.root = (
+        self.legacy_root = (
             Path(generated_root)
             / PROVIDER_PRESSURE_ROOT_NAME
             / _safe_component(identity.provider_id)
@@ -674,27 +688,15 @@ class provider_pressure_store:
             / _safe_component(identity.model_id)
             / lineage
         )
-        self.profile_path = self.root / "profile-state.yaml"
-        self.index_path = self.root / "trajectory-index.yaml"
-        self.trajectory_dir = self.root / "trajectory"
-        self.lock_path = self.root / ".trajectory.lock"
-        lock_key = str(self.lock_path)
-        with _LOCAL_LOCKS_GUARD:
-            self._local_lock = _LOCAL_LOCKS.setdefault(lock_key, threading.RLock())
-
-    @contextmanager
-    def locked(self) -> Iterator[None]:
-        with self._local_lock:
-            self.root.mkdir(parents=True, exist_ok=True)
-            if fcntl is None:
-                yield
-                return
-            with self.lock_path.open("a+b") as handle:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        self._segmented = segmented_provider_pressure_store(
+            self.legacy_root,
+            _identity_record(identity),
+        )
+        self.root = self._segmented.root
+        self.profile_path = self._segmented.profile_path
+        self.lineage_path = self._segmented.lineage_path
+        self.segments_dir = self._segmented.segments_dir
+        self.checkpoints_dir = self._segmented.checkpoints_dir
 
     def load_profile(
         self,
@@ -702,163 +704,75 @@ class provider_pressure_store:
         policy: runtime_provider_pressure_policy,
         now: datetime,
     ) -> tuple[dict[str, Any], bool]:
-        with self.locked():
-            if self.profile_path.is_file():
-                try:
-                    value = yaml.safe_load(self.profile_path.read_text(encoding="utf-8"))
-                except (OSError, yaml.YAMLError):
-                    value = None
-                if isinstance(value, Mapping) and _profile_identity_matches(value, identity):
-                    upgraded = _upgrade_profile_document(value)
-                    _validate_document(_PROFILE_SCHEMA_NAME, upgraded)
-                    if dict(upgraded) != dict(value):
-                        self._persist_profile_unlocked(upgraded)
-                    return _copy_mapping(upgraded), False
-            profile = _new_profile(identity, policy, now)
-            self._persist_profile_unlocked(profile)
-            self._append_snapshot_unlocked(
-                profile_before=profile,
-                profile_after=profile,
-                identity=identity,
-                source_kind="bootstrap",
-                source_execution_id="bootstrap",
-                execution_status="bootstrap",
-                applied_signals=(),
-                decisions=(),
-                source_metadata={},
-                created_at=now,
-            )
-            return _copy_mapping(profile), True
+        self._segmented.ensure_ready(now)
+        value = self._segmented.load_profile()
+        if isinstance(value, Mapping) and _profile_identity_matches(value, identity):
+            upgraded = _upgrade_profile_document(value)
+            _validate_document(_PROFILE_SCHEMA_NAME, upgraded)
+            if dict(upgraded) != dict(value):
+                self._segmented.persist_profile(upgraded)
+            return _copy_mapping(upgraded), False
+        profile = _new_profile(identity, policy, now)
+        self.persist_profile(profile)
+        self.append_checkpoint(
+            profile=profile,
+            source_kind="bootstrap",
+            source_execution_id="bootstrap",
+            execution_status="bootstrap",
+            source_metadata={},
+            created_at=now,
+        )
+        return _copy_mapping(profile), True
 
     def persist_profile(self, profile: Mapping[str, Any]) -> None:
-        with self.locked():
-            self._persist_profile_unlocked(profile)
-
-    def append_snapshot(
-        self,
-        *,
-        profile_before: Mapping[str, Any],
-        profile_after: Mapping[str, Any],
-        identity: runtime_provider_pressure_identity,
-        source_kind: str,
-        source_execution_id: str,
-        execution_status: str,
-        applied_signals: tuple[Mapping[str, Any], ...],
-        decisions: tuple[Mapping[str, Any], ...],
-        source_metadata: Mapping[str, Any] | None,
-        created_at: datetime,
-    ) -> Path:
-        with self.locked():
-            return self._append_snapshot_unlocked(
-                profile_before=profile_before,
-                profile_after=profile_after,
-                identity=identity,
-                source_kind=source_kind,
-                source_execution_id=source_execution_id,
-                execution_status=execution_status,
-                applied_signals=applied_signals,
-                decisions=decisions,
-                source_metadata=source_metadata,
-                created_at=created_at,
-            )
-
-    def _persist_profile_unlocked(self, profile: Mapping[str, Any]) -> None:
-        self.root.mkdir(parents=True, exist_ok=True)
         _validate_document(_PROFILE_SCHEMA_NAME, profile)
-        _write_yaml_atomically(self.profile_path, profile)
+        self._segmented.persist_profile(profile)
 
-    def _append_snapshot_unlocked(
+    def append_event(
         self,
         *,
-        profile_before: Mapping[str, Any],
-        profile_after: Mapping[str, Any],
-        identity: runtime_provider_pressure_identity,
+        kind: str,
+        execution_id: str,
+        payload: Mapping[str, Any],
+        created_at: datetime,
+    ) -> int:
+        return self._segmented.append_event(
+            kind=kind,
+            execution_id=execution_id,
+            payload=payload,
+            created_at=created_at,
+        )
+
+    def append_checkpoint(
+        self,
+        *,
+        profile: Mapping[str, Any],
         source_kind: str,
         source_execution_id: str,
         execution_status: str,
-        applied_signals: tuple[Mapping[str, Any], ...],
-        decisions: tuple[Mapping[str, Any], ...],
         source_metadata: Mapping[str, Any] | None,
         created_at: datetime,
     ) -> Path:
-        self.trajectory_dir.mkdir(parents=True, exist_ok=True)
-        index = self._load_index_unlocked(identity)
-        sequence = int(index.get("latest_sequence", -1)) + 1
-        parent_sha256 = index.get("latest_snapshot_sha256")
-        timestamp = _format_timestamp(created_at)
-        source_label = _safe_component(source_kind)
-        execution_label = _safe_component(source_execution_id)[:48]
-        filename = f"{sequence:06d}_{timestamp}_{source_label}_{execution_label}.yaml"
-        snapshot_path = self.trajectory_dir / filename
-        snapshot_body = {
-            "schema_version": PROVIDER_PRESSURE_TRAJECTORY_SCHEMA_VERSION,
-            "snapshot": {
-                "sequence": sequence,
-                "created_at": _iso(created_at),
-                "source_kind": source_kind,
-                "source_execution_id": source_execution_id,
-                "execution_status": execution_status,
-                "parent_sha256": parent_sha256,
-            },
-            "identity": _identity_record(identity),
-            "source_metadata": dict(source_metadata or {}),
-            "profile_before": _profile_projection(profile_before),
-            "learning_delta": {
-                "signals": [dict(item) for item in applied_signals],
-                "decisions": [dict(item) for item in decisions],
-                "pacing_events": [dict(item) for item in (source_metadata or {}).get("pacing_events", ())],
-            },
-            "profile_after": _profile_projection(profile_after),
-        }
-        digest = _document_sha256(snapshot_body)
-        snapshot_body["snapshot"]["snapshot_sha256"] = digest
-        _validate_document(_TRAJECTORY_SCHEMA_NAME, snapshot_body)
-        _write_yaml_atomically(snapshot_path, snapshot_body)
-
-        entries = list(index.get("snapshots", ()))
-        entries.append(
-            {
-                "sequence": sequence,
-                "path": str(Path("trajectory") / filename),
-                "created_at": _iso(created_at),
-                "source_kind": source_kind,
-                "source_execution_id": source_execution_id,
-                "snapshot_sha256": digest,
-                "parent_sha256": parent_sha256,
-            }
+        return self._segmented.append_checkpoint(
+            profile=_profile_projection(profile),
+            source_kind=source_kind,
+            source_execution_id=source_execution_id,
+            execution_status=execution_status,
+            source_metadata=source_metadata,
+            created_at=created_at,
         )
-        updated_index = {
-            "schema_version": PROVIDER_PRESSURE_INDEX_SCHEMA_VERSION,
-            "identity": _identity_record(identity),
-            "latest_sequence": sequence,
-            "latest_snapshot": str(Path("trajectory") / filename),
-            "latest_snapshot_sha256": digest,
-            "snapshots": entries,
-        }
-        _validate_document(_INDEX_SCHEMA_NAME, updated_index)
-        _write_yaml_atomically(self.index_path, updated_index)
-        return snapshot_path
 
-    def _load_index_unlocked(
-        self,
-        identity: runtime_provider_pressure_identity,
-    ) -> dict[str, Any]:
-        if self.index_path.is_file():
-            try:
-                value = yaml.safe_load(self.index_path.read_text(encoding="utf-8"))
-            except (OSError, yaml.YAMLError):
-                value = None
-            if isinstance(value, Mapping):
-                _validate_document(_INDEX_SCHEMA_NAME, value)
-                return _copy_mapping(value)
-        return {
-            "schema_version": PROVIDER_PRESSURE_INDEX_SCHEMA_VERSION,
-            "identity": _identity_record(identity),
-            "latest_sequence": -1,
-            "latest_snapshot": None,
-            "latest_snapshot_sha256": None,
-            "snapshots": [],
-        }
+    def source_applied(self, source_key: str) -> bool:
+        return self._segmented.source_applied(source_key)
+
+    def mark_source_applied(self, source_key: str, *, created_at: datetime) -> None:
+        self._segmented.mark_source_applied(source_key, created_at=created_at)
+
+    def iter_events(self):
+        return self._segmented.iter_events()
+
+    def iter_checkpoints(self):
+        return self._segmented.iter_checkpoints()
 
 
 class provider_pressure_engine:
@@ -890,43 +804,26 @@ class provider_pressure_engine:
             profile_before=_copy_mapping(profile),
             profile=_copy_mapping(profile),
         )
-        applied_sources = set(str(value) for value in profile.get("applied_sources", ()))
-        applied_execution_ids = {
-            value.split(":", 1)[1]
-            for value in applied_sources
-            if ":" in value
-        }
-        observations = tuple(self._model.historical_replay(context))
-        for observation in observations:
+        for observation in self._model.historical_replay(context):
             source_key = f"{observation.source_kind}:{observation.source_execution_id}"
-            if (
-                source_key in applied_sources
-                or observation.source_execution_id in applied_execution_ids
-            ):
+            execution_key = f"execution:{observation.source_execution_id}"
+            if session.store.source_applied(source_key) or session.store.source_applied(execution_key):
                 continue
-            before = _copy_mapping(session.profile)
-            signal_records = self._apply_observation(session, observation)
-            session.profile["applied_sources"] = [
-                *list(session.profile.get("applied_sources", ())),
-                source_key,
-            ]
-            session.profile["updated_at"] = _iso(self._now())
+            self._apply_observation(session, observation)
+            now = self._now()
+            session.profile["updated_at"] = _iso(now)
             session.store.persist_profile(session.profile)
-            session.store.append_snapshot(
-                profile_before=before,
-                profile_after=session.profile,
-                identity=session.identity,
+            session.store.mark_source_applied(source_key, created_at=now)
+            session.store.mark_source_applied(execution_key, created_at=now)
+            session.store.append_checkpoint(
+                profile=session.profile,
                 source_kind="historical_replay",
                 source_execution_id=observation.source_execution_id,
                 execution_status="historical_replay",
-                applied_signals=tuple(signal_records),
-                decisions=(),
                 source_metadata=dict(observation.metadata),
-                created_at=self._now(),
+                created_at=now,
             )
             session.applied_historical_sources.append(observation.source_execution_id)
-            applied_sources.add(source_key)
-            applied_execution_ids.add(observation.source_execution_id)
         session.profile_before = _copy_mapping(session.profile)
         return session
 
@@ -949,7 +846,7 @@ class provider_pressure_engine:
             "metadata": dict(workload.metadata),
         }
         measurement_handle = session.model.run_measurement_start(context)
-        session.decisions.append(dict(record))
+        self._record_decision(session, record)
         return provider_pressure_run_admission(
             context=context,
             workload=workload,
@@ -1000,11 +897,8 @@ class provider_pressure_engine:
             app_suspension_reason = str(suspension.reason)
             app_suspension_metadata = dict(suspension.metadata)
 
-        decision_ordinal = sum(
-            1
-            for item in session.decisions
-            if item.get("decision_kind") == "action"
-        )
+        decision_ordinal = session.next_action_ordinal
+        session.next_action_ordinal += 1
         decision_id = (
             f"{context.execution_id}:run={context.run_index}:"
             f"action={decision_ordinal:04d}"
@@ -1176,7 +1070,7 @@ class provider_pressure_engine:
             },
         }
 
-        session.decisions.append(dict(record))
+        self._record_decision(session, record)
         self._report_action_admission(
             session,
             context,
@@ -1218,8 +1112,8 @@ class provider_pressure_engine:
         context: runtime_provider_pressure_run_context,
         event: runtime_provider_pressure_recovery_event,
     ) -> provider_pressure_recovery_admission:
-        action_record = _find_action_decision(
-            session.decisions,
+        action_record = self._find_action_decision(
+            session,
             decision_id=event.decision_id,
             action_id=event.action_id,
         )
@@ -1329,7 +1223,7 @@ class provider_pressure_engine:
             "model_state_metadata": dict(model_state_metadata),
             "metadata": dict(enriched.metadata),
         }
-        session.decisions.append(dict(record))
+        self._record_decision(session, record)
         session.profile["updated_at"] = _iso(self._now())
         session.store.persist_profile(session.profile)
 
@@ -1369,8 +1263,8 @@ class provider_pressure_engine:
         context: runtime_provider_pressure_run_context,
         event: runtime_provider_pressure_action_result_event,
     ) -> Mapping[str, Any]:
-        action_record = _find_action_decision(
-            session.decisions,
+        action_record = self._find_action_decision(
+            session,
             decision_id=event.decision_id,
             action_id=event.action_id,
         )
@@ -1421,7 +1315,9 @@ class provider_pressure_engine:
             "model_state_metadata": dict(model_state_metadata),
             "metadata": dict(enriched.metadata),
         }
-        session.decisions.append(dict(record))
+        self._record_decision(session, record)
+        if enriched.decision_id:
+            session.open_action_decisions.pop(str(enriched.decision_id), None)
         session.profile["updated_at"] = _iso(self._now())
         session.store.persist_profile(session.profile)
         return MappingProxyType(record)
@@ -1589,6 +1485,47 @@ class provider_pressure_engine:
             **dict(hook_result),
         }
 
+    def _record_decision(
+        self,
+        session: provider_pressure_execution_session,
+        record: Mapping[str, Any],
+    ) -> None:
+        rendered = dict(record)
+        _bounded_append(session.decisions, rendered, limit=128)
+        if rendered.get("decision_kind") == "action":
+            decision_id = str(rendered.get("decision_id") or "").strip()
+            if decision_id:
+                session.open_action_decisions[decision_id] = dict(rendered)
+                while len(session.open_action_decisions) > 256:
+                    oldest_id = next(iter(session.open_action_decisions))
+                    session.open_action_decisions.pop(oldest_id, None)
+        session.store.append_event(
+            kind="decision",
+            execution_id=session.context.execution_id,
+            payload=rendered,
+            created_at=self._now(),
+        )
+
+    def _find_action_decision(
+        self,
+        session: provider_pressure_execution_session,
+        *,
+        decision_id: str | None,
+        action_id: str,
+    ) -> Mapping[str, Any] | None:
+        if decision_id:
+            direct = session.open_action_decisions.get(str(decision_id))
+            if direct is not None:
+                return direct
+        for item in reversed(session.open_action_decisions.values()):
+            if item.get("action_id") == action_id:
+                return item
+        return _find_action_decision(
+            session.decisions,
+            decision_id=decision_id,
+            action_id=action_id,
+        )
+
     def _record_pacing_event(
         self,
         session: provider_pressure_execution_session,
@@ -1602,7 +1539,13 @@ class provider_pressure_engine:
             "features": dict(event.features),
             "metadata": dict(event.metadata),
         }
-        session.pacing_events.append(record)
+        _bounded_append(session.pacing_events, record, limit=64)
+        session.store.append_event(
+            kind="pacing",
+            execution_id=session.context.execution_id,
+            payload=record,
+            created_at=self._now(),
+        )
         if event.source == "pph" and event.duration_seconds > 0:
             totals = session.profile.setdefault("totals", {})
             totals["pph_pacing_events"] = int(totals.get("pph_pacing_events", 0)) + 1
@@ -1734,27 +1677,21 @@ class provider_pressure_engine:
         session.profile["sequence"] = int(session.profile.get("sequence", 0)) + 1
         session.store.persist_profile(session.profile)
         source_key = f"live_execution:{session.context.execution_id}"
-        if source_key not in session.profile.get("applied_sources", ()):
-            session.profile["applied_sources"] = [
-                *list(session.profile.get("applied_sources", ())),
-                source_key,
-            ]
-            session.store.persist_profile(session.profile)
-        return session.store.append_snapshot(
-            profile_before=session.profile_before,
-            profile_after=session.profile,
-            identity=session.identity,
+        session.store.mark_source_applied(source_key, created_at=now)
+        session.store.mark_source_applied(
+            f"execution:{session.context.execution_id}",
+            created_at=now,
+        )
+        return session.store.append_checkpoint(
+            profile=session.profile,
             source_kind="live_execution",
             source_execution_id=session.context.execution_id,
             execution_status=status,
-            applied_signals=tuple(session.execution_signals),
-            decisions=tuple(session.decisions),
             source_metadata={
                 "experiment_id": session.context.experiment_id,
                 "package_sha256": session.context.package_sha256,
                 "selected_run_indices": list(session.context.selected_run_indices),
                 "session_dir": session.context.session_dir,
-                "pacing_events": list(session.pacing_events),
             },
             created_at=now,
         )
@@ -1773,7 +1710,13 @@ class provider_pressure_engine:
                 record["observation_metadata"] = dict(observation.metadata)
             records.append(record)
             if observation.source_kind == "live_execution":
-                session.execution_signals.append(dict(record))
+                _bounded_append(session.execution_signals, dict(record), limit=64)
+            session.store.append_event(
+                kind="signal",
+                execution_id=session.context.execution_id,
+                payload=record,
+                created_at=self._now(),
+            )
         return records
 
 
@@ -1813,7 +1756,6 @@ def _new_profile(
             "pph_pacing_events": 0,
             "pph_pacing_seconds": 0.0,
         },
-        "applied_sources": [],
     }
 
 
@@ -1902,6 +1844,12 @@ def _apply_signal(
     }
 
 
+def _bounded_append(items: list[dict[str, Any]], value: dict[str, Any], *, limit: int) -> None:
+    items.append(value)
+    if len(items) > limit:
+        del items[:-limit]
+
+
 def _find_action_decision(
     decisions: list[dict[str, Any]],
     *,
@@ -1947,9 +1895,10 @@ def _workload_pressure(
 
 def _upgrade_profile_document(profile: Mapping[str, Any]) -> dict[str, Any]:
     value = _copy_mapping(profile)
-    if value.get("schema_version") == "0.4":
+    if value.get("schema_version") in {"0.4", "0.5"}:
         value["schema_version"] = PROVIDER_PRESSURE_PROFILE_SCHEMA_VERSION
         value.setdefault("model_state", {})
+        value.pop("applied_sources", None)
     return value
 
 
@@ -2057,6 +2006,7 @@ __all__ = [
     "PROVIDER_PRESSURE_INDEX_SCHEMA_VERSION",
     "PROVIDER_PRESSURE_PROFILE_SCHEMA_VERSION",
     "PROVIDER_PRESSURE_ROOT_NAME",
+    "PROVIDER_PRESSURE_STORE_SCHEMA_VERSION",
     "PROVIDER_PRESSURE_TRAJECTORY_SCHEMA_VERSION",
     "provider_pressure_action_admission",
     "provider_pressure_checkpoint_admission",
