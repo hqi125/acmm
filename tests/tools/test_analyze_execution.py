@@ -137,6 +137,7 @@ def test_workflow_exports_then_runs_all_analysis_stages(
     assert export_commands == [[
         "/venv/bin/acmm",
         "export",
+        "run",
         str(execution_dir.resolve()),
         "--output-root",
         str(repo_root / "exports"),

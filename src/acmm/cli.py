@@ -9,6 +9,7 @@ import sys
 import time
 from typing import Any, Mapping
 
+from acmm.analysis.campaign_export import export_campaign
 from acmm.analysis.export import analysis_export_error, export_execution
 from acmm.contract.compatibility import validate_harness_compatibility
 from acmm.contract.loader import contract_load_error, load_contract
@@ -2122,7 +2123,7 @@ def _print_execution_completion(
         print(f"    Ollama Cloud requests: {request_count} ({detail})")
 
 
-def _run_export(args: argparse.Namespace) -> int:
+def _run_export_run(args: argparse.Namespace) -> int:
     try:
         result = export_execution(
             execution_dir=Path(args.execution),
@@ -2145,6 +2146,48 @@ def _run_export(args: argparse.Namespace) -> int:
     print("Analysis export completed successfully.")
     print(f"  source execution: {result.execution_id}")
     print(f"  output:           {result.output_dir}")
+    print(f"  runs:             {result.runs_path} ({result.run_rows} row(s))")
+    print(
+        f"  judgments:        {result.judgments_path} "
+        f"({result.judgment_rows} row(s))"
+    )
+    print(f"  manifest:         {result.manifest_path}")
+    return 0
+
+
+def _run_export_campaign(args: argparse.Namespace) -> int:
+    try:
+        result = export_campaign(
+            campaign_dir=Path(args.campaign),
+            merge_dir=Path(args.merge),
+            output_root=Path(args.output_root),
+            contract_schema_path=(
+                Path(args.contract_schema)
+                if args.contract_schema is not None
+                else None
+            ),
+            run_record_schema_path=(
+                Path(args.record_schema)
+                if args.record_schema is not None
+                else None
+            ),
+            progress=lambda message: print(
+                f"Campaign export: {message}",
+                flush=True,
+            ),
+        )
+    except (analysis_export_error, FileExistsError, OSError, ValueError) as exc:
+        print(f"ERROR: Campaign analysis export failed: {exc}", file=sys.stderr)
+        return 2
+
+    print("Campaign analysis export completed successfully.")
+    print(f"  source campaign:  {result.campaign_id}")
+    print(f"  source merge:     {result.merge_id}")
+    print(f"  output:           {result.output_dir}")
+    print(
+        f"  planned runs:     {result.planned_runs_path} "
+        f"({result.planned_run_rows} row(s))"
+    )
     print(f"  runs:             {result.runs_path} ({result.run_rows} row(s))")
     print(
         f"  judgments:        {result.judgments_path} "
@@ -2400,19 +2443,28 @@ def _build_parser() -> argparse.ArgumentParser:
 
     export_parser = subparsers.add_parser(
         "export",
+        help="Export immutable ACMM results into deterministic analysis-ready tables.",
+    )
+    export_subparsers = export_parser.add_subparsers(
+        dest="export_scope",
+        required=True,
+    )
+
+    export_run_parser = export_subparsers.add_parser(
+        "run",
         help=(
-            "Export one completed experiment execution into deterministic "
-            "analysis-ready CSV tables."
+            "Export one completed experiment execution using the established "
+            "run-export path."
         ),
     )
-    export_parser.add_argument(
+    export_run_parser.add_argument(
         "execution",
         help=(
             "Path to a completed execution_<id> directory containing "
             "contract.yaml and experiment_execution.yaml."
         ),
     )
-    export_parser.add_argument(
+    export_run_parser.add_argument(
         "--output-root",
         default=str(default_exports_root()),
         help=(
@@ -2420,21 +2472,59 @@ def _build_parser() -> argparse.ArgumentParser:
             f"(default: {default_exports_root()})."
         ),
     )
-    export_parser.add_argument(
+    export_run_parser.add_argument(
         "--record-schema",
         help=(
             "Path to a Run Record JSON Schema. "
             "Defaults to records/v0_1/run_record.schema.json."
         ),
     )
-    export_parser.add_argument(
+    export_run_parser.add_argument(
         "--contract-schema",
         help=(
             "Path to a Contract JSON Schema. "
             "Defaults to the bundled schema selected by the Contract schema_version."
         ),
     )
-    export_parser.set_defaults(handler=_run_export)
+    export_run_parser.set_defaults(handler=_run_export_run)
+
+    export_campaign_parser = export_subparsers.add_parser(
+        "campaign",
+        help=(
+            "Export one durable Campaign together with one immutable Campaign Merge."
+        ),
+    )
+    export_campaign_parser.add_argument(
+        "campaign",
+        help="Path to the source campaign_<id> directory.",
+    )
+    export_campaign_parser.add_argument(
+        "merge",
+        help="Path to the authoritative merge_<id> directory for that Campaign.",
+    )
+    export_campaign_parser.add_argument(
+        "--output-root",
+        default=str(default_exports_root()),
+        help=(
+            "Analysis export root directory "
+            f"(default: {default_exports_root()})."
+        ),
+    )
+    export_campaign_parser.add_argument(
+        "--record-schema",
+        help=(
+            "Path to a Run Record JSON Schema. "
+            "Defaults to records/v0_1/run_record.schema.json."
+        ),
+    )
+    export_campaign_parser.add_argument(
+        "--contract-schema",
+        help=(
+            "Path to a Contract JSON Schema. "
+            "Defaults to the bundled schema selected by the Contract schema_version."
+        ),
+    )
+    export_campaign_parser.set_defaults(handler=_run_export_campaign)
 
     record_parser = subparsers.add_parser(
         "validate-record",

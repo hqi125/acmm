@@ -39,7 +39,7 @@ def test_main_cli_defaults_use_generated_namespaces() -> None:
 
     parser = _build_parser()
     run_args = parser.parse_args(["run", "example_experiment", "--preview"])
-    export_args = parser.parse_args(["export", "/tmp/execution_example"])
+    export_args = parser.parse_args(["export", "run", "/tmp/execution_example"])
 
     assert run_args.results_root == str(default_results_root())
     assert export_args.output_root == str(default_exports_root())

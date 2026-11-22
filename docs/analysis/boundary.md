@@ -86,9 +86,11 @@ The statistical workspace should be able to run independently from `src/acmm` on
 versioned CSV inputs have been produced.
 ## Implemented CSV export
 
-The mechanical export boundary is now implemented by `acmm export`. A completed execution is
-validated against its Contract snapshot, Run Records, execution manifest, and persisted evidence
-hashes before two deterministic tables are published:
+The mechanical export boundary is now implemented by the scoped `acmm export run` and
+`acmm export campaign` commands. `export run` preserves the existing completed-execution schema 0.1
+path. `export campaign` adds schema 0.2 and validates a frozen Campaign together with one immutable
+merge so acquisition history and final adjudicated observations remain distinct but jointly
+traceable.
 
 ```text
 runs.csv       one row per realized attempt, including invalid retries
@@ -108,10 +110,12 @@ See `docs/analysis/export.md` for the exact table and determinism rules.
 The first downstream statistical layer now lives under `analysis/r/`. It is intentionally
 separate from `src/acmm` and consumes only deterministic export artifacts.
 
-The loader verifies the export manifest, CSV SHA-256 values, exact v0.1 columns, typed field
-syntax, retry/selection consistency, run-to-judgment bindings, and execution completeness before
-an estimator is allowed to run. Invalid retry attempts remain available as diagnostics but are
-not part of the selected valid statistical population.
+The loader dispatches by export schema and verifies the manifest, CSV SHA-256 values, exact table
+columns, typed field syntax, retry/selection consistency, run-to-judgment bindings, and population
+completeness before an estimator is allowed to run. Schema 0.1 retains the execution path; schema 0.2
+adds an explicit Campaign planned-run table so an unattempted logical slot remains visible in the
+denominator. Invalid/non-selected attempts remain available as diagnostics but are not part of the
+selected valid statistical population.
 
 The initial estimator surface is requirement-level and implements three alternatives already
 defined by ACMM quantification work:

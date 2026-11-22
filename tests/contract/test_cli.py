@@ -9,11 +9,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 
-def test_export_command_parses_analysis_export_arguments() -> None:
+def test_export_run_command_parses_analysis_export_arguments() -> None:
     parser = _build_parser()
     args = parser.parse_args(
         [
             "export",
+            "run",
             "results/example/execution_123",
             "--output-root",
             "exports-test",
@@ -21,7 +22,28 @@ def test_export_command_parses_analysis_export_arguments() -> None:
     )
 
     assert args.command == "export"
+    assert args.export_scope == "run"
     assert args.execution == "results/example/execution_123"
+    assert args.output_root == "exports-test"
+
+
+def test_export_campaign_command_parses_independent_campaign_arguments() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "export",
+            "campaign",
+            "generated/example/campaign_123",
+            "generated/example/campaign_123/merged/merge_456",
+            "--output-root",
+            "exports-test",
+        ]
+    )
+
+    assert args.command == "export"
+    assert args.export_scope == "campaign"
+    assert args.campaign == "generated/example/campaign_123"
+    assert args.merge == "generated/example/campaign_123/merged/merge_456"
     assert args.output_root == "exports-test"
 
 

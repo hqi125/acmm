@@ -1083,4 +1083,236 @@ assert_equal(requirementAAvailability$all_missing_violation_lower, 0.5)
 assert_equal(requirementAAvailability$all_missing_compliant_upper, 0.75)
 assert_equal(requirementAAvailability$sensitivity_status, "ok")
 
+make_campaign_planned_row <- function(
+    runIndex,
+    logicalRunId,
+    observed,
+    acceptedRunId = "",
+    sourceExecutionId = "",
+    sourceExecutionStatus = "",
+    sourceAttempt = ""
+)
+{
+    values <- list(
+        export_schema_version = "0.2",
+        campaign_id = "campaign_fixture",
+        experiment_id = "fixture_experiment",
+        design_digest = paste(rep("d", 64), collapse = ""),
+        contract_sha256 = paste(rep("a", 64), collapse = ""),
+        package_sha256 = paste(rep("c", 64), collapse = ""),
+        run_index = as.character(runIndex),
+        logical_run_id = logicalRunId,
+        subject_id = "subject_a",
+        scenario_id = if (runIndex == 0) "scenario_a" else "scenario_b",
+        repetition = "1",
+        materialization_key = paste0("scenario_id=scenario_", if (runIndex == 0) "a" else "b"),
+        observed = if (observed) "true" else "false",
+        accepted_run_id = acceptedRunId,
+        source_execution_id = sourceExecutionId,
+        source_execution_status = sourceExecutionStatus,
+        source_attempt = sourceAttempt
+    )
+    as.data.frame(values, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+make_campaign_run_row <- function(runId, logicalRunId)
+{
+    values <- list(
+        export_schema_version = "0.2",
+        campaign_id = "campaign_fixture",
+        experiment_id = "fixture_experiment",
+        design_digest = paste(rep("d", 64), collapse = ""),
+        contract_sha256 = paste(rep("a", 64), collapse = ""),
+        package_sha256 = paste(rep("c", 64), collapse = ""),
+        source_execution_id = "execution_fixture",
+        source_execution_status = "completed",
+        source_execution_order = "1",
+        source_attempt = "1",
+        attempt = "1",
+        source_selected = "true",
+        selected = "true",
+        logical_run_id = logicalRunId,
+        run_index = "0",
+        run_id = runId,
+        subject_id = "subject_a",
+        scenario_id = "scenario_a",
+        repetition = "1",
+        started_at = "2026-10-20T20:00:00Z",
+        ended_at = "2026-10-20T20:00:01Z",
+        termination = "agent_completed",
+        validity = "valid",
+        failure_kind = "",
+        failure_message = "",
+        agent_name = "Fixture Agent",
+        agent_version = "1.0",
+        model_name = "fixture-model",
+        model_provider = "fixture-provider",
+        subject_configuration_json = "{}",
+        environment_fixture = "fixture_environment",
+        environment_configuration_json = "{}",
+        evidence_count = "1",
+        judgment_count = "1",
+        judgment_source = "merge",
+        source_result_path = paste0("executions/execution_fixture/runs/run_0_", runId),
+        authoritative_result_path = paste0("runs/run_000000_", logicalRunId)
+    )
+    as.data.frame(values, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+make_campaign_judgment_row <- function(runId, logicalRunId)
+{
+    values <- list(
+        export_schema_version = "0.2",
+        campaign_id = "campaign_fixture",
+        experiment_id = "fixture_experiment",
+        design_digest = paste(rep("d", 64), collapse = ""),
+        contract_sha256 = paste(rep("a", 64), collapse = ""),
+        package_sha256 = paste(rep("c", 64), collapse = ""),
+        source_execution_id = "execution_fixture",
+        source_execution_order = "1",
+        source_attempt = "1",
+        attempt = "1",
+        source_selected = "true",
+        selected = "true",
+        logical_run_id = logicalRunId,
+        run_index = "0",
+        run_id = runId,
+        subject_id = "subject_a",
+        scenario_id = "scenario_a",
+        repetition = "1",
+        validity = "valid",
+        termination = "agent_completed",
+        opportunity_id = "opportunity_a",
+        outcome = "compliant",
+        requirement_id = "requirement_a",
+        dimension = "obligation",
+        check_id = "check_a",
+        evaluator = "fixture_evaluator",
+        evidence_ids_json = "[]",
+        detail = "merged fixture judgment",
+        judgment_source = "merge"
+    )
+    as.data.frame(values, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+write_campaign_export_fixture <- function(directory, planned, runs, judgments)
+{
+    dir.create(directory, recursive = TRUE, showWarnings = FALSE)
+    plannedPath <- file.path(directory, "planned_runs.csv")
+    runsPath <- file.path(directory, "runs.csv")
+    judgmentsPath <- file.path(directory, "judgments.csv")
+    write_csv_exact(planned, plannedPath)
+    write_csv_exact(runs, runsPath)
+    write_csv_exact(judgments, judgmentsPath)
+    observedCount <- sum(planned$observed == "true")
+    manifest <- list(
+        schema_version = "0.2",
+        source = list(
+            kind = "campaign",
+            campaign_id = "campaign_fixture",
+            experiment_id = "fixture_experiment",
+            design_digest = paste(rep("d", 64), collapse = ""),
+            package_sha256 = paste(rep("c", 64), collapse = ""),
+            contract_sha256 = paste(rep("a", 64), collapse = ""),
+            campaign_manifest = "campaign.json",
+            campaign_manifest_sha256 = paste(rep("e", 64), collapse = ""),
+            merge_id = "merge_fixture",
+            merge_manifest = "campaign_merge.json",
+            merge_manifest_sha256 = paste(rep("f", 64), collapse = ""),
+            merge_completeness = if (observedCount == nrow(planned)) "complete" else "partial",
+            merge_population = list(
+                total = nrow(planned),
+                observed = observedCount,
+                pending = nrow(planned) - observedCount
+            )
+        ),
+        executions = list(
+            list(
+                execution_id = "execution_fixture",
+                status = "completed",
+                order = 1
+            )
+        ),
+        tables = list(
+            planned_runs = list(
+                artifact = "planned_runs.csv",
+                rows = nrow(planned),
+                sha256 = digest::digest(file = plannedPath, algo = "sha256", serialize = FALSE)
+            ),
+            runs = list(
+                artifact = "runs.csv",
+                rows = nrow(runs),
+                sha256 = digest::digest(file = runsPath, algo = "sha256", serialize = FALSE)
+            ),
+            judgments = list(
+                artifact = "judgments.csv",
+                rows = nrow(judgments),
+                sha256 = digest::digest(file = judgmentsPath, algo = "sha256", serialize = FALSE)
+            )
+        )
+    )
+    yaml::write_yaml(manifest, file.path(directory, "export_manifest.yaml"))
+    invisible(directory)
+}
+
+campaignPartialDir <- file.path(root, "campaign_partial")
+campaignRunId <- "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+campaignLogicalA <- "run_000000_aaaaaaaaaaaaaaaa"
+campaignLogicalB <- "run_000001_bbbbbbbbbbbbbbbb"
+campaignPlanned <- rbind(
+    make_campaign_planned_row(
+        0,
+        campaignLogicalA,
+        TRUE,
+        acceptedRunId = campaignRunId,
+        sourceExecutionId = "execution_fixture",
+        sourceExecutionStatus = "completed",
+        sourceAttempt = "1"
+    ),
+    make_campaign_planned_row(1, campaignLogicalB, FALSE)
+)
+campaignRuns <- make_campaign_run_row(campaignRunId, campaignLogicalA)
+campaignJudgments <- make_campaign_judgment_row(campaignRunId, campaignLogicalA)
+write_campaign_export_fixture(
+    campaignPartialDir,
+    campaignPlanned,
+    campaignRuns,
+    campaignJudgments
+)
+assert_error_class(
+    load_acmm_export(campaignPartialDir),
+    "acmm_incomplete_execution_error"
+)
+campaignLoaded <- load_acmm_export(
+    campaignPartialDir,
+    populationPolicy = "available-valid"
+)
+assert_equal(campaignLoaded$binding$source_kind, "campaign")
+assert_equal(nrow(campaignLoaded$planned_runs), 2L)
+campaignPopulation <- build_acmm_population(
+    campaignLoaded,
+    populationPolicy = "available-valid"
+)
+assert_equal(campaignPopulation$summary$selected_planned_runs, 2)
+assert_equal(campaignPopulation$summary$available_valid_runs, 1)
+assert_equal(campaignPopulation$summary$missing_planned_runs, 1)
+assert_equal(campaignPopulation$missing_runs$attempts, 0)
+assert_equal(campaignPopulation$missing_runs$failure_kind, "not_attempted")
+campaignSlots <- acmm_availability_slot_table(
+    campaignLoaded$runs,
+    campaignLoaded$planned_runs
+)
+assert_equal(nrow(campaignSlots), 2L)
+assert_equal(campaignSlots$attempts_used, c(1, 0))
+assert_equal(campaignSlots$available_valid, c(TRUE, FALSE))
+
+
+runSourceLines <- capture.output(print_acmm_export_source(loaded$binding))
+assert_equal(runSourceLines, paste0("Execution: ", executionId))
+campaignSourceLines <- capture.output(print_acmm_export_source(campaignLoaded$binding))
+assert_equal(
+    campaignSourceLines,
+    c("Campaign: campaign_fixture", "Merge: merge_fixture")
+)
+
 cat("ACMM R analysis tests passed.\n")

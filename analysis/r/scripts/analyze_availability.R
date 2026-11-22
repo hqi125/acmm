@@ -78,7 +78,7 @@ for (tableName in names(tables))
 }
 
 cat("ACMM availability analysis completed successfully.\n")
-cat("Execution:", exportData$binding$execution_id, "\n")
+print_acmm_export_source(exportData$binding)
 cat("Experiment:", exportData$binding$experiment_id, "\n")
 cat("Population policy:", populationPolicy, "\n")
 cat("Bootstrap replicates:", bootstrapReplicates, "\n")

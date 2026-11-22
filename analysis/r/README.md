@@ -3,7 +3,7 @@
 This directory is the downstream statistical-analysis subsystem for ACMM exports.
 
 The experiment system remains authoritative for acquisition and canonical evidence. R consumes only
-validated analysis exports produced by `acmm export`; it never mutates Contracts, Run Records,
+validated analysis exports produced by `acmm export run` or `acmm export campaign`; it never mutates Contracts, Run Records,
 evidence, execution manifests, or exported CSV files.
 
 ## Design boundary
@@ -45,7 +45,10 @@ error.
 
 ## Input validation
 
-`load_acmm_export()` validates the input before any estimator runs. The v0.1 checks include:
+`load_acmm_export()` dispatches by export schema before any estimator runs. Schema 0.1 preserves the
+original single-execution path. Schema 0.2 consumes a Campaign export with explicit `planned_runs.csv`
+so missing logical slots remain representable even when no attempt exists. Shared integrity checks
+remain strict. The v0.1 checks include:
 
 - export-manifest schema and source binding;
 - SHA-256 of `runs.csv` and `judgments.csv`;
@@ -60,7 +63,12 @@ error.
 - judgment counts per realized attempt;
 - opportunity, requirement, dimension, check, and evaluator consistency.
 
-By default, analysis uses the `strict` population policy and refuses an execution whose selected plan
+For schema 0.2, the loader additionally validates Campaign/merge provenance, the exact planned
+population, accepted-observation bindings, source-versus-merge selection markers, and all three table
+hashes. The merge-selected rows are the authoritative final judgments while non-selected attempts
+remain acquisition diagnostics.
+
+By default, analysis uses the `strict` population policy and refuses a source whose selected plan
 is not fully resolved. `available-valid` is an explicit alternative for postmortem and sensitivity
 analysis: it retains the original selected-plan denominator, analyzes only selected scientifically
 valid runs, and reports exact missing planned slots plus per-subject/scenario acquisition coverage.
@@ -219,6 +227,10 @@ Basic point estimates:
 ```text
 Rscript analysis/r/scripts/analyze_export.R \
     ~/acmm_generated/exports/<experiment_id>/execution_<execution_id>
+
+# The same scripts accept a schema-0.2 Campaign export:
+Rscript analysis/r/scripts/analyze_export.R \
+    ~/acmm_generated/exports/<experiment_id>/campaign_<campaign_id>/merge_<merge_id>
 ```
 
 Hierarchical uncertainty analysis:
@@ -307,7 +319,7 @@ remain fatal.
 The wrapper does not implement statistics and is not part of the `acmm` CLI. It follows repository
 storage conventions to:
 
-1. run `acmm export` when the canonical export does not already exist;
+1. run `acmm export run` when the canonical execution export does not already exist;
 2. verify and safely reuse a matching existing export when rerunning after an analysis-stage failure;
 3. resolve strict versus available-valid compliance population automatically;
 4. run requirement point estimates, requirement uncertainty, dimension point scores, and dimension

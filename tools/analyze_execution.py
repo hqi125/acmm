@@ -367,6 +367,7 @@ def run_analysis_workflow(
             (
                 acmm_command,
                 "export",
+                "run",
                 str(execution_dir),
                 "--output-root",
                 str(_EXPORT_ROOT),
@@ -375,7 +376,7 @@ def run_analysis_workflow(
 
         if return_code != 0:
             print(
-                f"ERROR: acmm export failed with exit code {return_code}.",
+                f"ERROR: acmm export run failed with exit code {return_code}.",
                 file=sys.stderr,
             )
             print("Analysis stopped. No R commands were executed.", file=sys.stderr)

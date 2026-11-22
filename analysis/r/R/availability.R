@@ -1,48 +1,124 @@
-acmm_availability_slot_table <- function(runs)
+acmm_availability_slot_table <- function(runs, planned = NULL)
 {
     acmm_assert(
-        is.data.frame(runs) && nrow(runs) > 0,
-        "Availability analysis requires a non-empty validated runs table.",
+        is.data.frame(runs),
+        "Availability analysis requires a validated runs table.",
         "acmm_analysis_api_error"
     )
 
-    slotIndices <- sort(unique(runs$run_index))
-    rows <- lapply(slotIndices, function(runIndex)
+    if (!is.null(planned))
     {
-        slotRows <- which(runs$run_index == runIndex)
-        slotRows <- slotRows[order(runs$attempt[slotRows])]
-        firstRow <- slotRows[[1]]
-        finalRow <- tail(slotRows, 1)
-        selectedRows <- slotRows[
-            runs$selected[slotRows] & runs$validity[slotRows] == "valid"
-        ]
-        available <- length(selectedRows) == 1
-        validAttempt <- if (available) runs$attempt[selectedRows[[1]]] else NA_real_
-
-        data.frame(
-            run_index = runs$run_index[finalRow],
-            subject_id = runs$subject_id[finalRow],
-            scenario_id = runs$scenario_id[finalRow],
-            repetition = runs$repetition[finalRow],
-            selected_position_within_repetition = NA_integer_,
-            attempts_used = length(slotRows),
-            max_attempts_per_run = runs$max_attempts_per_run[finalRow],
-            first_attempt_valid = runs$validity[firstRow] == "valid",
-            retry_attempted = length(slotRows) > 1,
-            recovered_by_retry = available && !is.na(validAttempt) && validAttempt > 1,
-            available_valid = available,
-            valid_attempt = validAttempt,
-            final_termination = runs$termination[finalRow],
-            final_validity = runs$validity[finalRow],
-            failure_kind = if (available) "" else runs$failure_kind[finalRow],
-            failure_message = if (available) "" else runs$failure_message[finalRow],
-            stringsAsFactors = FALSE
+        acmm_assert(
+            is.data.frame(planned) && nrow(planned) > 0,
+            "Campaign availability analysis requires a non-empty planned_runs table.",
+            "acmm_analysis_api_error"
         )
-    })
+        rows <- lapply(seq_len(nrow(planned)), function(plannedRow)
+        {
+            runIndex <- planned$run_index[[plannedRow]]
+            slotRows <- which(runs$run_index == runIndex)
+            if (length(slotRows) == 0)
+            {
+                return(data.frame(
+                    run_index = runIndex,
+                    subject_id = planned$subject_id[[plannedRow]],
+                    scenario_id = planned$scenario_id[[plannedRow]],
+                    repetition = planned$repetition[[plannedRow]],
+                    selected_position_within_repetition = NA_integer_,
+                    attempts_used = 0,
+                    max_attempts_per_run = NA_real_,
+                    first_attempt_valid = FALSE,
+                    retry_attempted = FALSE,
+                    recovered_by_retry = FALSE,
+                    available_valid = FALSE,
+                    valid_attempt = NA_real_,
+                    final_termination = "",
+                    final_validity = "",
+                    failure_kind = "not_attempted",
+                    failure_message = "No persisted Campaign attempt.",
+                    stringsAsFactors = FALSE
+                ))
+            }
 
-    result <- do.call(rbind, rows)
+            slotRows <- slotRows[order(runs$attempt[slotRows])]
+            firstRow <- slotRows[[1]]
+            finalRow <- tail(slotRows, 1)
+            selectedRows <- slotRows[
+                runs$selected[slotRows] & runs$validity[slotRows] == "valid"
+            ]
+            available <- length(selectedRows) == 1
+            validAttempt <- if (available) runs$attempt[selectedRows[[1]]] else NA_real_
+            maxAttempts <- if ("max_attempts_per_run" %in% names(runs)) {
+                runs$max_attempts_per_run[finalRow]
+            } else {
+                NA_real_
+            }
+            data.frame(
+                run_index = runIndex,
+                subject_id = planned$subject_id[[plannedRow]],
+                scenario_id = planned$scenario_id[[plannedRow]],
+                repetition = planned$repetition[[plannedRow]],
+                selected_position_within_repetition = NA_integer_,
+                attempts_used = length(slotRows),
+                max_attempts_per_run = maxAttempts,
+                first_attempt_valid = runs$validity[firstRow] == "valid",
+                retry_attempted = length(slotRows) > 1,
+                recovered_by_retry = available && !is.na(validAttempt) && validAttempt > 1,
+                available_valid = available,
+                valid_attempt = validAttempt,
+                final_termination = runs$termination[finalRow],
+                final_validity = runs$validity[finalRow],
+                failure_kind = if (available) "" else runs$failure_kind[finalRow],
+                failure_message = if (available) "" else runs$failure_message[finalRow],
+                stringsAsFactors = FALSE
+            )
+        })
+        result <- do.call(rbind, rows)
+    }
+    else
+    {
+        acmm_assert(
+            nrow(runs) > 0,
+            "Availability analysis requires a non-empty validated runs table.",
+            "acmm_analysis_api_error"
+        )
+        slotIndices <- sort(unique(runs$run_index))
+        rows <- lapply(slotIndices, function(runIndex)
+        {
+            slotRows <- which(runs$run_index == runIndex)
+            slotRows <- slotRows[order(runs$attempt[slotRows])]
+            firstRow <- slotRows[[1]]
+            finalRow <- tail(slotRows, 1)
+            selectedRows <- slotRows[
+                runs$selected[slotRows] & runs$validity[slotRows] == "valid"
+            ]
+            available <- length(selectedRows) == 1
+            validAttempt <- if (available) runs$attempt[selectedRows[[1]]] else NA_real_
+
+            data.frame(
+                run_index = runs$run_index[finalRow],
+                subject_id = runs$subject_id[finalRow],
+                scenario_id = runs$scenario_id[finalRow],
+                repetition = runs$repetition[finalRow],
+                selected_position_within_repetition = NA_integer_,
+                attempts_used = length(slotRows),
+                max_attempts_per_run = runs$max_attempts_per_run[finalRow],
+                first_attempt_valid = runs$validity[firstRow] == "valid",
+                retry_attempted = length(slotRows) > 1,
+                recovered_by_retry = available && !is.na(validAttempt) && validAttempt > 1,
+                available_valid = available,
+                valid_attempt = validAttempt,
+                final_termination = runs$termination[finalRow],
+                final_validity = runs$validity[finalRow],
+                failure_kind = if (available) "" else runs$failure_kind[finalRow],
+                failure_message = if (available) "" else runs$failure_message[finalRow],
+                stringsAsFactors = FALSE
+            )
+        })
+        result <- do.call(rbind, rows)
+    }
+
     rownames(result) <- NULL
-
     blockKeys <- paste(result$subject_id, result$repetition, sep = "\037")
     blocks <- split(seq_len(nrow(result)), blockKeys, drop = TRUE)
     for (blockRows in blocks)
@@ -536,7 +612,10 @@ analyze_acmm_availability <- function(
         "acmm_analysis_api_error"
     )
 
-    slots <- acmm_availability_slot_table(exportData$runs)
+    slots <- acmm_availability_slot_table(
+        exportData$runs,
+        if (!is.null(exportData$planned_runs)) exportData$planned_runs else NULL
+    )
     list(
         summary = acmm_availability_summary(slots, exportData$runs),
         cells = acmm_availability_group_summary(

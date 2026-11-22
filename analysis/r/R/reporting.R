@@ -130,3 +130,22 @@ print_acmm_population_summary <- function(population)
     }
     invisible(population)
 }
+
+print_acmm_export_source <- function(binding)
+{
+    acmm_assert(
+        is.list(binding),
+        "print_acmm_export_source() requires a validated export binding.",
+        "acmm_analysis_api_error"
+    )
+    if (identical(binding$source_kind, "campaign"))
+    {
+        cat("Campaign: ", binding$campaign_id, "\n", sep = "")
+        cat("Merge: ", binding$merge_id, "\n", sep = "")
+    }
+    else
+    {
+        cat("Execution: ", binding$execution_id, "\n", sep = "")
+    }
+    invisible(binding)
+}

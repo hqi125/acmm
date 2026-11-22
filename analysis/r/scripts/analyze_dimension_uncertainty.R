@@ -48,7 +48,7 @@ population <- build_acmm_population(
 )
 
 cat("ACMM dimension-uncertainty input validated successfully.\n")
-cat("Execution:", exportData$binding$execution_id, "\n")
+print_acmm_export_source(exportData$binding)
 cat("Experiment:", exportData$binding$experiment_id, "\n")
 print_acmm_population_summary(population)
 cat("Bootstrap replicates:", bootstrapReplicates, "\n")

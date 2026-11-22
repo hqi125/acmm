@@ -2,16 +2,27 @@
 
 ## Purpose
 
-`acmm export` projects one completed experiment execution into analysis-ready CSV tables.
-The export is mechanical: it preserves acquisition facts and opportunity judgments without
-computing ACMM estimators, scores, confidence intervals, or other statistical results.
+`acmm export` provides separate mechanical export scopes for immediate executions and durable
+campaigns. Both preserve acquisition facts and opportunity judgments without computing ACMM
+estimators, scores, confidence intervals, or other statistical results.
 
-The source execution remains canonical. CSV files are downstream interchange artifacts.
+Canonical acquisition/merge artifacts remain authoritative. CSV files are downstream interchange
+artifacts.
 
-## Command
+## Commands
+
+Execution export (schema 0.1):
 
 ```text
-acmm export ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
+acmm export run ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
+```
+
+Campaign export (schema 0.2):
+
+```text
+acmm export campaign \
+    ~/acmm_generated/<experiment_id>/campaign_<campaign_id> \
+    ~/acmm_generated/<experiment_id>/campaign_<campaign_id>/merged/merge_<merge_id>
 ```
 
 By default the export is published under:
@@ -25,6 +36,36 @@ By default the export is published under:
 
 A different root may be selected with `--output-root`. Existing export directories are never
 overwritten implicitly.
+
+## Campaign export
+
+Campaign export deliberately requires both the Campaign root and one immutable merge directory. The
+Campaign contributes the frozen planned population plus acquisition history across Campaign
+executions, including retries and non-selected attempts. The merge contributes the authoritative
+accepted observation for each logical run and, when adjudication was selected, the final revised
+judgments. The exporter never mutates either source and never uses analysis findings to repair or
+rerun acquisition.
+
+By default schema 0.2 is published under:
+
+```text
+~/acmm_generated/exports/<experiment_id>/campaign_<campaign_id>/merge_<merge_id>/
+├── planned_runs.csv
+├── runs.csv
+├── judgments.csv
+└── export_manifest.yaml
+```
+
+`planned_runs.csv` contains exactly one row per frozen Campaign logical slot, including slots with no
+realized attempt in a partial campaign. `runs.csv` contains realized attempts across Campaign
+executions. `source_selected` preserves the source-execution selection while `selected` identifies
+the observation accepted by the chosen merge. Selected observations use the merged Run Record as the
+authoritative judgment source; non-selected attempts retain their recorded source judgments.
+
+The exporter verifies that the merge belongs to the supplied Campaign and binds the Campaign ID,
+experiment ID, design digest, package/Contract provenance, Campaign-manifest hash, population, source
+execution artifacts, source Run Record hashes, merged Run Record hashes, and optional adjudication
+provenance. A mismatch is fatal rather than reconciled heuristically.
 
 ## Validation gate
 
