@@ -88,7 +88,7 @@ versioned CSV inputs have been produced.
 
 The mechanical export boundary is now implemented by the scoped `acmm export run` and
 `acmm export campaign` commands. `export run` preserves the existing completed-execution schema 0.1
-path. `export campaign` adds schema 0.2 and validates a frozen Campaign together with one immutable
+path. `export campaign` uses schema 0.3 (with legacy schema 0.2 still readable) and validates a frozen Campaign together with one immutable
 merge so acquisition history and final adjudicated observations remain distinct but jointly
 traceable.
 
@@ -112,8 +112,8 @@ separate from `src/acmm` and consumes only deterministic export artifacts.
 
 The loader dispatches by export schema and verifies the manifest, CSV SHA-256 values, exact table
 columns, typed field syntax, retry/selection consistency, run-to-judgment bindings, and population
-completeness before an estimator is allowed to run. Schema 0.1 retains the execution path; schema 0.2
-adds an explicit Campaign planned-run table so an unattempted logical slot remains visible in the
+completeness before an estimator is allowed to run. Schema 0.1 retains the execution path; Campaign schemas 0.2/0.3
+add an explicit Campaign planned-run table so an unattempted logical slot remains visible in the
 denominator. Invalid/non-selected attempts remain available as diagnostics but are not part of the
 selected valid statistical population.
 
@@ -139,7 +139,7 @@ only as an explicitly opted-in independent-binomial opportunity baseline.
 Dimension-level `S_D` aggregation is implemented separately from the requirement-level estimators.
 Hierarchical dimension uncertainty resamples scenario/run clusters jointly across the requirements in
 one dimension, recomputes requirement estimands inside each replicate, and then recomputes `S_D`.
-Hypothesis tests, statistical models, plots, and custom requirement weights remain outside the current
+Hypothesis tests, fitted statistical models, semantic tool-action interpretation, and custom requirement weights remain outside the current
 analysis scope.
 
 See `analysis/r/README.md` for setup, validation rules, estimators, and uncertainty commands.

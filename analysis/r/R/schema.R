@@ -1,6 +1,11 @@
 acmmExportSchemaVersion <- "0.1"
-acmmCampaignExportSchemaVersion <- "0.2"
-acmmExportSchemaVersions <- c(acmmExportSchemaVersion, acmmCampaignExportSchemaVersion)
+acmmCampaignExportSchemaVersion <- "0.3"
+acmmCampaignLegacyExportSchemaVersion <- "0.2"
+acmmCampaignExportSchemaVersions <- c(
+    acmmCampaignLegacyExportSchemaVersion,
+    acmmCampaignExportSchemaVersion
+)
+acmmExportSchemaVersions <- c(acmmExportSchemaVersion, acmmCampaignExportSchemaVersions)
 
 acmmRunColumns <- c(
     "export_schema_version",
@@ -190,3 +195,63 @@ acmmCampaignJudgmentColumns <- c(
     "detail",
     "judgment_source"
 )
+
+acmmCampaignToolCallColumns <- c(
+    "export_schema_version",
+    "campaign_id",
+    "experiment_id",
+    "design_digest",
+    "contract_sha256",
+    "package_sha256",
+    "source_execution_id",
+    "source_execution_order",
+    "source_attempt",
+    "attempt",
+    "source_selected",
+    "selected",
+    "logical_run_id",
+    "run_index",
+    "run_id",
+    "subject_id",
+    "scenario_id",
+    "repetition",
+    "validity",
+    "termination",
+    "call_index",
+    "call_id",
+    "tool_name",
+    "transport_name",
+    "input_json",
+    "timestamp"
+)
+
+acmmCampaignToolResultColumns <- c(
+    "export_schema_version",
+    "campaign_id",
+    "experiment_id",
+    "design_digest",
+    "contract_sha256",
+    "package_sha256",
+    "source_execution_id",
+    "source_execution_order",
+    "source_attempt",
+    "attempt",
+    "source_selected",
+    "selected",
+    "logical_run_id",
+    "run_index",
+    "run_id",
+    "subject_id",
+    "scenario_id",
+    "repetition",
+    "validity",
+    "termination",
+    "result_index",
+    "tool_call_id",
+    "tool_name",
+    "transport_name",
+    "output",
+    "is_error",
+    "timestamp"
+)
+

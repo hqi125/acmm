@@ -12,6 +12,8 @@ acmm_analysis_source_order <- function()
         "uncertainty.R",
         "availability.R",
         "interaction.R",
+        "trajectory.R",
+        "plots.R",
         "reporting.R"
     )
 }

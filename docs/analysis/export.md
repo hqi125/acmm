@@ -17,7 +17,7 @@ Execution export (schema 0.1):
 acmm export run ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
 ```
 
-Campaign export (schema 0.2):
+Campaign export (schema 0.3):
 
 ```text
 acmm export campaign \
@@ -46,13 +46,15 @@ accepted observation for each logical run and, when adjudication was selected, t
 judgments. The exporter never mutates either source and never uses analysis findings to repair or
 rerun acquisition.
 
-By default schema 0.2 is published under:
+By default schema 0.3 is published under:
 
 ```text
 ~/acmm_generated/exports/<experiment_id>/campaign_<campaign_id>/merge_<merge_id>/
 ├── planned_runs.csv
 ├── runs.csv
 ├── judgments.csv
+├── tool_calls.csv
+├── tool_results.csv
 └── export_manifest.yaml
 ```
 
@@ -61,6 +63,14 @@ realized attempt in a partial campaign. `runs.csv` contains realized attempts ac
 executions. `source_selected` preserves the source-execution selection while `selected` identifies
 the observation accepted by the chosen merge. Selected observations use the merged Run Record as the
 authoritative judgment source; non-selected attempts retain their recorded source judgments.
+
+Schema 0.3 additionally normalizes the acquisition-time `tool_calls` and `tool_results` evidence
+artifacts for every persisted Campaign attempt, including non-selected/invalid retry history. The two
+tables preserve stable run/attempt identity, tool names, transport names when available, call/result
+IDs, canonical call input JSON, result text/error markers, and recorded timestamps. These are
+descriptive trajectory facts; export does not infer recovery, verification, mutation, redundancy, or
+other semantic labels. Campaign export schema 0.2 remains readable by the R loader for previously
+published exports, but trajectory analysis requires a fresh schema-0.3 export.
 
 The exporter verifies that the merge belongs to the supplied Campaign and binds the Campaign ID,
 experiment ID, design digest, package/Contract provenance, Campaign-manifest hash, population, source
@@ -146,9 +156,9 @@ order, and Run Record judgment order. CSV uses a fixed UTF-8/LF representation; 
 are written as `true`/`false`; structured cells use canonical compact JSON.
 
 `export_manifest.yaml` contains no generation timestamp. It records the source execution
-identity/hash plus row counts and SHA-256 digests for both CSV tables. Re-exporting the same
+identity/hash plus row counts and SHA-256 digests for every published CSV table. Re-exporting the same
 unchanged completed execution to a different empty output root therefore produces identical
-`runs.csv`, `judgments.csv`, and `export_manifest.yaml` bytes.
+`runs.csv`, `judgments.csv`, and `export_manifest.yaml` bytes for schema 0.1; Campaign schema 0.3 applies the same deterministic publication rule to all five CSV tables.
 
 ## Statistical boundary
 

@@ -2197,6 +2197,14 @@ def _run_export_campaign(args: argparse.Namespace) -> int:
         f"  judgments:        {result.judgments_path} "
         f"({result.judgment_rows} row(s))"
     )
+    print(
+        f"  tool calls:       {result.tool_calls_path} "
+        f"({result.tool_call_rows} row(s))"
+    )
+    print(
+        f"  tool results:     {result.tool_results_path} "
+        f"({result.tool_result_rows} row(s))"
+    )
     print(f"  manifest:         {result.manifest_path}")
     return 0
 

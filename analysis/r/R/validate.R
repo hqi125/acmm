@@ -526,7 +526,7 @@ acmm_validate_export_manifest <- function(manifest, exportDir)
         binding$schema_version <- version
         return(binding)
     }
-    if (identical(version, acmmCampaignExportSchemaVersion))
+    if (version %in% acmmCampaignExportSchemaVersions)
     {
         return(acmm_validate_campaign_export_manifest(manifest, exportDir))
     }
@@ -541,11 +541,12 @@ acmm_validate_export_manifest <- function(manifest, exportDir)
 
 acmm_validate_campaign_export_manifest <- function(manifest, exportDir)
 {
+    version <- as.character(manifest$schema_version)
     acmm_assert(
-        identical(as.character(manifest$schema_version), acmmCampaignExportSchemaVersion),
+        version %in% acmmCampaignExportSchemaVersions,
         paste0(
-            "Campaign export manifest schema_version must be '",
-            acmmCampaignExportSchemaVersion, "'."
+            "Campaign export manifest schema_version must be one of: ",
+            paste(acmmCampaignExportSchemaVersions, collapse = ", "), "."
         ),
         "acmm_schema_error"
     )
@@ -611,6 +612,10 @@ acmm_validate_campaign_export_manifest <- function(manifest, exportDir)
     )
 
     expectedTables <- c("planned_runs", "runs", "judgments")
+    if (identical(version, acmmCampaignExportSchemaVersion))
+    {
+        expectedTables <- c(expectedTables, "tool_calls", "tool_results")
+    }
     for (tableName in expectedTables)
     {
         tableInfo <- manifest$tables[[tableName]]
@@ -653,7 +658,7 @@ acmm_validate_campaign_export_manifest <- function(manifest, exportDir)
 
     list(
         source_kind = "campaign",
-        schema_version = acmmCampaignExportSchemaVersion,
+        schema_version = version,
         campaign_id = campaignId,
         merge_id = mergeId,
         experiment_id = experimentId,
@@ -677,7 +682,7 @@ acmm_validate_campaign_planned_run_table <- function(planned, binding)
         return(planned)
     }
     acmm_assert(
-        all(planned$export_schema_version == acmmCampaignExportSchemaVersion),
+        all(planned$export_schema_version == binding$schema_version),
         "planned_runs.csv export_schema_version does not match the Campaign export schema.",
         "acmm_schema_error"
     )
@@ -740,7 +745,7 @@ acmm_validate_campaign_run_table <- function(runs, planned, binding)
         return(runs)
     }
     acmm_assert(
-        all(runs$export_schema_version == acmmCampaignExportSchemaVersion),
+        all(runs$export_schema_version == binding$schema_version),
         "runs.csv export_schema_version does not match the Campaign export schema.",
         "acmm_schema_error"
     )
@@ -876,7 +881,7 @@ acmm_validate_campaign_judgment_table <- function(judgments, runs, binding)
         return(judgments)
     }
     acmm_assert(
-        all(judgments$export_schema_version == acmmCampaignExportSchemaVersion),
+        all(judgments$export_schema_version == binding$schema_version),
         "judgments.csv export_schema_version does not match the Campaign export schema.",
         "acmm_schema_error"
     )
@@ -954,3 +959,163 @@ acmm_validate_campaign_judgment_table <- function(judgments, runs, binding)
     )
     judgments
 }
+
+acmm_validate_campaign_tool_identity <- function(table, runs, binding, tableName)
+{
+    if (nrow(table) == 0)
+    {
+        return(table)
+    }
+    acmm_assert(
+        all(table$export_schema_version == binding$schema_version),
+        paste0(tableName, " export_schema_version does not match the Campaign export schema."),
+        "acmm_schema_error"
+    )
+    identityChecks <- list(
+        campaign_id = binding$campaign_id,
+        experiment_id = binding$experiment_id,
+        design_digest = binding$design_digest,
+        contract_sha256 = binding$contract_sha256,
+        package_sha256 = binding$package_sha256
+    )
+    for (columnName in names(identityChecks))
+    {
+        acmm_assert(
+            all(table[[columnName]] == identityChecks[[columnName]]),
+            paste0(tableName, " column '", columnName, "' does not match export_manifest.yaml."),
+            "acmm_integrity_error"
+        )
+    }
+    table$source_execution_order <- acmm_parse_integer(
+        table$source_execution_order,
+        "source_execution_order",
+        1
+    )
+    table$source_attempt <- acmm_parse_integer(table$source_attempt, "source_attempt", 1)
+    table$attempt <- acmm_parse_integer(table$attempt, "attempt", 1)
+    table$source_selected <- acmm_parse_boolean(table$source_selected, "source_selected")
+    table$selected <- acmm_parse_boolean(table$selected, "selected")
+    table$run_index <- acmm_parse_integer(table$run_index, "run_index", 0)
+    table$repetition <- acmm_parse_integer(table$repetition, "repetition", 1)
+    acmm_validate_uuid(table$run_id, paste0(tableName, " run_id"))
+    acmm_validate_identifier(table$logical_run_id, paste0(tableName, " logical_run_id"))
+    acmm_validate_identifier(table$subject_id, paste0(tableName, " subject_id"))
+    acmm_validate_identifier(table$scenario_id, paste0(tableName, " scenario_id"))
+    acmm_assert(
+        all(nzchar(table$tool_name)),
+        paste0(tableName, " tool_name must be non-empty."),
+        "acmm_schema_error"
+    )
+    acmm_assert(
+        all(table$validity %in% acmmValidityValues),
+        paste0(tableName, " contains an unknown validity value."),
+        "acmm_schema_error"
+    )
+    acmm_assert(
+        all(table$termination %in% acmmTerminationValues),
+        paste0(tableName, " contains an unknown termination value."),
+        "acmm_schema_error"
+    )
+
+    runLookup <- match(table$run_id, runs$run_id)
+    acmm_assert(
+        all(!is.na(runLookup)),
+        paste0(tableName, " references a run_id absent from runs.csv."),
+        "acmm_integrity_error"
+    )
+    bindingColumns <- c(
+        "source_execution_id", "source_execution_order", "source_attempt", "attempt",
+        "source_selected", "selected", "logical_run_id", "run_index", "subject_id",
+        "scenario_id", "repetition", "validity", "termination"
+    )
+    for (columnName in bindingColumns)
+    {
+        acmm_assert(
+            identical(table[[columnName]], runs[[columnName]][runLookup]),
+            paste0(tableName, " column '", columnName, "' does not agree with runs.csv."),
+            "acmm_integrity_error"
+        )
+    }
+    table
+}
+
+acmm_validate_campaign_tool_call_table <- function(toolCalls, runs, binding)
+{
+    toolCalls <- acmm_validate_campaign_tool_identity(
+        toolCalls,
+        runs,
+        binding,
+        "tool_calls.csv"
+    )
+    if (nrow(toolCalls) == 0)
+    {
+        return(toolCalls)
+    }
+    toolCalls$call_index <- acmm_parse_integer(toolCalls$call_index, "call_index", 1)
+    for (value in toolCalls$input_json)
+    {
+        validJson <- tryCatch(
+            {
+                jsonlite::fromJSON(value, simplifyVector = FALSE)
+                TRUE
+            },
+            error = function(error) FALSE
+        )
+        acmm_assert(
+            validJson,
+            "tool_calls.csv input_json contains invalid JSON.",
+            "acmm_schema_error"
+        )
+    }
+    runGroups <- split(seq_len(nrow(toolCalls)), toolCalls$run_id, drop = TRUE)
+    for (rows in runGroups)
+    {
+        rows <- rows[order(toolCalls$call_index[rows])]
+        acmm_assert(
+            all(toolCalls$call_index[rows] == seq_len(length(rows))),
+            "tool_calls.csv call_index must be contiguous from 1 within each run.",
+            "acmm_integrity_error"
+        )
+    }
+    keys <- paste(toolCalls$run_id, toolCalls$call_index, sep = "\037")
+    acmm_assert(
+        !anyDuplicated(keys),
+        "tool_calls.csv contains duplicate run_id/call_index pairs.",
+        "acmm_integrity_error"
+    )
+    toolCalls
+}
+
+acmm_validate_campaign_tool_result_table <- function(toolResults, runs, binding)
+{
+    toolResults <- acmm_validate_campaign_tool_identity(
+        toolResults,
+        runs,
+        binding,
+        "tool_results.csv"
+    )
+    if (nrow(toolResults) == 0)
+    {
+        return(toolResults)
+    }
+    toolResults$result_index <- acmm_parse_integer(toolResults$result_index, "result_index", 1)
+    toolResults$is_error <- acmm_parse_boolean(toolResults$is_error, "is_error")
+    runGroups <- split(seq_len(nrow(toolResults)), toolResults$run_id, drop = TRUE)
+    for (rows in runGroups)
+    {
+        rows <- rows[order(toolResults$result_index[rows])]
+        acmm_assert(
+            all(toolResults$result_index[rows] == seq_len(length(rows))),
+            "tool_results.csv result_index must be contiguous from 1 within each run.",
+            "acmm_integrity_error"
+        )
+    }
+    keys <- paste(toolResults$run_id, toolResults$result_index, sep = "\037")
+    acmm_assert(
+        !anyDuplicated(keys),
+        "tool_results.csv contains duplicate run_id/result_index pairs.",
+        "acmm_integrity_error"
+    )
+    toolResults
+}
+

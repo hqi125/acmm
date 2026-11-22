@@ -587,20 +587,20 @@ See `docs/runtime/experiment_execution.md` for the acquisition and retry semanti
 
 ## Analysis-ready CSV export
 
-A completed execution can now be projected into deterministic downstream analysis tables:
+Immediate executions and durable Campaigns have separate deterministic export scopes:
 
 ```text
-acmm export ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
+acmm export run ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
+
+acmm export campaign \
+    ~/acmm_generated/<experiment_id>/campaign_<campaign_id> \
+    ~/acmm_generated/<experiment_id>/campaign_<campaign_id>/merged/merge_<merge_id>
 ```
 
-The default output is separate from canonical results:
-
-```text
-~/acmm_generated/exports/<experiment_id>/execution_<execution_id>/
-├── runs.csv
-├── judgments.csv
-└── export_manifest.yaml
-```
+The default output is separate from canonical results. Run export schema 0.1 preserves the original
+`runs.csv`/`judgments.csv` interchange. Campaign export schema 0.3 adds `planned_runs.csv` plus
+normalized `tool_calls.csv`/`tool_results.csv`, while using the immutable merge as the authoritative
+final-judgment view and the Campaign as the acquisition-history source.
 
 `runs.csv` preserves every realized attempt, including invalid retries, and marks the selected
 scientifically valid attempt explicitly. `judgments.csv` preserves recorded opportunity outcomes
@@ -631,9 +631,10 @@ planned-slot acquisition, first-attempt/retry behavior, scenario/position imbala
 availability intervals, and explicit missing-outcome sensitivity envelopes.
 Requirement-level grouping is the default. The current analysis layer also implements
 scenario-to-run hierarchical bootstrap intervals, explicit dimension-level `S_D` scores with
-arithmetic, geometric, harmonic, and minimum aggregation, and hierarchical uncertainty propagated
-through those dimension scores. Hypothesis tests, statistical models, plots, and custom requirement
-weights remain later analysis stages.
+arithmetic, geometric, harmonic, and minimum aggregation, hierarchical uncertainty propagated
+through those dimension scores, generic normalized tool-trajectory summaries, and selectable
+base-R PNG/PDF figures. Hypothesis tests, fitted statistical models, semantic tool-action
+interpretation, and custom requirement weights remain later analysis stages.
 
 Run the R regression suite with:
 
@@ -855,17 +856,21 @@ See `infrastructure/README.md`, `docs/integration/agent_integration.md`, and the
 
 ## Analysis workflow
 
-Completed executions remain exportable and analyzable independently of package ownership:
+Completed executions and Campaigns remain exportable and analyzable independently of package
+ownership:
 
 ```text
-acmm export ~/acmm_generated/results/<experiment-id>/execution_<uuid>
+acmm export run ~/acmm_generated/results/<experiment-id>/execution_<uuid>
 python tools/analyze_execution.py ~/acmm_generated/results/<experiment-id>/execution_<uuid>
+
+acmm export campaign <campaign-dir> <merge-dir>
+acmm analyze <campaign-export-dir> --plan analysis/plans/standard_v0_2.yaml
 ```
 
-The general analysis pipeline owns normalized export, availability, requirement estimates,
-uncertainty, and GOBPFR dimension aggregation. Experiment-specific analyses belong to Experiment
-Packages or explicit package-owned analysis configuration. Core retains reusable statistical
-capabilities, including generic interaction-analysis support, without registering historical studies
-by experiment ID.
+The general Core analysis pipeline owns normalized export, availability, requirement estimates,
+uncertainty, GOBPFR dimension aggregation, generic interaction analysis, normalized tool-trajectory
+summaries, and selectable R-rendered figures. Experiment/study specificity is expressed through
+downstream data and versioned analysis configuration rather than experiment-specific executable
+analysis code or experiment-ID registrations in Core.
 
 See `docs/analysis/`, `analysis/r/README.md`, and `tools/README.md`.

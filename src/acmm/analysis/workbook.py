@@ -655,7 +655,10 @@ def _write_metadata_sheet(
         ("generated_at_utc", datetime.now(timezone.utc).isoformat()),
         ("workbook_generator", "acmm.analysis.workbook"),
         ("export_schema_version", str(manifest.get("schema_version", ""))),
+        ("source_kind", str(source.get("kind", "run"))),
         ("execution_id", str(source.get("execution_id", ""))),
+        ("campaign_id", str(source.get("campaign_id", ""))),
+        ("merge_id", str(source.get("merge_id", ""))),
         ("experiment_id", str(source.get("experiment_id", ""))),
         ("contract_sha256", str(source.get("contract_sha256", ""))),
         ("runs_rows", str(_nested_value(table_meta, "runs", "rows"))),
@@ -720,14 +723,21 @@ def _write_overview_sheet(
     worksheet.merge_range("A1:H2", "ACMM Analysis Report", formats["title"])
 
     source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
-    execution_id = str(source.get("execution_id", ""))
     experiment_id = str(source.get("experiment_id", ""))
     contract_sha = str(source.get("contract_sha256", ""))
 
     population_summary = tables["Population Summary"]
     population = population_summary.rows[0] if population_summary.rows else {}
+    source_rows: tuple[tuple[str, str], ...]
+    if source.get("kind") == "campaign":
+        source_rows = (
+            ("Campaign", str(source.get("campaign_id", ""))),
+            ("Merge", str(source.get("merge_id", ""))),
+        )
+    else:
+        source_rows = (("Execution", str(source.get("execution_id", ""))),)
     metadata_rows = (
-        ("Execution", execution_id),
+        *source_rows,
         ("Experiment", experiment_id),
         ("Contract SHA-256", contract_sha),
         ("Population policy", population.get("population_policy", "")),
@@ -743,7 +753,7 @@ def _write_overview_sheet(
         worksheet.write(offset, 0, label, formats["label"])
         worksheet.merge_range(offset, 1, offset, 7, value, formats["value"])
 
-    worksheet.merge_range("A11:B11", "Execution / Judgment Summary", formats["section"])
+    worksheet.merge_range("A11:B11", "Run / Judgment Summary", formats["section"])
     summary_specs = (
         ("Resolved valid runs", '=COUNTIF(RunsTable[selected],"true")', _selected_run_count(tables["Runs"]), "kpi"),
         ("Completed runs", '=COUNTIF(RunsTable[termination],"agent_completed")', _run_value_count(tables["Runs"], "termination", "agent_completed"), "kpi"),
@@ -806,47 +816,6 @@ def _write_overview_sheet(
                 cached,
             )
 
-    duration_chart = workbook.add_chart({"type": "column"})
-    duration_chart.add_series(
-        {
-            "name": "Mean run duration (seconds)",
-            "categories": ["Overview", 22, 0, 21 + len(subjects), 0],
-            "values": ["Overview", 22, 1, 21 + len(subjects), 1],
-            "fill": {"color": "#5B9BD5"},
-            "border": {"none": True},
-        }
-    )
-    duration_chart.set_title({"name": "Mean Run Duration by Subject"})
-    duration_chart.set_y_axis({"name": "Seconds", "major_gridlines": {"visible": True}})
-    duration_chart.set_legend({"none": True})
-    duration_chart.set_style(10)
-    worksheet.insert_chart("J3", duration_chart, {"x_scale": 1.1, "y_scale": 1.05})
-
-    score_chart = workbook.add_chart({"type": "column"})
-
-    for row_offset, subject in enumerate(subjects, start=12):
-        score_chart.add_series(
-            {
-                "name": ["Overview", row_offset, 3],
-                "categories": ["Overview", 11, 4, 11, 3 + len(dimensions)],
-                "values": ["Overview", row_offset, 4, row_offset, 3 + len(dimensions)],
-            }
-        )
-
-    score_chart.set_title({"name": "Arithmetic Dimension Scores"})
-    score_chart.set_y_axis(
-        {
-            "name": "S_D",
-            "min": 0,
-            "max": 1,
-            "num_format": "0%",
-            "major_gridlines": {"visible": True},
-        }
-    )
-    score_chart.set_legend({"position": "bottom"})
-    score_chart.set_style(10)
-    worksheet.insert_chart("J20", score_chart, {"x_scale": 1.1, "y_scale": 1.05})
-
     note_start = max(27, 23 + len(subjects))
     worksheet.merge_range(
         note_start,
@@ -862,7 +831,7 @@ def _write_overview_sheet(
         "Read compliance estimates together with coverage; perfect compliance can coexist with incomplete adjudication coverage.",
         "A percentile bootstrap interval of [1, 1] at the empirical boundary means no failures appeared in the observed resamples; it is not proof of literal certainty.",
         "Dimension intervals recompute requirement estimates and S_D inside every hierarchical scenario-to-run bootstrap replicate, preserving dependence among requirements.",
-        "This workbook is a presentation layer. Normalized CSV analysis outputs and the export manifest remain the direct analysis artifacts; canonical experiment records remain the source of truth.",
+        "This workbook is a tabular presentation layer. Selectable figures are rendered by the R analysis modules as external PNG/PDF artifacts; normalized CSV outputs and the export manifest remain the direct analysis artifacts.",
     )
 
     for offset, note in enumerate(notes, start=note_start + 1):

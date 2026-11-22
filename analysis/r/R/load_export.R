@@ -152,6 +152,23 @@ load_acmm_campaign_export <- function(
         acmmCampaignJudgmentColumns,
         "judgments.csv"
     )
+    toolCalls <- NULL
+    toolResults <- NULL
+    if (identical(binding$schema_version, acmmCampaignExportSchemaVersion))
+    {
+        toolCallsPath <- file.path(exportDir, "tool_calls.csv")
+        toolResultsPath <- file.path(exportDir, "tool_results.csv")
+        toolCalls <- acmm_read_csv_character(
+            toolCallsPath,
+            acmmCampaignToolCallColumns,
+            "tool_calls.csv"
+        )
+        toolResults <- acmm_read_csv_character(
+            toolResultsPath,
+            acmmCampaignToolResultColumns,
+            "tool_results.csv"
+        )
+    }
 
     expectedPlannedRows <- acmm_manifest_integer(
         manifest$tables$planned_runs,
@@ -179,10 +196,38 @@ load_acmm_campaign_export <- function(
         "judgments.csv row count does not match export_manifest.yaml.",
         "acmm_integrity_error"
     )
+    if (!is.null(toolCalls))
+    {
+        expectedToolCallRows <- acmm_manifest_integer(
+            manifest$tables$tool_calls,
+            "rows",
+            "tables.tool_calls"
+        )
+        expectedToolResultRows <- acmm_manifest_integer(
+            manifest$tables$tool_results,
+            "rows",
+            "tables.tool_results"
+        )
+        acmm_assert(
+            nrow(toolCalls) == expectedToolCallRows,
+            "tool_calls.csv row count does not match export_manifest.yaml.",
+            "acmm_integrity_error"
+        )
+        acmm_assert(
+            nrow(toolResults) == expectedToolResultRows,
+            "tool_results.csv row count does not match export_manifest.yaml.",
+            "acmm_integrity_error"
+        )
+    }
 
     planned <- acmm_validate_campaign_planned_run_table(planned, binding)
     runs <- acmm_validate_campaign_run_table(runs, planned, binding)
     judgments <- acmm_validate_campaign_judgment_table(judgments, runs, binding)
+    if (!is.null(toolCalls))
+    {
+        toolCalls <- acmm_validate_campaign_tool_call_table(toolCalls, runs, binding)
+        toolResults <- acmm_validate_campaign_tool_result_table(toolResults, runs, binding)
+    }
 
     completeSelection <- binding$planned_run_count == binding$resolved_run_count
     if (requireCompleteSelection)
@@ -205,6 +250,8 @@ load_acmm_campaign_export <- function(
             planned_runs = planned,
             runs = runs,
             judgments = judgments,
+            tool_calls = toolCalls,
+            tool_results = toolResults,
             complete_selection = completeSelection,
             population_policy = populationPolicy
         ),
@@ -241,7 +288,7 @@ load_acmm_export <- function(
             populationPolicy = populationPolicy
         ))
     }
-    if (identical(version, acmmCampaignExportSchemaVersion))
+    if (version %in% acmmCampaignExportSchemaVersions)
     {
         return(load_acmm_campaign_export(
             exportDir,

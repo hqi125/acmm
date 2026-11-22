@@ -367,3 +367,35 @@ def test_build_availability_workbook_accepts_explicit_analysis_root(
     assert result.output_path == output_path
     assert output_path.is_file()
 
+
+
+def test_campaign_availability_workbook_overview_uses_campaign_and_merge_identity(
+    tmp_path: Path,
+) -> None:
+    export_dir = tmp_path / "campaign_export"
+    _write_fixture(export_dir)
+    manifest_path = export_dir / "export_manifest.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["schema_version"] = "0.3"
+    manifest["source"] = {
+        "kind": "campaign",
+        "campaign_id": "campaign_fixture",
+        "merge_id": "merge_fixture",
+        "experiment_id": "example_experiment_v1",
+        "contract_sha256": "a" * 64,
+    }
+    manifest_path.write_text(
+        yaml.safe_dump(manifest, sort_keys=False),
+        encoding="utf-8",
+        newline="",
+    )
+    output_path = export_dir / "analysis_output" / "availability_analysis.xlsx"
+
+    build_availability_workbook(export_dir, output_path)
+
+    with zipfile.ZipFile(output_path) as archive:
+        shared_strings = archive.read("xl/sharedStrings.xml").decode("utf-8")
+    assert "Campaign" in shared_strings
+    assert "campaign_fixture" in shared_strings
+    assert "Merge" in shared_strings
+    assert "merge_fixture" in shared_strings

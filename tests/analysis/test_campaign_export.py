@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 
 import pytest
@@ -26,7 +27,11 @@ from acmm.runtime.interfaces import (
     judgment_result,
 )
 from acmm.runtime.registry import execution_registry
-from experiment_package.support import install_test_package
+from experiment_package.support import (
+    PACKAGE_SMOKE_CONTRACT,
+    SMOKE_RUNTIME_SOURCE,
+    install_test_package,
+)
 
 
 class _adapter:
@@ -69,6 +74,73 @@ class _retry_adapter(_adapter):
                 ),
             )
         return super().execute(subject, scenario, environment, termination)
+
+
+class _tool_adapter(_adapter):
+    def execute(self, subject, scenario, environment, termination):
+        del scenario
+        del environment
+        del termination
+        calls = [
+            {
+                "id": "call-1",
+                "name": "read_item",
+                "input": {"path": "a.txt"},
+                "timestamp": "2026-01-01T00:00:00Z",
+            },
+            {
+                "id": "call-2",
+                "name": "write_item",
+                "transport_name": "bridge",
+                "input": {"path": "b.txt", "value": 2},
+                "timestamp": "2026-01-01T00:00:01Z",
+            },
+        ]
+        results = [
+            {
+                "id": "call-1",
+                "name": "read_item",
+                "output": "ok",
+                "is_error": False,
+                "timestamp": "2026-01-01T00:00:00Z",
+            },
+            {
+                "id": "call-2",
+                "name": "write_item",
+                "transport_name": "bridge",
+                "output": "rejected",
+                "is_error": True,
+                "timestamp": "2026-01-01T00:00:01Z",
+            },
+        ]
+        return adapter_execution_result(
+            termination="agent_completed",
+            evidence=(
+                captured_evidence(
+                    id="tool_calls",
+                    channel="tool_calls",
+                    artifact="evidence/tool_calls.json",
+                    content=json.dumps(calls, sort_keys=True).encode("utf-8"),
+                ),
+                captured_evidence(
+                    id="tool_results",
+                    channel="tool_results",
+                    artifact="evidence/tool_results.json",
+                    content=json.dumps(results, sort_keys=True).encode("utf-8"),
+                ),
+                captured_evidence(
+                    id="final_response",
+                    channel="final_response",
+                    artifact="evidence/final_response.txt",
+                    content=b"ok",
+                ),
+            ),
+            subject_provenance={
+                "agent": dict(subject["agent"]),
+                "model": dict(subject["model"]),
+                "configuration": dict(subject.get("configuration", {})),
+            },
+        )
 
 
 class _compliant:
@@ -186,7 +258,7 @@ def test_campaign_export_combines_campaign_history_and_merge_population(
     assert all(row["outcome"] == "compliant" for row in judgments)
     assert all(row["judgment_source"] == "merge" for row in judgments)
 
-    assert manifest["schema_version"] == "0.2"
+    assert manifest["schema_version"] == "0.3"
     assert manifest["source"]["kind"] == "campaign"
     assert manifest["source"]["campaign_id"] == "campaign-a"
     assert manifest["source"]["merge_id"] == "merge-a"
@@ -347,6 +419,68 @@ def test_campaign_export_preserves_unattempted_slots_in_partial_merge(
     }
 
 
+def test_campaign_export_normalizes_tool_trajectory_evidence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    contract = yaml.safe_load(PACKAGE_SMOKE_CONTRACT.read_text(encoding="utf-8"))
+    contract["evidence_policy"]["capture"] = [
+        "tool_calls",
+        "tool_results",
+        "final_response",
+    ]
+    contract_path = tmp_path / "tool-contract.yaml"
+    contract_path.write_text(
+        yaml.safe_dump(contract, sort_keys=False),
+        encoding="utf-8",
+        newline="",
+    )
+    runtime_source = SMOKE_RUNTIME_SOURCE.replace(
+        'frozenset({"final_response"})',
+        'frozenset({"final_response", "tool_calls", "tool_results"})',
+    )
+    package, _ = install_test_package(
+        tmp_path,
+        monkeypatch,
+        contract_path=contract_path,
+        runtime_source=runtime_source,
+    )
+    artifact = create_campaign(package, tmp_path / "generated", campaign_id="campaign-a")
+    runs = frozen_campaign_plan(artifact).runs
+    adapter = _tool_adapter()
+    registry = execution_registry(
+        subject_adapters={subject["id"]: adapter for subject in package.contract["subjects"]},
+        evaluators={"always_compliant": _compliant()},
+    )
+    _execute_runs(
+        artifact,
+        package,
+        runs[:1],
+        "execution-a",
+        registry=registry,
+    )
+    merged = create_campaign_merge(artifact, merge_id="merge-a", allow_partial=True)
+
+    result = export_campaign(artifact.path, merged.path, tmp_path / "exports")
+    calls = _read_csv(result.tool_calls_path)
+    results = _read_csv(result.tool_results_path)
+    manifest = yaml.safe_load(result.manifest_path.read_text(encoding="utf-8"))
+
+    assert result.tool_call_rows == 2
+    assert result.tool_result_rows == 2
+    assert [row["call_index"] for row in calls] == ["1", "2"]
+    assert [row["tool_name"] for row in calls] == ["read_item", "write_item"]
+    assert json.loads(calls[1]["input_json"]) == {"path": "b.txt", "value": 2}
+    assert calls[1]["transport_name"] == "bridge"
+    assert all(row["selected"] == "true" for row in calls)
+    assert [row["result_index"] for row in results] == ["1", "2"]
+    assert [row["tool_call_id"] for row in results] == ["call-1", "call-2"]
+    assert [row["is_error"] for row in results] == ["false", "true"]
+    assert manifest["tables"]["tool_calls"]["rows"] == 2
+    assert manifest["tables"]["tool_results"]["rows"] == 2
+
+
+
 def test_campaign_export_is_byte_deterministic_across_output_roots(
     tmp_path: Path,
     monkeypatch,
@@ -363,6 +497,8 @@ def test_campaign_export_is_byte_deterministic_across_output_roots(
     assert first.planned_runs_path.read_bytes() == second.planned_runs_path.read_bytes()
     assert first.runs_path.read_bytes() == second.runs_path.read_bytes()
     assert first.judgments_path.read_bytes() == second.judgments_path.read_bytes()
+    assert first.tool_calls_path.read_bytes() == second.tool_calls_path.read_bytes()
+    assert first.tool_results_path.read_bytes() == second.tool_results_path.read_bytes()
     assert first.manifest_path.read_bytes() == second.manifest_path.read_bytes()
 
 
@@ -409,8 +545,9 @@ def test_campaign_export_reports_coarse_progress_phases(
             f"with {len(runs)} accepted observation(s)..."
         ),
         "building deterministic analysis tables...",
+        "normalizing tool-call and tool-result trajectory evidence...",
         (
             f"publishing {len(runs)} planned-run, {len(runs)} attempt, "
-            f"and {len(runs)} judgment row(s)..."
+            f"{len(runs)} judgment, 0 tool-call, and 0 tool-result row(s)..."
         ),
     ]

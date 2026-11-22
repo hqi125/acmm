@@ -29,7 +29,7 @@ from acmm.record.loader import load_run_record, run_record_load_error
 from acmm.record.validator import sha256_file, validate_run_record
 
 
-CAMPAIGN_EXPORT_SCHEMA_VERSION = "0.2"
+CAMPAIGN_EXPORT_SCHEMA_VERSION = "0.3"
 
 PLANNED_RUN_COLUMNS = (
     "export_schema_version",
@@ -91,6 +91,65 @@ RUN_COLUMNS = (
     "authoritative_result_path",
 )
 
+TOOL_CALL_COLUMNS = (
+    "export_schema_version",
+    "campaign_id",
+    "experiment_id",
+    "design_digest",
+    "contract_sha256",
+    "package_sha256",
+    "source_execution_id",
+    "source_execution_order",
+    "source_attempt",
+    "attempt",
+    "source_selected",
+    "selected",
+    "logical_run_id",
+    "run_index",
+    "run_id",
+    "subject_id",
+    "scenario_id",
+    "repetition",
+    "validity",
+    "termination",
+    "call_index",
+    "call_id",
+    "tool_name",
+    "transport_name",
+    "input_json",
+    "timestamp",
+)
+
+TOOL_RESULT_COLUMNS = (
+    "export_schema_version",
+    "campaign_id",
+    "experiment_id",
+    "design_digest",
+    "contract_sha256",
+    "package_sha256",
+    "source_execution_id",
+    "source_execution_order",
+    "source_attempt",
+    "attempt",
+    "source_selected",
+    "selected",
+    "logical_run_id",
+    "run_index",
+    "run_id",
+    "subject_id",
+    "scenario_id",
+    "repetition",
+    "validity",
+    "termination",
+    "result_index",
+    "tool_call_id",
+    "tool_name",
+    "transport_name",
+    "output",
+    "is_error",
+    "timestamp",
+)
+
 JUDGMENT_COLUMNS = (
     "export_schema_version",
     "campaign_id",
@@ -133,10 +192,14 @@ class campaign_analysis_export_result:
     planned_runs_path: Path
     runs_path: Path
     judgments_path: Path
+    tool_calls_path: Path
+    tool_results_path: Path
     manifest_path: Path
     planned_run_rows: int
     run_rows: int
     judgment_rows: int
+    tool_call_rows: int
+    tool_result_rows: int
 
 
 @dataclass
@@ -260,17 +323,23 @@ def export_campaign(
     _report_progress(progress, "building deterministic analysis tables...")
     planned_rows = _build_planned_rows(identity, campaign, accepted)
     run_rows = [_build_run_row(identity, item) for item in _ordered_attempts(attempts)]
+    ordered_attempts = _ordered_attempts(attempts)
     judgment_rows = list(
         _build_judgment_rows(
             identity,
             contract,
-            _ordered_attempts(attempts),
+            ordered_attempts,
         )
     )
+    _report_progress(progress, "normalizing tool-call and tool-result trajectory evidence...")
+    tool_call_rows = list(_build_tool_call_rows(identity, ordered_attempts))
+    tool_result_rows = list(_build_tool_result_rows(identity, ordered_attempts))
 
     planned_bytes = _csv_bytes(PLANNED_RUN_COLUMNS, planned_rows)
     runs_bytes = _csv_bytes(RUN_COLUMNS, run_rows)
     judgments_bytes = _csv_bytes(JUDGMENT_COLUMNS, judgment_rows)
+    tool_calls_bytes = _csv_bytes(TOOL_CALL_COLUMNS, tool_call_rows)
+    tool_results_bytes = _csv_bytes(TOOL_RESULT_COLUMNS, tool_result_rows)
 
     _validate_directory_component("experiment ID", identity["experiment_id"])
     _validate_directory_component("campaign ID", identity["campaign_id"])
@@ -321,6 +390,16 @@ def export_campaign(
                 "rows": len(judgment_rows),
                 "sha256": _sha256_bytes(judgments_bytes),
             },
+            "tool_calls": {
+                "artifact": "tool_calls.csv",
+                "rows": len(tool_call_rows),
+                "sha256": _sha256_bytes(tool_calls_bytes),
+            },
+            "tool_results": {
+                "artifact": "tool_results.csv",
+                "rows": len(tool_result_rows),
+                "sha256": _sha256_bytes(tool_results_bytes),
+            },
         },
     }
     manifest_bytes = yaml.safe_dump(
@@ -332,7 +411,8 @@ def export_campaign(
         progress,
         (
             f"publishing {len(planned_rows)} planned-run, {len(run_rows)} attempt, "
-            f"and {len(judgment_rows)} judgment row(s)..."
+            f"{len(judgment_rows)} judgment, {len(tool_call_rows)} tool-call, and "
+            f"{len(tool_result_rows)} tool-result row(s)..."
         ),
     )
     _publish_export(
@@ -341,6 +421,8 @@ def export_campaign(
             "planned_runs.csv": planned_bytes,
             "runs.csv": runs_bytes,
             "judgments.csv": judgments_bytes,
+            "tool_calls.csv": tool_calls_bytes,
+            "tool_results.csv": tool_results_bytes,
             "export_manifest.yaml": manifest_bytes,
         },
     )
@@ -353,10 +435,14 @@ def export_campaign(
         planned_runs_path=output_dir / "planned_runs.csv",
         runs_path=output_dir / "runs.csv",
         judgments_path=output_dir / "judgments.csv",
+        tool_calls_path=output_dir / "tool_calls.csv",
+        tool_results_path=output_dir / "tool_results.csv",
         manifest_path=output_dir / "export_manifest.yaml",
         planned_run_rows=len(planned_rows),
         run_rows=len(run_rows),
         judgment_rows=len(judgment_rows),
+        tool_call_rows=len(tool_call_rows),
+        tool_result_rows=len(tool_result_rows),
     )
 
 
@@ -1219,6 +1305,163 @@ def _build_judgment_rows(
                 "detail": judgment.get("detail", ""),
                 "judgment_source": "merge" if item.selected else "source",
             }
+
+
+def _tool_identity_row(
+    identity: Mapping[str, str],
+    item: _campaign_attempt,
+) -> dict[str, Any]:
+    record = item.record
+    run = record["run"]
+    realized = record["execution"]
+    return {
+        "export_schema_version": CAMPAIGN_EXPORT_SCHEMA_VERSION,
+        "campaign_id": identity["campaign_id"],
+        "experiment_id": identity["experiment_id"],
+        "design_digest": identity["design_digest"],
+        "contract_sha256": identity["contract_sha256"],
+        "package_sha256": identity["package_sha256"],
+        "source_execution_id": item.source_execution_id,
+        "source_execution_order": item.source_execution_order,
+        "source_attempt": item.source_attempt,
+        "attempt": item.attempt,
+        "source_selected": item.source_selected,
+        "selected": item.selected,
+        "logical_run_id": item.logical_run_id,
+        "run_index": run["run_index"],
+        "run_id": run["id"],
+        "subject_id": run["subject_id"],
+        "scenario_id": run["scenario_id"],
+        "repetition": run["repetition"],
+        "validity": realized["validity"],
+        "termination": realized["termination"],
+    }
+
+
+def _build_tool_call_rows(
+    identity: Mapping[str, str],
+    attempts: Iterable[_campaign_attempt],
+) -> Iterable[dict[str, Any]]:
+    for item in attempts:
+        values = _load_tool_evidence(item, "tool_calls")
+        for call_index, value in enumerate(values, start=1):
+            name = value.get("name")
+            if not isinstance(name, str) or not name:
+                raise analysis_export_error(
+                    f"Tool-call evidence for run '{item.record['run']['id']}' contains an invalid name."
+                )
+            call_id = value.get("id")
+            if call_id is not None and not isinstance(call_id, str):
+                raise analysis_export_error(
+                    f"Tool-call evidence for run '{item.record['run']['id']}' contains a non-string id."
+                )
+            transport_name = value.get("transport_name", "")
+            if transport_name is None:
+                transport_name = ""
+            if not isinstance(transport_name, str):
+                raise analysis_export_error(
+                    f"Tool-call evidence for run '{item.record['run']['id']}' contains an invalid transport_name."
+                )
+            row = _tool_identity_row(identity, item)
+            row.update(
+                {
+                    "call_index": call_index,
+                    "call_id": call_id or "",
+                    "tool_name": name,
+                    "transport_name": transport_name,
+                    "input_json": _json_cell(value.get("input", {})),
+                    "timestamp": _timestamp_cell(value.get("timestamp")),
+                }
+            )
+            yield row
+
+
+def _build_tool_result_rows(
+    identity: Mapping[str, str],
+    attempts: Iterable[_campaign_attempt],
+) -> Iterable[dict[str, Any]]:
+    for item in attempts:
+        values = _load_tool_evidence(item, "tool_results")
+        for result_index, value in enumerate(values, start=1):
+            name = value.get("name")
+            if not isinstance(name, str) or not name:
+                raise analysis_export_error(
+                    f"Tool-result evidence for run '{item.record['run']['id']}' contains an invalid name."
+                )
+            call_id = value.get("id")
+            if call_id is not None and not isinstance(call_id, str):
+                raise analysis_export_error(
+                    f"Tool-result evidence for run '{item.record['run']['id']}' contains a non-string id."
+                )
+            transport_name = value.get("transport_name", "")
+            if transport_name is None:
+                transport_name = ""
+            if not isinstance(transport_name, str):
+                raise analysis_export_error(
+                    f"Tool-result evidence for run '{item.record['run']['id']}' contains an invalid transport_name."
+                )
+            output = value.get("output", "")
+            if not isinstance(output, str):
+                raise analysis_export_error(
+                    f"Tool-result evidence for run '{item.record['run']['id']}' contains a non-string output."
+                )
+            is_error = value.get("is_error")
+            if not isinstance(is_error, bool):
+                raise analysis_export_error(
+                    f"Tool-result evidence for run '{item.record['run']['id']}' contains a non-boolean is_error."
+                )
+            row = _tool_identity_row(identity, item)
+            row.update(
+                {
+                    "result_index": result_index,
+                    "tool_call_id": call_id or "",
+                    "tool_name": name,
+                    "transport_name": transport_name,
+                    "output": output,
+                    "is_error": is_error,
+                    "timestamp": _timestamp_cell(value.get("timestamp")),
+                }
+            )
+            yield row
+
+
+def _load_tool_evidence(item: _campaign_attempt, channel: str) -> list[dict[str, Any]]:
+    matches = [
+        entry
+        for entry in item.record.get("evidence", ())
+        if isinstance(entry, Mapping) and entry.get("channel") == channel
+    ]
+    if not matches:
+        return []
+    if len(matches) != 1:
+        raise analysis_export_error(
+            f"Run '{item.record['run']['id']}' contains multiple '{channel}' evidence artifacts."
+        )
+    artifact = matches[0].get("artifact")
+    if not isinstance(artifact, str):
+        raise analysis_export_error(
+            f"Run '{item.record['run']['id']}' contains malformed '{channel}' evidence metadata."
+        )
+    path = _safe_source_path(item.source_result_dir, artifact, f"{channel} evidence")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise analysis_export_error(
+            f"Could not decode '{channel}' evidence for run '{item.record['run']['id']}': {exc}"
+        ) from exc
+    if not isinstance(value, list) or not all(isinstance(entry, dict) for entry in value):
+        raise analysis_export_error(
+            f"'{channel}' evidence for run '{item.record['run']['id']}' must be a JSON object array."
+        )
+    return value
+
+
+def _timestamp_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+        return str(value)
+    raise analysis_export_error("Tool trajectory timestamp must be scalar or null.")
 
 
 def _ordered_attempts(attempts: list[_campaign_attempt]) -> list[_campaign_attempt]:

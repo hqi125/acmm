@@ -11,6 +11,7 @@ FIGURE_DIR_NAME = "figures"
 COMPLIANCE_SCOPE = "compliance"
 AVAILABILITY_SCOPE = "availability"
 INTERACTION_SCOPE = "interaction"
+TRAJECTORY_SCOPE = "trajectory"
 
 
 def analysis_output_dir(export_dir: str | Path) -> Path:

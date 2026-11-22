@@ -279,42 +279,61 @@ def _write_overview(
     worksheet.set_column("B:B", 78)
     worksheet.set_row(0, 28)
     worksheet.write("A1", "ACMM Availability Analysis", formats["title"])
-    worksheet.write("A3", "Experiment", formats["label"])
-    worksheet.write("B3", str(source.get("experiment_id", "")))
-    worksheet.write("A4", "Execution", formats["label"])
-    worksheet.write("B4", str(source.get("execution_id", "")))
 
+    identity_rows = [("Experiment", str(source.get("experiment_id", "")))]
+    if source.get("kind") == "campaign":
+        identity_rows.extend(
+            [
+                ("Campaign", str(source.get("campaign_id", ""))),
+                ("Merge", str(source.get("merge_id", ""))),
+            ]
+        )
+    else:
+        identity_rows.append(("Execution", str(source.get("execution_id", ""))))
+    for offset, (label, value) in enumerate(identity_rows, start=2):
+        worksheet.write(offset, 0, label, formats["label"])
+        worksheet.write(offset, 1, value)
+
+    cursor = 2 + len(identity_rows) + 1
     summary = tables["Summary"]
     overall = next(
         (row for row in summary.rows if row.get("scope") == "overall"),
         None,
     )
     if overall is not None:
-        worksheet.write("A6", "Planned slots", formats["label"])
-        worksheet.write("B6", _number_or_text(overall.get("planned_slots", "")))
-        worksheet.write("A7", "Available valid slots", formats["label"])
+        worksheet.write(cursor, 0, "Planned slots", formats["label"])
+        worksheet.write(cursor, 1, _number_or_text(overall.get("planned_slots", "")))
+        cursor += 1
+        worksheet.write(cursor, 0, "Available valid slots", formats["label"])
         worksheet.write(
-            "B7",
+            cursor,
+            1,
             _number_or_text(overall.get("available_valid_slots", "")),
         )
-        worksheet.write("A8", "Availability", formats["label"])
+        cursor += 1
+        worksheet.write(cursor, 0, "Availability", formats["label"])
         _write_percent_cell(
             worksheet,
-            "B8",
+            f"B{cursor + 1}",
             overall.get("availability_fraction", ""),
             formats["percent"],
         )
-        worksheet.write("A9", "First-attempt availability", formats["label"])
+        cursor += 1
+        worksheet.write(cursor, 0, "First-attempt availability", formats["label"])
         _write_percent_cell(
             worksheet,
-            "B9",
+            f"B{cursor + 1}",
             overall.get("first_attempt_availability_fraction", ""),
             formats["percent"],
         )
+        cursor += 2
 
-    worksheet.write("A11", "Measurement model", formats["section"])
+    worksheet.write(cursor, 0, "Measurement model", formats["section"])
     worksheet.merge_range(
-        "A12:B15",
+        cursor + 1,
+        0,
+        cursor + 4,
+        1,
         "A planned run slot is scientifically available only when the run protocol "
         "produces one selected valid attempt. Invalid attempts and unresolved slots "
         "remain acquisition failures; they are not converted into compliance "
@@ -322,9 +341,13 @@ def _write_overview(
         "separately so the retry protocol remains visible.",
         formats["note"],
     )
-    worksheet.write("A17", "Failure interpretation", formats["section"])
+    cursor += 6
+    worksheet.write(cursor, 0, "Failure interpretation", formats["section"])
     worksheet.merge_range(
-        "A18:B21",
+        cursor + 1,
+        0,
+        cursor + 4,
+        1,
         "termination and failure_kind are operational surfaces recorded by the "
         "runtime. They do not by themselves establish causal attribution. For "
         "example, a harness_error can still originate from malformed subject tool "
@@ -332,9 +355,13 @@ def _write_overview(
         "availability rate.",
         formats["note"],
     )
-    worksheet.write("A23", "Sensitivity envelope", formats["section"])
+    cursor += 6
+    worksheet.write(cursor, 0, "Sensitivity envelope", formats["section"])
     worksheet.merge_range(
-        "A24:B28",
+        cursor + 1,
+        0,
+        cursor + 5,
+        1,
         "For each requirement, the sensitivity table shows deterministic extreme "
         "bounds obtained by treating every missing planned opportunity as a "
         "violation versus treating every missing planned opportunity as compliant. "

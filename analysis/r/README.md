@@ -22,15 +22,19 @@ The analysis layer currently implements:
 - scenario-to-run hierarchical percentile bootstrap intervals;
 - explicit dimension-level `S_D` aggregation with arithmetic, geometric, harmonic, and minimum
   compensation policies;
-- cluster-aware hierarchical uncertainty intervals propagated through `S_D`; and
+- cluster-aware hierarchical uncertainty intervals propagated through `S_D`;
+- generic normalized tool-trajectory summaries for Campaign export schema 0.3;
+- selectable base-R PNG/PDF figures for compliance, dimensions, availability, run duration, and
+  trajectory summaries; and
 - machine-readable CSV tables for each analysis stage.
 
 Requirement-level grouping remains the estimator default. Dimension scores are a separate, explicit
 aggregation step so the compensation choice is always visible. Equal requirement weights are the only
 weighting policy implemented in this stage.
 
-Hypothesis tests, statistical models, plots, and custom requirement weights are not implemented in
-this stage.
+Hypothesis tests, fitted statistical models, semantic tool-action interpretation, and custom
+requirement weights are not implemented in this stage. Plotting uses base R and therefore introduces
+no additional CRAN dependency.
 
 ## Dependencies
 
@@ -46,9 +50,10 @@ error.
 ## Input validation
 
 `load_acmm_export()` dispatches by export schema before any estimator runs. Schema 0.1 preserves the
-original single-execution path. Schema 0.2 consumes a Campaign export with explicit `planned_runs.csv`
-so missing logical slots remain representable even when no attempt exists. Shared integrity checks
-remain strict. The v0.1 checks include:
+original single-execution path. Campaign schema 0.2 remains readable for previously published
+exports, while schema 0.3 adds normalized `tool_calls.csv` and `tool_results.csv`. Both Campaign
+schemas use explicit `planned_runs.csv` so missing logical slots remain representable even when no
+attempt exists. Shared integrity checks remain strict. The v0.1 checks include:
 
 - export-manifest schema and source binding;
 - SHA-256 of `runs.csv` and `judgments.csv`;
@@ -63,10 +68,12 @@ remain strict. The v0.1 checks include:
 - judgment counts per realized attempt;
 - opportunity, requirement, dimension, check, and evaluator consistency.
 
-For schema 0.2, the loader additionally validates Campaign/merge provenance, the exact planned
-population, accepted-observation bindings, source-versus-merge selection markers, and all three table
-hashes. The merge-selected rows are the authoritative final judgments while non-selected attempts
-remain acquisition diagnostics.
+For Campaign schemas 0.2/0.3, the loader additionally validates Campaign/merge provenance, the exact
+planned population, accepted-observation bindings, source-versus-merge selection markers, and all
+required table hashes. Schema 0.3 also validates tool-event identity against `runs.csv`, contiguous
+per-run event indices, canonical JSON call inputs, and tool-result error markers. The merge-selected
+rows are the authoritative final judgments while non-selected attempts remain acquisition
+diagnostics. Trajectory analysis requires schema 0.3.
 
 By default, analysis uses the `strict` population policy and refuses a source whose selected plan
 is not fully resolved. `available-valid` is an explicit alternative for postmortem and sensitivity
@@ -227,10 +234,11 @@ functions and scripts remain the statistical implementation; the Core CLI valida
 resolves dependencies, runs only the requested generic stages, preserves full R logs, and publishes an
 immutable analysis manifest. See `docs/analysis/plan.md`.
 
-The repository provides `analysis/plans/standard_v0_1.yaml`, which reproduces the established general
-requirement/dimension/availability workflow with an explicit `strict` population and the established
-2000-replicate, seed-12345, 95% bootstrap settings. Use `available-valid` explicitly for a partial
-population; the plan runner does not silently fall back.
+The repository provides `analysis/plans/standard_v0_1.yaml` for the established general workflow and
+`analysis/plans/standard_v0_2.yaml` for the same workflow plus normalized trajectory analysis and
+selectable R-rendered figures. Both use explicit population policies; the v0.2 standard plan uses
+`strict` plus the established 2000-replicate, seed-12345, 95% bootstrap settings. Use
+`available-valid` explicitly for a partial population; the plan runner does not silently fall back.
 
 The standalone R scripts below remain supported for direct development and debugging.
 
@@ -242,7 +250,7 @@ Basic point estimates:
 Rscript analysis/r/scripts/analyze_export.R \
     ~/acmm_generated/exports/<experiment_id>/execution_<execution_id>
 
-# The same scripts accept a schema-0.2 Campaign export:
+# The same scripts accept schema-0.2/0.3 Campaign exports:
 Rscript analysis/r/scripts/analyze_export.R \
     ~/acmm_generated/exports/<experiment_id>/campaign_<campaign_id>/merge_<merge_id>
 ```
@@ -312,6 +320,22 @@ dimension_intervals.csv
 Each table includes an `estimand` column (`opportunity`, `run`, or `scenario`) so it can be filtered
 or imported directly into RStudio or Excel. `tools/analyze_execution.py` also uses these tables as the
 authoritative inputs to its final `analysis_report.xlsx` presentation stage.
+
+For Campaign export schema 0.3, normalized descriptive tool trajectory tables can also be generated
+directly:
+
+```text
+Rscript analysis/r/scripts/analyze_trajectory.R \
+    ~/acmm_generated/exports/<experiment_id>/campaign_<campaign_id>/merge_<merge_id> \
+    <analysis-output-directory> \
+    --population-policy=strict
+```
+
+The first trajectory layer reports tool-call/result counts, distinct-tool breadth, error rates,
+repeated tool-name usage, and call/result ID matching diagnostics. It deliberately does not infer
+semantic recovery, verification, mutation, or redundancy. R plot stages are normally orchestrated by
+analysis plan schema 0.2 and publish standalone PNG/PDF files under `figures/`; workbooks remain
+tabular presentation artifacts.
 
 
 ## Repository workflow wrapper

@@ -27,6 +27,7 @@ from acmm.analysis.layout import (
     AVAILABILITY_SCOPE,
     COMPLIANCE_SCOPE,
     INTERACTION_SCOPE,
+    TRAJECTORY_SCOPE,
     analysis_data_dir_from_root,
     analysis_log_dir_from_root,
 )
@@ -149,6 +150,70 @@ _STAGE_DEFINITIONS: dict[str, _stage_definition] = {
             )
         ),
     ),
+    "trajectory": _stage_definition(
+        kind="trajectory",
+        label="normalized tool trajectory analysis",
+        script_name="analyze_trajectory.R",
+        expected_outputs=(
+            "data/trajectory/trajectory_run_metrics.csv",
+            "data/trajectory/trajectory_subject_summary.csv",
+            "data/trajectory/trajectory_tool_usage.csv",
+        ),
+    ),
+    "plot_run_duration": _stage_definition(
+        kind="plot_run_duration",
+        label="run-duration plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/operations/run_duration.png",
+            "figures/operations/run_duration.pdf",
+        ),
+    ),
+    "plot_requirement_compliance": _stage_definition(
+        kind="plot_requirement_compliance",
+        label="requirement compliance plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/compliance/requirement_compliance.png",
+            "figures/compliance/requirement_compliance.pdf",
+        ),
+    ),
+    "plot_dimension_scores": _stage_definition(
+        kind="plot_dimension_scores",
+        label="dimension score plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/compliance/dimension_scores.png",
+            "figures/compliance/dimension_scores.pdf",
+        ),
+    ),
+    "plot_availability": _stage_definition(
+        kind="plot_availability",
+        label="availability plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/availability/availability.png",
+            "figures/availability/availability.pdf",
+        ),
+    ),
+    "plot_trajectory_run_metrics": _stage_definition(
+        kind="plot_trajectory_run_metrics",
+        label="trajectory run-metric plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/trajectory/trajectory_run_metrics.png",
+            "figures/trajectory/trajectory_run_metrics.pdf",
+        ),
+    ),
+    "plot_trajectory_tool_usage": _stage_definition(
+        kind="plot_trajectory_tool_usage",
+        label="trajectory tool-usage plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/trajectory/trajectory_tool_usage.png",
+            "figures/trajectory/trajectory_tool_usage.pdf",
+        ),
+    ),
     "compliance_workbook": _stage_definition(
         kind="compliance_workbook",
         label="compliance workbook",
@@ -195,6 +260,7 @@ def run_analysis_plan(
     export_manifest_path = source_dir / "export_manifest.yaml"
     export_manifest = _load_yaml_mapping(export_manifest_path, "export manifest")
     _validate_export_binding(export_manifest)
+    _validate_plan_export_compatibility(plan, export_manifest)
     export_manifest_sha256 = _sha256_file(export_manifest_path)
 
     emit("checking R/Python analysis runtime prerequisites...")
@@ -451,6 +517,54 @@ def _stage_command(
             population_flag,
         )
 
+    if stage_kind == "trajectory":
+        return (
+            rscript,
+            str(script),
+            str(export_dir),
+            str(analysis_dir),
+            population_flag,
+        )
+
+    plot_stage_to_kind = {
+        "plot_run_duration": "run_duration",
+        "plot_requirement_compliance": "requirement_compliance",
+        "plot_dimension_scores": "dimension_scores",
+        "plot_availability": "availability",
+        "plot_trajectory_run_metrics": "trajectory_run_metrics",
+        "plot_trajectory_tool_usage": "trajectory_tool_usage",
+    }
+    plot_kind = plot_stage_to_kind.get(stage_kind)
+    if plot_kind is not None:
+        request = plan.plot(plot_kind)
+        if request is None:
+            raise analysis_run_error(
+                f"Plot stage '{stage_kind}' resolved without a matching plot request."
+            )
+        command = [rscript, str(script), str(analysis_dir), plot_kind]
+        if plot_kind == "run_duration":
+            command.extend([str(export_dir), plan.population_policy])
+        elif plot_kind == "requirement_compliance":
+            command.extend(
+                [
+                    request.estimand or "scenario",
+                    "true" if request.include_intervals else "false",
+                ]
+            )
+        elif plot_kind == "dimension_scores":
+            command.extend(
+                [
+                    request.estimand or "opportunity",
+                    request.aggregation_method or "arithmetic",
+                    "true" if request.include_intervals else "false",
+                ]
+            )
+        elif plot_kind == "trajectory_run_metrics":
+            command.append(request.metric or "tool_calls")
+        elif plot_kind == "trajectory_tool_usage":
+            command.append(str(request.top_n or 12))
+        return tuple(command)
+
     raise analysis_run_error(f"Unsupported R analysis stage '{stage_kind}'.")
 
 
@@ -512,10 +626,16 @@ def _bootstrap_for(plan: analysis_plan, kind: str) -> bootstrap_parameters:
 
 
 def _scope_for_stage(kind: str) -> str:
-    if kind == "availability":
+    if kind in {"availability", "plot_availability"}:
         return AVAILABILITY_SCOPE
     if kind == "interaction":
         return INTERACTION_SCOPE
+    if kind in {
+        "trajectory",
+        "plot_trajectory_run_metrics",
+        "plot_trajectory_tool_usage",
+    }:
+        return TRAJECTORY_SCOPE
     return COMPLIANCE_SCOPE
 
 
@@ -651,7 +771,7 @@ def _probe_r_packages(rscript: str) -> dict[str, str]:
 
 def _validate_export_binding(manifest: Mapping[str, Any]) -> None:
     schema_version = str(manifest.get("schema_version", ""))
-    if schema_version not in {"0.1", "0.2"}:
+    if schema_version not in {"0.1", "0.2", "0.3"}:
         raise analysis_run_error(
             f"Unsupported analysis export schema_version '{schema_version}'.",
             exit_code=2,
@@ -666,6 +786,23 @@ def _validate_export_binding(manifest: Mapping[str, Any]) -> None:
     if not isinstance(experiment_id, str) or not experiment_id:
         raise analysis_run_error(
             "Export manifest must define a non-empty source.experiment_id.",
+            exit_code=2,
+        )
+
+
+def _validate_plan_export_compatibility(
+    plan: analysis_plan,
+    manifest: Mapping[str, Any],
+) -> None:
+    if "trajectory" not in plan.resolved_stages:
+        return
+    schema_version = str(manifest.get("schema_version", ""))
+    source = manifest.get("source")
+    source_kind = source.get("kind") if isinstance(source, dict) else None
+    if schema_version != "0.3" or source_kind != "campaign":
+        raise analysis_run_error(
+            "Trajectory analysis requires Campaign analysis export schema 0.3 "
+            "with normalized tool_calls.csv and tool_results.csv tables.",
             exit_code=2,
         )
 
@@ -893,6 +1030,21 @@ def _build_analysis_manifest(
             "population_policy": plan.population_policy,
             "requested_analyses": [request.kind for request in plan.analyses],
             "requested_reports": list(plan.reports),
+            "requested_plots": [
+                {
+                    key: value
+                    for key, value in {
+                        "kind": request.kind,
+                        "estimand": request.estimand,
+                        "aggregation_method": request.aggregation_method,
+                        "include_intervals": request.include_intervals,
+                        "metric": request.metric,
+                        "top_n": request.top_n,
+                    }.items()
+                    if value is not None
+                }
+                for request in plan.plots
+            ],
             "resolved_stages": list(plan.resolved_stages),
             "referenced_inputs": inputs_manifest,
         },

@@ -290,42 +290,52 @@ def _write_overview(
     worksheet.set_column("A:A", 31)
     worksheet.set_column("B:B", 72)
     worksheet.write("A1", "ACMM Interaction Analysis", formats["title"])
-    worksheet.write("A3", "Experiment", formats["label"])
-    worksheet.write("B3", str(source.get("experiment_id", "")))
-    worksheet.write("A4", "Execution", formats["label"])
-    worksheet.write("B4", str(source.get("execution_id", "")))
-    worksheet.write("A6", "Factor A", formats["label"])
-    worksheet.write(
-        "B6",
-        _factor_summary(factor_a_name, factor_a),
-    )
-    worksheet.write("A7", "Factor B", formats["label"])
-    worksheet.write(
-        "B7",
-        _factor_summary(factor_b_name, factor_b),
-    )
-    worksheet.write("A9", "Primary contrast", formats["label"])
-    worksheet.write(
-        "B9",
-        str(estimand["primary_contrast"]),
-        formats["note"],
-    )
-    worksheet.write("A11", "Interpretation", formats["section"])
+    identity_rows = [("Experiment", str(source.get("experiment_id", "")))]
+    if source.get("kind") == "campaign":
+        identity_rows.extend(
+            [
+                ("Campaign", str(source.get("campaign_id", ""))),
+                ("Merge", str(source.get("merge_id", ""))),
+            ]
+        )
+    else:
+        identity_rows.append(("Execution", str(source.get("execution_id", ""))))
+    for offset, (label, value) in enumerate(identity_rows, start=2):
+        worksheet.write(offset, 0, label, formats["label"])
+        worksheet.write(offset, 1, value)
+
+    cursor = 2 + len(identity_rows) + 1
+    worksheet.write(cursor, 0, "Factor A", formats["label"])
+    worksheet.write(cursor, 1, _factor_summary(factor_a_name, factor_a))
+    cursor += 1
+    worksheet.write(cursor, 0, "Factor B", formats["label"])
+    worksheet.write(cursor, 1, _factor_summary(factor_b_name, factor_b))
+    cursor += 2
+    worksheet.write(cursor, 0, "Primary contrast", formats["label"])
+    worksheet.write(cursor, 1, str(estimand["primary_contrast"]), formats["note"])
+    cursor += 2
+    worksheet.write(cursor, 0, "Interpretation", formats["section"])
     worksheet.merge_range(
-        "A12:B15",
+        cursor + 1,
+        0,
+        cursor + 4,
+        1,
         str(estimand["interpretation"]),
         formats["note"],
     )
+    cursor += 6
 
     population = tables["Population"]
     if population.rows:
         row = population.rows[0]
-        worksheet.write("A17", "Population policy", formats["label"])
-        worksheet.write("B17", row.get("population_policy", ""))
-        worksheet.write("A18", "Available valid runs", formats["label"])
-        worksheet.write("B18", _number_or_text(row.get("available_valid_runs", "")))
-        worksheet.write("A19", "Selected planned runs", formats["label"])
-        worksheet.write("B19", _number_or_text(row.get("selected_planned_runs", "")))
+        worksheet.write(cursor, 0, "Population policy", formats["label"])
+        worksheet.write(cursor, 1, row.get("population_policy", ""))
+        cursor += 1
+        worksheet.write(cursor, 0, "Available valid runs", formats["label"])
+        worksheet.write(cursor, 1, _number_or_text(row.get("available_valid_runs", "")))
+        cursor += 1
+        worksheet.write(cursor, 0, "Selected planned runs", formats["label"])
+        worksheet.write(cursor, 1, _number_or_text(row.get("selected_planned_runs", "")))
 
 
 def _write_table_sheet(

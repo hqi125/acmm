@@ -9,7 +9,8 @@ import jsonschema
 import yaml
 
 
-ANALYSIS_PLAN_SCHEMA_VERSION = "0.1"
+ANALYSIS_PLAN_SCHEMA_VERSION = "0.2"
+ANALYSIS_PLAN_SCHEMA_VERSIONS = ("0.1", "0.2")
 DEFAULT_BOOTSTRAP_REPLICATES = 2000
 DEFAULT_BOOTSTRAP_SEED = 12345
 DEFAULT_CONFIDENCE_LEVEL = 0.95
@@ -21,12 +22,30 @@ ANALYSIS_KINDS = (
     "dimension_uncertainty",
     "availability",
     "interaction",
+    "trajectory",
 )
 REPORT_KINDS = (
     "compliance_workbook",
     "availability_workbook",
     "interaction_workbook",
 )
+PLOT_KINDS = (
+    "run_duration",
+    "requirement_compliance",
+    "dimension_scores",
+    "availability",
+    "trajectory_run_metrics",
+    "trajectory_tool_usage",
+)
+
+_PLOT_STAGE_BY_KIND = {
+    "run_duration": "plot_run_duration",
+    "requirement_compliance": "plot_requirement_compliance",
+    "dimension_scores": "plot_dimension_scores",
+    "availability": "plot_availability",
+    "trajectory_run_metrics": "plot_trajectory_run_metrics",
+    "trajectory_tool_usage": "plot_trajectory_tool_usage",
+}
 
 _STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "requirement_estimates": (),
@@ -35,12 +54,19 @@ _STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "dimension_uncertainty": ("dimension_scores",),
     "availability": (),
     "interaction": (),
+    "trajectory": (),
     "compliance_workbook": (
         "requirement_uncertainty",
         "dimension_uncertainty",
     ),
     "availability_workbook": ("availability",),
     "interaction_workbook": ("interaction",),
+    "plot_run_duration": (),
+    "plot_requirement_compliance": ("requirement_estimates",),
+    "plot_dimension_scores": ("dimension_scores",),
+    "plot_availability": ("availability",),
+    "plot_trajectory_run_metrics": ("trajectory",),
+    "plot_trajectory_tool_usage": ("trajectory",),
 }
 
 
@@ -63,14 +89,26 @@ class analysis_request:
 
 
 @dataclass(frozen=True)
+class plot_request:
+    kind: str
+    estimand: str | None = None
+    aggregation_method: str | None = None
+    include_intervals: bool | None = None
+    metric: str | None = None
+    top_n: int | None = None
+
+
+@dataclass(frozen=True)
 class analysis_plan:
     path: Path
     raw_bytes: bytes
     raw: Mapping[str, Any]
+    schema_version: str
     population_policy: str
     bootstrap_defaults: bootstrap_parameters
     analyses: tuple[analysis_request, ...]
     reports: tuple[str, ...]
+    plots: tuple[plot_request, ...]
     resolved_stages: tuple[str, ...]
 
     def analysis(self, kind: str) -> analysis_request | None:
@@ -79,9 +117,22 @@ class analysis_plan:
                 return request
         return None
 
+    def plot(self, kind: str) -> plot_request | None:
+        for request in self.plots:
+            if request.kind == kind:
+                return request
+        return None
 
-def default_analysis_plan_schema_path() -> Path:
-    return Path(__file__).resolve().parent / "schemas" / "analysis_plan.schema.json"
+
+def default_analysis_plan_schema_path(schema_version: str = ANALYSIS_PLAN_SCHEMA_VERSION) -> Path:
+    root = Path(__file__).resolve().parent / "schemas"
+    if schema_version == "0.1":
+        return root / "analysis_plan.schema.json"
+    if schema_version == "0.2":
+        return root / "analysis_plan_v0_2.schema.json"
+    raise analysis_plan_error(
+        f"Unsupported analysis plan schema_version '{schema_version}'."
+    )
 
 
 def load_analysis_plan(
@@ -107,10 +158,17 @@ def load_analysis_plan(
     if not isinstance(value, dict):
         raise analysis_plan_error("Analysis plan must contain a YAML mapping.")
 
+    schema_version = str(value.get("schema_version", ""))
+    if schema_version not in ANALYSIS_PLAN_SCHEMA_VERSIONS:
+        raise analysis_plan_error(
+            f"Unsupported analysis plan schema_version '{schema_version}'. "
+            f"Supported versions: {', '.join(ANALYSIS_PLAN_SCHEMA_VERSIONS)}."
+        )
+
     selected_schema = (
         Path(schema_path).expanduser().resolve()
         if schema_path is not None
-        else default_analysis_plan_schema_path()
+        else default_analysis_plan_schema_path(schema_version)
     )
     schema = _load_json_schema(selected_schema)
 
@@ -125,14 +183,15 @@ def load_analysis_plan(
 
     analyses_value = value["analyses"]
     report_value = value.get("reports", [])
+    plot_value = value.get("plots", [])
     analysis_kinds = [item["kind"] for item in analyses_value]
     report_kinds = [item["kind"] for item in report_value]
+    plot_kinds = [item["kind"] for item in plot_value]
     _reject_duplicates(analysis_kinds, "analysis")
     _reject_duplicates(report_kinds, "report")
+    _reject_duplicates(plot_kinds, "plot")
 
     if "interaction_workbook" in report_kinds and "interaction" not in analysis_kinds:
-        # Dependency closure can insert computational prerequisites, but interaction
-        # requires a design path and therefore cannot be synthesized from a report alone.
         raise analysis_plan_error(
             "interaction_workbook requires an explicit interaction analysis with a design path."
         )
@@ -166,17 +225,43 @@ def load_analysis_plan(
             )
         )
 
+    plots: list[plot_request] = []
+    for item in plot_value:
+        kind = item["kind"]
+        plots.append(
+            plot_request(
+                kind=kind,
+                estimand=item.get("estimand"),
+                aggregation_method=item.get("aggregation_method"),
+                include_intervals=(
+                    bool(item.get("include_intervals", True))
+                    if kind in {"requirement_compliance", "dimension_scores"}
+                    else None
+                ),
+                metric=item.get("metric"),
+                top_n=int(item["top_n"]) if "top_n" in item else None,
+            )
+        )
+
     requested_stages = [*analysis_kinds, *report_kinds]
+    for request in plots:
+        if request.kind == "requirement_compliance" and request.include_intervals:
+            requested_stages.append("requirement_uncertainty")
+        elif request.kind == "dimension_scores" and request.include_intervals:
+            requested_stages.append("dimension_uncertainty")
+        requested_stages.append(_PLOT_STAGE_BY_KIND[request.kind])
     resolved_stages = _resolve_dependencies(requested_stages)
 
     return analysis_plan(
         path=plan_path,
         raw_bytes=raw_bytes,
         raw=value,
+        schema_version=schema_version,
         population_policy=value["population"]["policy"],
         bootstrap_defaults=default_bootstrap,
         analyses=tuple(requests),
         reports=tuple(report_kinds),
+        plots=tuple(plots),
         resolved_stages=resolved_stages,
     )
 

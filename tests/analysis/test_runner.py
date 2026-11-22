@@ -178,3 +178,145 @@ def test_failed_stage_is_preserved_in_failed_directory(
     failed = list(output_root.glob("analysis_*.failed"))
     assert len(failed) == 1
     assert (failed[0] / "diagnostic.txt").is_file()
+
+
+def test_v02_plan_records_plot_requests_and_resolved_trajectory_stages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    export_dir = tmp_path / "export"
+    export_dir.mkdir(parents=True)
+    manifest = {
+        "schema_version": "0.3",
+        "source": {
+            "kind": "campaign",
+            "campaign_id": "campaign_fixture",
+            "merge_id": "merge_fixture",
+            "experiment_id": "experiment_fixture",
+            "package_sha256": "a" * 64,
+            "contract_sha256": "b" * 64,
+        },
+        "tables": {},
+    }
+    (export_dir / "export_manifest.yaml").write_text(
+        yaml.safe_dump(manifest, sort_keys=False),
+        encoding="utf-8",
+        newline="",
+    )
+    plan_path = tmp_path / "plan.yaml"
+    plan_path.write_text(
+        """schema_version: '0.2'\npopulation:\n  policy: strict\nanalyses:\n  - kind: trajectory\nplots:\n  - kind: trajectory_run_metrics\n    metric: error_rate\n  - kind: trajectory_tool_usage\n    top_n: 7\n""",
+        encoding="utf-8",
+        newline="",
+    )
+    monkeypatch.setattr(runner, "_preflight_runtime", lambda plan: _runtime())
+
+    stages: list[str] = []
+
+    def execute_stage(**kwargs: object) -> None:
+        stage_kind = str(kwargs["stage_kind"])
+        analysis_dir = Path(kwargs["analysis_dir"])
+        stages.append(stage_kind)
+        for relative in runner._STAGE_DEFINITIONS[stage_kind].expected_outputs:
+            path = analysis_dir / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("fixture\n", encoding="utf-8", newline="")
+
+    monkeypatch.setattr(runner, "_execute_stage", execute_stage)
+    result = run_analysis_plan(
+        export_dir,
+        plan_path,
+        output_root=tmp_path / "analysis",
+    )
+
+    assert stages == [
+        "trajectory",
+        "plot_trajectory_run_metrics",
+        "plot_trajectory_tool_usage",
+    ]
+    manifest = yaml.safe_load(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["plan"]["requested_analyses"] == ["trajectory"]
+    assert manifest["plan"]["requested_plots"] == [
+        {"kind": "trajectory_run_metrics", "metric": "error_rate"},
+        {"kind": "trajectory_tool_usage", "top_n": 7},
+    ]
+
+
+def test_plot_stage_command_uses_plan_parameters(tmp_path: Path) -> None:
+    plan_path = tmp_path / "plan.yaml"
+    plan_path.write_text(
+        """schema_version: '0.2'\npopulation:\n  policy: strict\nanalyses:\n  - kind: requirement_estimates\nplots:\n  - kind: dimension_scores\n    estimand: scenario\n    aggregation_method: minimum\n    include_intervals: false\n""",
+        encoding="utf-8",
+        newline="",
+    )
+    plan = runner.load_analysis_plan(plan_path)
+    command = runner._stage_command(
+        "plot_dimension_scores",
+        tmp_path / "export",
+        tmp_path / "analysis",
+        plan,
+        "Rscript",
+        None,
+    )
+
+    assert command[-4:] == ("dimension_scores", "scenario", "minimum", "false")
+
+
+def test_trajectory_plan_rejects_legacy_campaign_export_before_runtime_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    export_dir = tmp_path / "export"
+    _write_export(export_dir)
+    plan_path = tmp_path / "plan.yaml"
+    plan_path.write_text(
+        """schema_version: '0.2'
+population:
+  policy: strict
+analyses:
+  - kind: trajectory
+""",
+        encoding="utf-8",
+        newline="",
+    )
+
+    def unexpected_runtime(plan: object) -> object:
+        raise AssertionError("runtime preflight must not run for incompatible export")
+
+    monkeypatch.setattr(runner, "_preflight_runtime", unexpected_runtime)
+
+    with pytest.raises(analysis_run_error, match="requires Campaign analysis export schema 0.3"):
+        run_analysis_plan(export_dir, plan_path, output_root=tmp_path / "analysis")
+
+
+def test_run_duration_plot_stage_receives_export_and_population_policy(
+    tmp_path: Path,
+) -> None:
+    plan_path = tmp_path / "plan.yaml"
+    plan_path.write_text(
+        """schema_version: '0.2'
+population:
+  policy: available-valid
+analyses:
+  - kind: requirement_estimates
+plots:
+  - kind: run_duration
+""",
+        encoding="utf-8",
+        newline="",
+    )
+    plan = runner.load_analysis_plan(plan_path)
+    command = runner._stage_command(
+        "plot_run_duration",
+        tmp_path / "export",
+        tmp_path / "analysis",
+        plan,
+        "Rscript",
+        None,
+    )
+
+    assert command[-3:] == (
+        "run_duration",
+        str(tmp_path / "export"),
+        "available-valid",
+    )

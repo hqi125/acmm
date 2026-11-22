@@ -1,0 +1,32 @@
+schema_version: '0.2'
+population:
+  policy: strict
+defaults:
+  bootstrap:
+    replicates: 2000
+    seed: 12345
+    confidence_level: 0.95
+analyses:
+  - kind: requirement_estimates
+  - kind: requirement_uncertainty
+  - kind: dimension_scores
+  - kind: dimension_uncertainty
+  - kind: availability
+  - kind: trajectory
+reports:
+  - kind: compliance_workbook
+  - kind: availability_workbook
+plots:
+  - kind: run_duration
+  - kind: requirement_compliance
+    estimand: scenario
+    include_intervals: true
+  - kind: dimension_scores
+    estimand: opportunity
+    aggregation_method: arithmetic
+    include_intervals: true
+  - kind: availability
+  - kind: trajectory_run_metrics
+    metric: tool_calls
+  - kind: trajectory_tool_usage
+    top_n: 12

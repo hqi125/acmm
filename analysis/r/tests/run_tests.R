@@ -1315,4 +1315,197 @@ assert_equal(
     c("Campaign: campaign_fixture", "Merge: merge_fixture")
 )
 
+
+campaignTrajectoryDir <- file.path(root, "campaign_trajectory")
+campaignPlannedV03 <- make_campaign_planned_row(
+    0,
+    campaignLogicalA,
+    TRUE,
+    acceptedRunId = campaignRunId,
+    sourceExecutionId = "execution_fixture",
+    sourceExecutionStatus = "completed",
+    sourceAttempt = "1"
+)
+campaignRunsV03 <- make_campaign_run_row(campaignRunId, campaignLogicalA)
+campaignJudgmentsV03 <- make_campaign_judgment_row(campaignRunId, campaignLogicalA)
+for (table in c("campaignPlannedV03", "campaignRunsV03", "campaignJudgmentsV03"))
+{
+    value <- get(table)
+    value$export_schema_version <- "0.3"
+    assign(table, value)
+}
+make_tool_identity <- function()
+{
+    list(
+        export_schema_version = "0.3",
+        campaign_id = "campaign_fixture",
+        experiment_id = "fixture_experiment",
+        design_digest = paste(rep("d", 64), collapse = ""),
+        contract_sha256 = paste(rep("a", 64), collapse = ""),
+        package_sha256 = paste(rep("c", 64), collapse = ""),
+        source_execution_id = "execution_fixture",
+        source_execution_order = "1",
+        source_attempt = "1",
+        attempt = "1",
+        source_selected = "true",
+        selected = "true",
+        logical_run_id = campaignLogicalA,
+        run_index = "0",
+        run_id = campaignRunId,
+        subject_id = "subject_a",
+        scenario_id = "scenario_a",
+        repetition = "1",
+        validity = "valid",
+        termination = "agent_completed"
+    )
+}
+callOne <- c(
+    make_tool_identity(),
+    list(
+        call_index = "1",
+        call_id = "call-1",
+        tool_name = "read_item",
+        transport_name = "",
+        input_json = "{\"path\":\"a\"}",
+        timestamp = "2026-10-20T20:00:00Z"
+    )
+)
+callTwo <- c(
+    make_tool_identity(),
+    list(
+        call_index = "2",
+        call_id = "call-2",
+        tool_name = "write_item",
+        transport_name = "bridge",
+        input_json = "{\"path\":\"b\"}",
+        timestamp = "2026-10-20T20:00:01Z"
+    )
+)
+toolCalls <- rbind(
+    as.data.frame(callOne, stringsAsFactors = FALSE, check.names = FALSE),
+    as.data.frame(callTwo, stringsAsFactors = FALSE, check.names = FALSE)
+)
+resultOne <- c(
+    make_tool_identity(),
+    list(
+        result_index = "1",
+        tool_call_id = "call-1",
+        tool_name = "read_item",
+        transport_name = "",
+        output = "ok",
+        is_error = "false",
+        timestamp = "2026-10-20T20:00:00Z"
+    )
+)
+resultTwo <- c(
+    make_tool_identity(),
+    list(
+        result_index = "2",
+        tool_call_id = "call-2",
+        tool_name = "write_item",
+        transport_name = "bridge",
+        output = "rejected",
+        is_error = "true",
+        timestamp = "2026-10-20T20:00:01Z"
+    )
+)
+toolResults <- rbind(
+    as.data.frame(resultOne, stringsAsFactors = FALSE, check.names = FALSE),
+    as.data.frame(resultTwo, stringsAsFactors = FALSE, check.names = FALSE)
+)
+dir.create(campaignTrajectoryDir, recursive = TRUE, showWarnings = FALSE)
+trajectoryTables <- list(
+    planned_runs = campaignPlannedV03,
+    runs = campaignRunsV03,
+    judgments = campaignJudgmentsV03,
+    tool_calls = toolCalls,
+    tool_results = toolResults
+)
+trajectoryManifestTables <- list()
+for (tableName in names(trajectoryTables))
+{
+    path <- file.path(campaignTrajectoryDir, paste0(tableName, ".csv"))
+    write_csv_exact(trajectoryTables[[tableName]], path)
+    trajectoryManifestTables[[tableName]] <- list(
+        artifact = paste0(tableName, ".csv"),
+        rows = nrow(trajectoryTables[[tableName]]),
+        sha256 = digest::digest(file = path, algo = "sha256", serialize = FALSE)
+    )
+}
+trajectoryManifest <- list(
+    schema_version = "0.3",
+    source = list(
+        kind = "campaign",
+        campaign_id = "campaign_fixture",
+        experiment_id = "fixture_experiment",
+        design_digest = paste(rep("d", 64), collapse = ""),
+        package_sha256 = paste(rep("c", 64), collapse = ""),
+        contract_sha256 = paste(rep("a", 64), collapse = ""),
+        campaign_manifest = "campaign.json",
+        campaign_manifest_sha256 = paste(rep("e", 64), collapse = ""),
+        merge_id = "merge_fixture",
+        merge_manifest = "campaign_merge.json",
+        merge_manifest_sha256 = paste(rep("f", 64), collapse = ""),
+        merge_completeness = "complete",
+        merge_population = list(total = 1, observed = 1, pending = 0)
+    ),
+    executions = list(
+        list(execution_id = "execution_fixture", status = "completed", order = 1)
+    ),
+    tables = trajectoryManifestTables
+)
+yaml::write_yaml(
+    trajectoryManifest,
+    file.path(campaignTrajectoryDir, "export_manifest.yaml")
+)
+campaignTrajectoryLoaded <- load_acmm_export(campaignTrajectoryDir)
+assert_equal(campaignTrajectoryLoaded$binding$schema_version, "0.3")
+assert_equal(nrow(campaignTrajectoryLoaded$tool_calls), 2L)
+assert_equal(nrow(campaignTrajectoryLoaded$tool_results), 2L)
+trajectoryAnalysis <- analyze_acmm_trajectory(campaignTrajectoryLoaded)
+assert_equal(trajectoryAnalysis$run_metrics$tool_calls, 2)
+assert_equal(trajectoryAnalysis$run_metrics$distinct_tools, 2)
+assert_equal(trajectoryAnalysis$run_metrics$error_results, 1)
+assert_equal(trajectoryAnalysis$run_metrics$error_rate, 0.5)
+assert_equal(trajectoryAnalysis$run_metrics$unmatched_calls, 0)
+assert_equal(trajectoryAnalysis$run_metrics$unmatched_results, 0)
+assert_equal(trajectoryAnalysis$subject_summary$total_tool_calls, 2)
+assert_equal(nrow(trajectoryAnalysis$tool_usage), 2L)
+
+plotSmokeRoot <- file.path(root, "plot_smoke")
+dir.create(
+    file.path(plotSmokeRoot, "data", "trajectory"),
+    recursive = TRUE,
+    showWarnings = FALSE
+)
+utils::write.csv(
+    trajectoryAnalysis$run_metrics,
+    file.path(plotSmokeRoot, "data", "trajectory", "trajectory_run_metrics.csv"),
+    row.names = FALSE,
+    na = ""
+)
+utils::write.csv(
+    trajectoryAnalysis$tool_usage,
+    file.path(plotSmokeRoot, "data", "trajectory", "trajectory_tool_usage.csv"),
+    row.names = FALSE,
+    na = ""
+)
+acmm_plot_run_duration(campaignTrajectoryLoaded, plotSmokeRoot, "strict")
+acmm_plot_trajectory_run_metrics(plotSmokeRoot, "tool_calls")
+acmm_plot_trajectory_tool_usage(plotSmokeRoot, 2L)
+for (artifact in c(
+    "figures/operations/run_duration.png",
+    "figures/operations/run_duration.pdf",
+    "figures/trajectory/trajectory_run_metrics.png",
+    "figures/trajectory/trajectory_run_metrics.pdf",
+    "figures/trajectory/trajectory_tool_usage.png",
+    "figures/trajectory/trajectory_tool_usage.pdf"
+))
+{
+    assert_true(
+        file.exists(file.path(plotSmokeRoot, artifact)),
+        paste0("Expected plot artifact was not created: ", artifact)
+    )
+}
+
 cat("ACMM R analysis tests passed.\n")
