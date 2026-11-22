@@ -12,6 +12,7 @@ COMPLIANCE_SCOPE = "compliance"
 AVAILABILITY_SCOPE = "availability"
 INTERACTION_SCOPE = "interaction"
 TRAJECTORY_SCOPE = "trajectory"
+PROVIDER_PRESSURE_SCOPE = "provider_pressure"
 
 
 def analysis_output_dir(export_dir: str | Path) -> Path:

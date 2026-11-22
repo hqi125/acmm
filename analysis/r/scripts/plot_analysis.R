@@ -78,6 +78,14 @@ if (identical(plotKind, "run_duration"))
     topN <- if (length(plotArguments) >= 1) as.integer(plotArguments[[1]]) else 12L
     acmm_assert(!is.na(topN) && topN >= 1, "trajectory_tool_composition top_n must be positive.")
     acmm_plot_trajectory_tool_composition(outputRoot, topN, formats)
+} else if (identical(plotKind, "provider_pressure_pacing"))
+{
+    acmm_plot_provider_pressure_pacing(outputRoot, formats)
+} else if (identical(plotKind, "provider_pressure_feature_scores"))
+{
+    topN <- if (length(plotArguments) >= 1) as.integer(plotArguments[[1]]) else 8L
+    acmm_assert(!is.na(topN) && topN >= 1, "provider_pressure_feature_scores top_n must be positive.")
+    acmm_plot_provider_pressure_feature_scores(outputRoot, topN, formats)
 } else
 {
     stop(paste0("Unsupported plot kind '", plotKind, "'."))

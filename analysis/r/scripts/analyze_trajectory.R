@@ -34,7 +34,8 @@ dataDir <- file.path(outputRoot, "data", "trajectory")
 
 exportData <- load_acmm_export(
     exportDir,
-    populationPolicy = populationPolicy
+    populationPolicy = populationPolicy,
+    includeTrajectory = TRUE
 )
 cat("ACMM_PROGRESS: Computing normalized tool trajectory metrics...\n")
 flush(stdout())

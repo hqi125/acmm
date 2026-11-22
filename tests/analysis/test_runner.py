@@ -419,3 +419,85 @@ plots:
         "png",
         "10",
     )
+
+
+def test_provider_pressure_plan_binds_pressure_export_without_population(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    export_dir = tmp_path / "pressure_export"
+    export_dir.mkdir(parents=True)
+    manifest = {
+        "schema_version": "0.2",
+        "source": {
+            "kind": "provider_pressure",
+            "source_digest_sha256": "a" * 64,
+            "lineage_count": 1,
+            "snapshot_count": 3,
+            "trajectory_schema_versions": ["0.5"],
+            "lineages": [
+                {
+                    "lineage_id": "lineage_fixture",
+                    "provider_id": "github",
+                    "scope_id": "scope_fixture",
+                    "model_id": "github_pressure_v1",
+                    "model_version": "0.13",
+                    "model_definition_sha256": "b" * 64,
+                    "snapshot_count": 3,
+                    "latest_sequence": 2,
+                    "latest_snapshot_sha256": "c" * 64,
+                }
+            ],
+        },
+        "tables": {},
+    }
+    (export_dir / "export_manifest.yaml").write_text(
+        yaml.safe_dump(manifest, sort_keys=False),
+        encoding="utf-8",
+        newline="",
+    )
+    plan_path = Path(__file__).resolve().parents[2] / "analysis" / "plans" / "provider_pressure_v0_1.yaml"
+    monkeypatch.setattr(runner, "_preflight_runtime", lambda plan: _runtime())
+
+    stages: list[str] = []
+
+    def execute_stage(**kwargs: object) -> None:
+        stage_kind = str(kwargs["stage_kind"])
+        analysis_dir = Path(kwargs["analysis_dir"])
+        stages.append(stage_kind)
+        for relative in runner._expected_outputs_for_stage(stage_kind, kwargs["plan"]):
+            path = analysis_dir / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"{stage_kind}\n", encoding="utf-8", newline="")
+
+    monkeypatch.setattr(runner, "_execute_stage", execute_stage)
+    progress: list[str] = []
+    result = run_analysis_plan(
+        export_dir,
+        plan_path,
+        output_root=tmp_path / "analysis",
+        progress=progress.append,
+    )
+
+    assert result.source_kind == "provider_pressure"
+    assert result.population_policy is None
+    assert stages == [
+        "provider_pressure_summary",
+        "plot_provider_pressure_pacing",
+        "plot_provider_pressure_feature_scores",
+    ]
+    manifest_out = yaml.safe_load(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest_out["source"]["kind"] == "provider_pressure"
+    assert manifest_out["source"]["source_digest_sha256"] == "a" * 64
+    assert manifest_out["plan"]["source_kind"] == "provider_pressure"
+    assert "population_policy" not in manifest_out["plan"]
+    assert any("source kind 'provider_pressure'" in message for message in progress)
+
+
+def test_provider_pressure_plan_rejects_campaign_export(tmp_path: Path) -> None:
+    export_dir = tmp_path / "export"
+    _write_export(export_dir)
+    plan_path = Path(__file__).resolve().parents[2] / "analysis" / "plans" / "provider_pressure_v0_1.yaml"
+
+    with pytest.raises(analysis_run_error, match="require a Provider Pressure export"):
+        run_analysis_plan(export_dir, plan_path, output_root=tmp_path / "analysis")

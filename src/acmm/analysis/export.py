@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import csv
 import hashlib
@@ -9,7 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 import yaml
 
@@ -144,75 +145,58 @@ def export_execution(
         contract,
         contract_path,
     )
-    attempts = _load_validated_attempts(
-        source_dir=source_dir,
-        manifest=manifest,
-        contract=contract,
-        record_schema=record_schema,
-        expected_contract_sha256=execution["contract_sha256"],
-    )
-
-    run_rows = [
-        _build_run_row(execution, item)
-        for item in attempts
-    ]
-    judgment_rows = list(
-        _build_judgment_rows(
-            execution,
-            contract,
-            attempts,
-        )
-    )
-
-    runs_bytes = _csv_bytes(RUN_COLUMNS, run_rows)
-    judgments_bytes = _csv_bytes(JUDGMENT_COLUMNS, judgment_rows)
 
     _validate_directory_component("experiment ID", execution["experiment_id"])
     _validate_directory_component("execution ID", execution["id"])
-
     output_dir = (
         Path(output_root)
         / execution["experiment_id"]
         / f"execution_{execution['id']}"
     )
 
-    export_manifest = {
-        "schema_version": EXPORT_SCHEMA_VERSION,
-        "source": {
-            "execution_id": execution["id"],
-            "experiment_id": execution["experiment_id"],
-            "contract_sha256": execution["contract_sha256"],
-            "contract_snapshot": "contract.yaml",
-            "execution_manifest": "experiment_execution.yaml",
-            "execution_manifest_sha256": sha256_file(manifest_path),
-        },
-        "tables": {
-            "runs": {
-                "artifact": "runs.csv",
-                "rows": len(run_rows),
-                "sha256": _sha256_bytes(runs_bytes),
-            },
-            "judgments": {
-                "artifact": "judgments.csv",
-                "rows": len(judgment_rows),
-                "sha256": _sha256_bytes(judgments_bytes),
-            },
-        },
-    }
-    manifest_bytes = yaml.safe_dump(
-        export_manifest,
-        sort_keys=False,
-        allow_unicode=False,
-    ).encode("utf-8")
+    with _staged_export_directory(output_dir) as staging_dir:
+        with (
+            _csv_table_writer(staging_dir / "runs.csv", RUN_COLUMNS) as runs_writer,
+            _csv_table_writer(
+                staging_dir / "judgments.csv",
+                JUDGMENT_COLUMNS,
+            ) as judgments_writer,
+        ):
+            for item in _iter_validated_attempts(
+                source_dir=source_dir,
+                manifest=manifest,
+                contract=contract,
+                record_schema=record_schema,
+                expected_contract_sha256=execution["contract_sha256"],
+            ):
+                runs_writer.write(_build_run_row(execution, item))
+                judgments_writer.write_many(
+                    _build_judgment_rows(execution, contract, (item,))
+                )
 
-    _publish_export(
-        output_dir,
-        {
-            "runs.csv": runs_bytes,
-            "judgments.csv": judgments_bytes,
-            "export_manifest.yaml": manifest_bytes,
-        },
-    )
+        export_manifest = {
+            "schema_version": EXPORT_SCHEMA_VERSION,
+            "source": {
+                "execution_id": execution["id"],
+                "experiment_id": execution["experiment_id"],
+                "contract_sha256": execution["contract_sha256"],
+                "contract_snapshot": "contract.yaml",
+                "execution_manifest": "experiment_execution.yaml",
+                "execution_manifest_sha256": sha256_file(manifest_path),
+            },
+            "tables": {
+                "runs": runs_writer.manifest(),
+                "judgments": judgments_writer.manifest(),
+            },
+        }
+        manifest_bytes = yaml.safe_dump(
+            export_manifest,
+            sort_keys=False,
+            allow_unicode=False,
+        ).encode("utf-8")
+        _write_export_bytes(staging_dir / "export_manifest.yaml", manifest_bytes)
+        run_rows = runs_writer.rows
+        judgment_rows = judgments_writer.rows
 
     return analysis_export_result(
         execution_id=execution["id"],
@@ -221,10 +205,9 @@ def export_execution(
         runs_path=output_dir / "runs.csv",
         judgments_path=output_dir / "judgments.csv",
         manifest_path=output_dir / "export_manifest.yaml",
-        run_rows=len(run_rows),
-        judgment_rows=len(judgment_rows),
+        run_rows=run_rows,
+        judgment_rows=judgment_rows,
     )
-
 
 def _load_and_validate_contract(
     contract_path: Path,
@@ -419,14 +402,13 @@ def _validate_execution_header(
     return execution
 
 
-def _load_validated_attempts(
+def _iter_validated_attempts(
     source_dir: Path,
     manifest: dict[str, Any],
     contract: dict[str, Any],
     record_schema: dict[str, Any],
     expected_contract_sha256: str,
-) -> tuple[_validated_attempt, ...]:
-    results: list[_validated_attempt] = []
+) -> Iterable[_validated_attempt]:
     seen_run_ids: set[str] = set()
     seen_result_paths: set[str] = set()
 
@@ -541,14 +523,12 @@ def _load_validated_attempts(
                     "was not selected for its slot."
                 )
 
-            results.append(
-                _validated_attempt(
-                    slot=slot,
-                    attempt=attempt,
-                    record=record,
-                    result_path=result_path,
-                    selected=selected,
-                )
+            yield _validated_attempt(
+                slot=slot,
+                attempt=attempt,
+                record=record,
+                result_path=result_path,
+                selected=selected,
             )
 
         if selected_run_id is not None and selected_run_id not in slot_run_ids:
@@ -562,7 +542,6 @@ def _load_validated_attempts(
                 "in its resolved slot."
             )
 
-    return tuple(results)
 
 
 def _validate_evidence_artifacts(
@@ -696,7 +675,7 @@ def _build_run_row(
 def _build_judgment_rows(
     execution: dict[str, Any],
     contract: dict[str, Any],
-    attempts: tuple[_validated_attempt, ...],
+    attempts: Iterable[_validated_attempt],
 ) -> Iterable[dict[str, Any]]:
     scenarios = {
         scenario["id"]: scenario
@@ -797,6 +776,92 @@ def _json_cell(value: Any) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+
+
+@dataclass
+class _csv_table_writer:
+    path: Path
+    columns: tuple[str, ...]
+    _file: Any = None
+    _writer: Any = None
+    rows: int = 0
+
+    def __enter__(self) -> "_csv_table_writer":
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._file = self.path.open("x", encoding="utf-8", newline="")
+        self._writer = csv.DictWriter(
+            self._file,
+            fieldnames=self.columns,
+            extrasaction="raise",
+            lineterminator="\n",
+        )
+        self._writer.writeheader()
+        return self
+
+    def write(self, row: Mapping[str, Any]) -> None:
+        if self._writer is None:
+            raise RuntimeError("CSV table writer is not open.")
+        self._writer.writerow(
+            {
+                key: _csv_cell(row.get(key, ""))
+                for key in self.columns
+            }
+        )
+        self.rows += 1
+
+    def write_many(self, rows: Iterable[Mapping[str, Any]]) -> None:
+        for row in rows:
+            self.write(row)
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        if self._file is None:
+            return
+        try:
+            if exc_type is None:
+                self._file.flush()
+                os.fsync(self._file.fileno())
+        finally:
+            self._file.close()
+            self._file = None
+            self._writer = None
+
+    def manifest(self) -> dict[str, Any]:
+        return {
+            "artifact": self.path.name,
+            "rows": self.rows,
+            "sha256": sha256_file(self.path),
+        }
+
+
+@contextmanager
+def _staged_export_directory(output_dir: Path) -> Iterable[Path]:
+    if output_dir.exists():
+        raise FileExistsError(
+            f"Analysis export directory already exists: '{output_dir}'."
+        )
+
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    temp_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_dir.name}.tmp-",
+            dir=output_dir.parent,
+        )
+    )
+    try:
+        yield temp_dir
+        os.replace(temp_dir, output_dir)
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+
+def _write_export_bytes(path: Path, content: bytes) -> None:
+    with path.open("xb") as file:
+        file.write(content)
+        file.flush()
+        os.fsync(file.fileno())
 
 
 def _publish_export(

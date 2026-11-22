@@ -28,6 +28,7 @@ from acmm.analysis.layout import (
     COMPLIANCE_SCOPE,
     INTERACTION_SCOPE,
     TRAJECTORY_SCOPE,
+    PROVIDER_PRESSURE_SCOPE,
     analysis_data_dir_from_root,
     analysis_log_dir_from_root,
 )
@@ -63,7 +64,8 @@ class analysis_run_result:
     analysis_id: str
     output_dir: Path
     manifest_path: Path
-    population_policy: str
+    source_kind: str
+    population_policy: str | None
     resolved_stages: tuple[str, ...]
 
 
@@ -160,6 +162,17 @@ _STAGE_DEFINITIONS: dict[str, _stage_definition] = {
             "data/trajectory/trajectory_tool_usage.csv",
         ),
     ),
+    "provider_pressure_summary": _stage_definition(
+        kind="provider_pressure_summary",
+        label="Provider Pressure trajectory summary",
+        script_name="analyze_provider_pressure.R",
+        expected_outputs=(
+            "data/provider_pressure/provider_pressure_snapshot_summary.csv",
+            "data/provider_pressure/provider_pressure_pacing_summary.csv",
+            "data/provider_pressure/provider_pressure_feature_summary.csv",
+            "data/provider_pressure/provider_pressure_feature_trajectory.csv",
+        ),
+    ),
     "plot_run_duration": _stage_definition(
         kind="plot_run_duration",
         label="run-duration plot",
@@ -239,6 +252,24 @@ _STAGE_DEFINITIONS: dict[str, _stage_definition] = {
         expected_outputs=(
             "figures/trajectory/trajectory_tool_composition.png",
             "figures/trajectory/trajectory_tool_composition.pdf",
+        ),
+    ),
+    "plot_provider_pressure_pacing": _stage_definition(
+        kind="plot_provider_pressure_pacing",
+        label="Provider Pressure pacing-trajectory plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/provider_pressure/pacing_trajectory.png",
+            "figures/provider_pressure/pacing_trajectory.pdf",
+        ),
+    ),
+    "plot_provider_pressure_feature_scores": _stage_definition(
+        kind="plot_provider_pressure_feature_scores",
+        label="Provider Pressure feature-score plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/provider_pressure/feature_scores.png",
+            "figures/provider_pressure/feature_scores.pdf",
         ),
     ),
     "compliance_workbook": _stage_definition(
@@ -322,10 +353,16 @@ def run_analysis_plan(
         copied_plan_path.write_bytes(plan.raw_bytes)
         copied_interaction_design = _copy_referenced_inputs(plan, staging_dir)
         total_stages = len(plan.resolved_stages)
-        emit(
-            f"resolved {total_stages} stage(s) under population policy "
-            f"'{plan.population_policy}'."
-        )
+        if plan.population_policy is None:
+            emit(
+                f"resolved {total_stages} stage(s) for source kind "
+                f"'{plan.source_kind}'."
+            )
+        else:
+            emit(
+                f"resolved {total_stages} stage(s) under population policy "
+                f"'{plan.population_policy}'."
+            )
 
         completed_stages: list[dict[str, Any]] = []
         for index, stage_kind in enumerate(plan.resolved_stages, start=1):
@@ -383,6 +420,7 @@ def run_analysis_plan(
         analysis_id=analysis_id,
         output_dir=target_dir,
         manifest_path=target_dir / "analysis_manifest.yaml",
+        source_kind=plan.source_kind,
         population_policy=plan.population_policy,
         resolved_stages=plan.resolved_stages,
     )
@@ -466,7 +504,11 @@ def _stage_command(
     if definition.script_name is None:
         raise analysis_run_error(f"Stage '{stage_kind}' is not an R stage.")
     script = _R_SCRIPT_ROOT / definition.script_name
-    population_flag = f"--population-policy={plan.population_policy}"
+    population_flag = (
+        f"--population-policy={plan.population_policy}"
+        if plan.population_policy is not None
+        else None
+    )
 
     if stage_kind == "requirement_estimates":
         output = analysis_data_dir_from_root(
@@ -546,12 +588,21 @@ def _stage_command(
         )
 
     if stage_kind == "trajectory":
+        assert population_flag is not None
         return (
             rscript,
             str(script),
             str(export_dir),
             str(analysis_dir),
             population_flag,
+        )
+
+    if stage_kind == "provider_pressure_summary":
+        return (
+            rscript,
+            str(script),
+            str(export_dir),
+            str(analysis_dir),
         )
 
     plot_stage_to_kind = {
@@ -564,6 +615,8 @@ def _stage_command(
         "plot_trajectory_tool_usage": "trajectory_tool_usage",
         "plot_trajectory_error_rate": "trajectory_error_rate",
         "plot_trajectory_tool_composition": "trajectory_tool_composition",
+        "plot_provider_pressure_pacing": "provider_pressure_pacing",
+        "plot_provider_pressure_feature_scores": "provider_pressure_feature_scores",
     }
     plot_kind = plot_stage_to_kind.get(stage_kind)
     if plot_kind is not None:
@@ -580,6 +633,8 @@ def _stage_command(
             ",".join(request.formats),
         ]
         if plot_kind == "run_duration":
+            if plan.population_policy is None:
+                raise analysis_run_error("Run-duration plot requires an experiment population policy.")
             command.extend([str(export_dir), plan.population_policy])
         elif plot_kind == "requirement_compliance":
             command.extend(
@@ -609,6 +664,8 @@ def _stage_command(
             command.append(str(request.top_n or 12))
         elif plot_kind == "trajectory_tool_composition":
             command.append(str(request.top_n or 12))
+        elif plot_kind == "provider_pressure_feature_scores":
+            command.append(str(request.top_n or 8))
         return tuple(command)
 
     raise analysis_run_error(f"Unsupported R analysis stage '{stage_kind}'.")
@@ -684,6 +741,12 @@ def _scope_for_stage(kind: str) -> str:
         "plot_trajectory_tool_composition",
     }:
         return TRAJECTORY_SCOPE
+    if kind in {
+        "provider_pressure_summary",
+        "plot_provider_pressure_pacing",
+        "plot_provider_pressure_feature_scores",
+    }:
+        return PROVIDER_PRESSURE_SCOPE
     return COMPLIANCE_SCOPE
 
 
@@ -819,15 +882,30 @@ def _probe_r_packages(rscript: str) -> dict[str, str]:
 
 def _validate_export_binding(manifest: Mapping[str, Any]) -> None:
     schema_version = str(manifest.get("schema_version", ""))
-    if schema_version not in {"0.1", "0.2", "0.3"}:
-        raise analysis_run_error(
-            f"Unsupported analysis export schema_version '{schema_version}'.",
-            exit_code=2,
-        )
     source = manifest.get("source")
     if not isinstance(source, dict):
         raise analysis_run_error(
             "Export manifest must define a source mapping.",
+            exit_code=2,
+        )
+    source_kind = source.get("kind")
+    if source_kind == "provider_pressure":
+        if schema_version not in {"0.1", "0.2"}:
+            raise analysis_run_error(
+                "Provider Pressure analysis exports require schema_version '0.1' or '0.2'.",
+                exit_code=2,
+            )
+        digest = source.get("source_digest_sha256")
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise analysis_run_error(
+                "Provider Pressure export manifest must define source.source_digest_sha256.",
+                exit_code=2,
+            )
+        return
+
+    if schema_version not in {"0.1", "0.2", "0.3"}:
+        raise analysis_run_error(
+            f"Unsupported analysis export schema_version '{schema_version}'.",
             exit_code=2,
         )
     experiment_id = source.get("experiment_id")
@@ -842,11 +920,23 @@ def _validate_plan_export_compatibility(
     plan: analysis_plan,
     manifest: Mapping[str, Any],
 ) -> None:
+    source = manifest.get("source")
+    source_kind = source.get("kind") if isinstance(source, dict) else None
+    if plan.source_kind == "provider_pressure":
+        if source_kind != "provider_pressure":
+            raise analysis_run_error(
+                "Provider Pressure analysis plans require a Provider Pressure export.",
+                exit_code=2,
+            )
+        return
+    if source_kind == "provider_pressure":
+        raise analysis_run_error(
+            "Experiment analysis plans cannot be run against a Provider Pressure export.",
+            exit_code=2,
+        )
     if "trajectory" not in plan.resolved_stages:
         return
     schema_version = str(manifest.get("schema_version", ""))
-    source = manifest.get("source")
-    source_kind = source.get("kind") if isinstance(source, dict) else None
     if schema_version != "0.3" or source_kind != "campaign":
         raise analysis_run_error(
             "Trajectory analysis requires Campaign analysis export schema 0.3 "
@@ -998,6 +1088,8 @@ _PLOT_OUTPUT_STEM_BY_STAGE = {
     "plot_trajectory_tool_usage": "figures/trajectory/trajectory_tool_usage",
     "plot_trajectory_error_rate": "figures/trajectory/trajectory_error_rate",
     "plot_trajectory_tool_composition": "figures/trajectory/trajectory_tool_composition",
+    "plot_provider_pressure_pacing": "figures/provider_pressure/pacing_trajectory",
+    "plot_provider_pressure_feature_scores": "figures/provider_pressure/feature_scores",
 }
 
 
@@ -1019,6 +1111,8 @@ def _expected_outputs_for_stage(
         "plot_trajectory_tool_usage": "trajectory_tool_usage",
         "plot_trajectory_error_rate": "trajectory_error_rate",
         "plot_trajectory_tool_composition": "trajectory_tool_composition",
+        "plot_provider_pressure_pacing": "provider_pressure_pacing",
+        "plot_provider_pressure_feature_scores": "provider_pressure_feature_scores",
     }[stage_kind]
     request = plan.plot(plot_kind)
     if request is None:
@@ -1066,20 +1160,26 @@ def _build_analysis_manifest(
         "export_schema_version": str(export_manifest["schema_version"]),
         "export_manifest_sha256": export_manifest_sha256,
         "kind": source.get("kind", "execution"),
-        "experiment_id": source["experiment_id"],
     }
     for key in (
+        "experiment_id",
         "execution_id",
         "campaign_id",
         "merge_id",
         "package_sha256",
         "contract_sha256",
         "design_digest",
+        "source_digest_sha256",
+        "lineage_count",
+        "snapshot_count",
+        "trajectory_schema_versions",
     ):
         if key in source:
             source_binding[key] = source[key]
     if "adjudication" in source:
         source_binding["adjudication"] = source["adjudication"]
+    if "lineages" in source:
+        source_binding["lineages"] = source["lineages"]
 
     artifacts = []
     for path in sorted(
@@ -1117,7 +1217,12 @@ def _build_analysis_manifest(
             "schema_version": str(plan.raw["schema_version"]),
             "artifact": "analysis_plan.yaml",
             "sha256": plan_sha256,
-            "population_policy": plan.population_policy,
+            "source_kind": plan.source_kind,
+            **(
+                {"population_policy": plan.population_policy}
+                if plan.population_policy is not None
+                else {}
+            ),
             "requested_analyses": [request.kind for request in plan.analyses],
             "requested_reports": list(plan.reports),
             "requested_plots": [

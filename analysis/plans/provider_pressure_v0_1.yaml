@@ -1,0 +1,11 @@
+schema_version: '0.5'
+source: provider_pressure
+defaults:
+  plot_formats:
+    - png
+analyses:
+  - kind: provider_pressure_summary
+plots:
+  - kind: provider_pressure_pacing
+  - kind: provider_pressure_feature_scores
+    top_n: 8

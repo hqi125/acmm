@@ -100,7 +100,8 @@ load_acmm_run_export <- function(
 load_acmm_campaign_export <- function(
     exportDir,
     requireCompleteSelection = TRUE,
-    populationPolicy = NULL
+    populationPolicy = NULL,
+    includeTrajectory = FALSE
 )
 {
     acmm_require_namespace("yaml")
@@ -152,9 +153,14 @@ load_acmm_campaign_export <- function(
         acmmCampaignJudgmentColumns,
         "judgments.csv"
     )
+    acmm_assert(
+        is.logical(includeTrajectory) && length(includeTrajectory) == 1 && !is.na(includeTrajectory),
+        "includeTrajectory must be one non-missing logical value.",
+        "acmm_analysis_api_error"
+    )
     toolCalls <- NULL
     toolResults <- NULL
-    if (identical(binding$schema_version, acmmCampaignExportSchemaVersion))
+    if (includeTrajectory && identical(binding$schema_version, acmmCampaignExportSchemaVersion))
     {
         toolCallsPath <- file.path(exportDir, "tool_calls.csv")
         toolResultsPath <- file.path(exportDir, "tool_results.csv")
@@ -262,7 +268,8 @@ load_acmm_campaign_export <- function(
 load_acmm_export <- function(
     exportDir,
     requireCompleteSelection = TRUE,
-    populationPolicy = NULL
+    populationPolicy = NULL,
+    includeTrajectory = FALSE
 )
 {
     acmm_assert(
@@ -293,7 +300,8 @@ load_acmm_export <- function(
         return(load_acmm_campaign_export(
             exportDir,
             requireCompleteSelection = requireCompleteSelection,
-            populationPolicy = populationPolicy
+            populationPolicy = populationPolicy,
+            includeTrajectory = includeTrajectory
         ))
     }
     acmm_abort(

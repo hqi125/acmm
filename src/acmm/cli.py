@@ -10,6 +10,7 @@ import time
 from typing import Any, Mapping
 
 from acmm.analysis.campaign_export import export_campaign
+from acmm.analysis.provider_pressure_export import export_provider_pressure
 from acmm.analysis.export import analysis_export_error, export_execution
 from acmm.analysis.runner import (
     analysis_run_error,
@@ -2210,6 +2211,36 @@ def _run_export_campaign(args: argparse.Namespace) -> int:
 
 
 
+def _run_export_provider_pressure(args: argparse.Namespace) -> int:
+    try:
+        result = export_provider_pressure(
+            pressure_root=Path(args.pressure_root),
+            output_root=Path(args.output_root),
+            progress=lambda message: print(
+                f"Provider Pressure export: {message}",
+                flush=True,
+            ),
+        )
+    except (analysis_export_error, FileExistsError, OSError, ValueError) as exc:
+        print(f"ERROR: Provider Pressure analysis export failed: {exc}", file=sys.stderr)
+        return 2
+
+    print("Provider Pressure analysis export completed successfully.")
+    print(f"  export id:         {result.export_id}")
+    print(f"  output:            {result.output_dir}")
+    print(f"  lineages:          {result.lineages_path} ({result.lineage_rows} row(s))")
+    print(f"  snapshots:         {result.snapshots_path} ({result.snapshot_rows} row(s))")
+    print(f"  features:          {result.features_path} ({result.feature_rows} row(s))")
+    print(f"  signals:           {result.signals_path} ({result.signal_rows} row(s))")
+    print(f"  decisions:         {result.decisions_path} ({result.decision_rows} row(s))")
+    print(
+        f"  pacing events:     {result.pacing_events_path} "
+        f"({result.pacing_event_rows} row(s))"
+    )
+    print(f"  manifest:          {result.manifest_path}")
+    return 0
+
+
 def _run_analyze(args: argparse.Namespace) -> int:
     try:
         result = run_analysis_plan(
@@ -2236,7 +2267,9 @@ def _run_analyze(args: argparse.Namespace) -> int:
 
     print("Analysis completed successfully.")
     print(f"  analysis id:      {result.analysis_id}")
-    print(f"  population:       {result.population_policy}")
+    print(f"  source:           {result.source_kind}")
+    if result.population_policy is not None:
+        print(f"  population:       {result.population_policy}")
     print(f"  output:           {result.output_dir}")
     print(f"  manifest:         {result.manifest_path}")
     print(f"  resolved stages:  {len(result.resolved_stages)}")
@@ -2570,6 +2603,30 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     export_campaign_parser.set_defaults(handler=_run_export_campaign)
+
+    export_pressure_parser = export_subparsers.add_parser(
+        "provider-pressure",
+        help=(
+            "Export immutable Provider Pressure trajectory snapshots into "
+            "deterministic analysis-ready tables."
+        ),
+    )
+    export_pressure_parser.add_argument(
+        "pressure_root",
+        help=(
+            "Path to provider_pressure/ or to one Provider Pressure lineage "
+            "directory containing trajectory-index.yaml."
+        ),
+    )
+    export_pressure_parser.add_argument(
+        "--output-root",
+        default=str(default_exports_root()),
+        help=(
+            "Analysis export root directory "
+            f"(default: {default_exports_root()})."
+        ),
+    )
+    export_pressure_parser.set_defaults(handler=_run_export_provider_pressure)
 
 
     analyze_parser = subparsers.add_parser(

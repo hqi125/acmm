@@ -13,6 +13,7 @@ acmm_analysis_source_order <- function()
         "availability.R",
         "interaction.R",
         "trajectory.R",
+        "provider_pressure.R",
         "plots.R",
         "reporting.R"
     )

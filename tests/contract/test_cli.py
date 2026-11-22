@@ -48,6 +48,25 @@ def test_export_campaign_command_parses_independent_campaign_arguments() -> None
 
 
 
+def test_export_provider_pressure_command_parses_independent_arguments() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(
+        [
+            "export",
+            "provider-pressure",
+            "generated/provider_pressure",
+            "--output-root",
+            "exports-test",
+        ]
+    )
+
+    assert args.command == "export"
+    assert args.export_scope == "provider-pressure"
+    assert args.pressure_root == "generated/provider_pressure"
+    assert args.output_root == "exports-test"
+
+
+
 def test_analyze_command_parses_plan_and_export_arguments() -> None:
     parser = _build_parser()
     args = parser.parse_args(

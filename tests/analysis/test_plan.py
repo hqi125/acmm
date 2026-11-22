@@ -244,3 +244,50 @@ plots:
         "plot_trajectory_error_rate",
         "plot_trajectory_tool_composition",
     )
+
+
+def test_provider_pressure_plan_v05_has_no_population_and_resolves_lightweight_stages() -> None:
+    plan = load_analysis_plan(
+        ROOT / "analysis" / "plans" / "provider_pressure_v0_1.yaml"
+    )
+
+    assert plan.schema_version == "0.5"
+    assert plan.source_kind == "provider_pressure"
+    assert plan.population_policy is None
+    assert plan.plot_formats == ("png",)
+    feature_plot = plan.plot("provider_pressure_feature_scores")
+    assert feature_plot is not None
+    assert feature_plot.top_n == 8
+    assert plan.resolved_stages == (
+        "provider_pressure_summary",
+        "plot_provider_pressure_pacing",
+        "plot_provider_pressure_feature_scores",
+    )
+
+
+def test_provider_pressure_plan_rejects_experiment_analysis_kinds(tmp_path: Path) -> None:
+    plan_path = _write(
+        tmp_path / "plan.yaml",
+        """schema_version: '0.5'
+source: provider_pressure
+analyses:
+  - kind: requirement_estimates
+""",
+    )
+
+    with pytest.raises(analysis_plan_error, match="Provider Pressure plans"):
+        load_analysis_plan(plan_path)
+
+
+def test_experiment_plan_v05_requires_population_policy(tmp_path: Path) -> None:
+    plan_path = _write(
+        tmp_path / "plan.yaml",
+        """schema_version: '0.5'
+source: experiment
+analyses:
+  - kind: requirement_estimates
+""",
+    )
+
+    with pytest.raises(analysis_plan_error, match="population.policy"):
+        load_analysis_plan(plan_path)

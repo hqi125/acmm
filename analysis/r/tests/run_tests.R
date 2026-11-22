@@ -1458,7 +1458,7 @@ yaml::write_yaml(
     trajectoryManifest,
     file.path(campaignTrajectoryDir, "export_manifest.yaml")
 )
-campaignTrajectoryLoaded <- load_acmm_export(campaignTrajectoryDir)
+campaignTrajectoryLoaded <- load_acmm_export(campaignTrajectoryDir, includeTrajectory = TRUE)
 assert_equal(campaignTrajectoryLoaded$binding$schema_version, "0.3")
 assert_equal(nrow(campaignTrajectoryLoaded$tool_calls), 2L)
 assert_equal(nrow(campaignTrajectoryLoaded$tool_results), 2L)
@@ -1529,3 +1529,190 @@ assert_equal(
     c("goal", "obligation", "boundary", "procedure", "fidelity", "recovery")
 )
 assert_equal(acmm_normalize_plot_formats(c("PNG", "pdf", "png")), c("png", "pdf"))
+
+providerPressureExportDir <- file.path(root, "provider_pressure_export")
+dir.create(providerPressureExportDir, recursive = TRUE, showWarnings = FALSE)
+providerLineages <- data.frame(
+    export_schema_version = "0.1",
+    lineage_id = "lineage_fixture",
+    provider_id = "github",
+    scope_id = "scope_fixture",
+    model_id = "github_pressure_v1",
+    model_version = "0.13",
+    model_definition_sha256 = paste(rep("a", 64), collapse = ""),
+    snapshot_count = 2,
+    latest_sequence = 1,
+    latest_snapshot_sha256 = paste(rep("b", 64), collapse = ""),
+    stringsAsFactors = FALSE
+)
+providerSnapshots <- data.frame(
+    export_schema_version = c("0.1", "0.1"),
+    lineage_id = c("lineage_fixture", "lineage_fixture"),
+    provider_id = c("github", "github"),
+    scope_id = c("scope_fixture", "scope_fixture"),
+    model_id = c("github_pressure_v1", "github_pressure_v1"),
+    model_version = c("0.13", "0.13"),
+    model_definition_sha256 = c(paste(rep("a", 64), collapse = ""), paste(rep("a", 64), collapse = "")),
+    trajectory_schema_version = c("0.5", "0.5"),
+    sequence = c(0, 1),
+    created_at = c("2026-11-21T00:00:00Z", "2026-11-21T00:01:00Z"),
+    source_kind = c("bootstrap", "live_execution"),
+    source_execution_id = c("bootstrap", "execution_fixture"),
+    execution_status = c("bootstrap", "completed"),
+    snapshot_sha256 = c(paste(rep("c", 64), collapse = ""), paste(rep("d", 64), collapse = "")),
+    parent_sha256 = c("", paste(rep("c", 64), collapse = "")),
+    experiment_id = c("", "fixture_experiment"),
+    package_sha256 = c("", paste(rep("e", 64), collapse = "")),
+    selected_run_count = c(0, 2),
+    session_dir = c("", "session_fixture"),
+    observations_before = c(0, 0),
+    observations_after = c(0, 1),
+    observations_delta = c(0, 1),
+    reward_events_before = c(0, 0),
+    reward_events_after = c(0, 0),
+    reward_events_delta = c(0, 0),
+    punishment_events_before = c(0, 0),
+    punishment_events_after = c(0, 1),
+    punishment_events_delta = c(0, 1),
+    runtime_pressure_events_before = c(0, 0),
+    runtime_pressure_events_after = c(0, 1),
+    runtime_pressure_events_delta = c(0, 1),
+    runtime_pressure_seconds_before = c(0, 0),
+    runtime_pressure_seconds_after = c(0, 120),
+    runtime_pressure_seconds_delta = c(0, 120),
+    pph_pacing_events_before = c(0, 0),
+    pph_pacing_events_after = c(0, 1),
+    pph_pacing_events_delta = c(0, 1),
+    pph_pacing_seconds_before = c(0, 0),
+    pph_pacing_seconds_after = c(0, 30),
+    pph_pacing_seconds_delta = c(0, 30),
+    source_metadata_json = c("{}", "{}"),
+    model_state_before_json = c("{}", "{}"),
+    model_state_after_json = c("{}", "{}"),
+    stringsAsFactors = FALSE
+)
+providerFeatures <- data.frame(
+    export_schema_version = c("0.1", "0.1"),
+    lineage_id = c("lineage_fixture", "lineage_fixture"),
+    sequence = c(0, 1),
+    created_at = c("2026-11-21T00:00:00Z", "2026-11-21T00:01:00Z"),
+    source_kind = c("bootstrap", "live_execution"),
+    source_execution_id = c("bootstrap", "execution_fixture"),
+    feature = c("provider.github.shared_pressure", "provider.github.shared_pressure"),
+    score_before = c(1, 1),
+    score_after = c(1, 2.5),
+    score_delta = c(0, 1.5),
+    observations_after = c(0, 1),
+    rewards_after = c(0, 0),
+    punishments_after = c(0, 1),
+    confidence_after = c(0, 0.1),
+    runtime_pressure_events_after = c(0, 1),
+    runtime_pressure_seconds_after = c(0, 120),
+    pph_actuation_events_after = c(0, 1),
+    pph_actuation_seconds_after = c(0, 30),
+    state_before_json = c("{}", "{}"),
+    state_after_json = c("{}", "{}"),
+    stringsAsFactors = FALSE
+)
+providerSignals <- data.frame(
+    export_schema_version = "0.1",
+    lineage_id = "lineage_fixture",
+    sequence = 1,
+    created_at = "2026-11-21T00:01:00Z",
+    source_kind = "live_execution",
+    source_execution_id = "execution_fixture",
+    signal_index = 1,
+    kind = "punishment",
+    count = 1,
+    severity = 1,
+    pressure_duration_seconds = 120,
+    features_json = "{}",
+    metadata_json = "{}",
+    observation_metadata_json = "{}",
+    record_json = "{}",
+    stringsAsFactors = FALSE
+)
+providerDecisions <- data.frame(
+    export_schema_version = "0.1",
+    lineage_id = "lineage_fixture",
+    sequence = 1,
+    created_at = "2026-11-21T00:01:00Z",
+    source_execution_id = "execution_fixture",
+    decision_index = 1,
+    decision_kind = "action",
+    run_index = 0,
+    subject_id = "subject_a",
+    scenario_id = "scenario_a",
+    action_id = "mcp.rest.read",
+    decision_id = "decision_fixture",
+    outcome = "",
+    effective_pressure = 2.5,
+    event_pph_pressure = 2.5,
+    event_pph_wait_seconds = 30,
+    app_suspension_seconds = 0,
+    baseline_spacing_wait_seconds = 1,
+    total_admission_wait_seconds = 31,
+    recommended_wait_seconds = 31,
+    provider_wait_seconds = "",
+    underprediction_seconds = "",
+    features_json = "{}",
+    metadata_json = "{}",
+    model_state_metadata_json = "{}",
+    record_json = "{}",
+    stringsAsFactors = FALSE
+)
+providerPacing <- data.frame(
+    export_schema_version = c("0.1", "0.1"),
+    lineage_id = c("lineage_fixture", "lineage_fixture"),
+    sequence = c(1, 1),
+    created_at = c("2026-11-21T00:01:00Z", "2026-11-21T00:01:00Z"),
+    source_execution_id = c("execution_fixture", "execution_fixture"),
+    pacing_index = c(1, 2),
+    source = c("pph", "pph"),
+    reason = c("learned_provider_pressure", "provider_directed_recovery"),
+    duration_seconds = c(30, 120),
+    action_id = c("mcp.rest.read", "mcp.rest.read"),
+    run_index = c(0, 0),
+    subject_id = c("subject_a", "subject_a"),
+    scenario_id = c("scenario_a", "scenario_a"),
+    decision_id = c("decision_fixture", "decision_fixture"),
+    features_json = c("{}", "{}"),
+    metadata_json = c("{}", "{}"),
+    stringsAsFactors = FALSE
+)
+utils::write.csv(providerLineages, file.path(providerPressureExportDir, "lineages.csv"), row.names = FALSE, na = "")
+utils::write.csv(providerSnapshots, file.path(providerPressureExportDir, "snapshots.csv"), row.names = FALSE, na = "")
+utils::write.csv(providerFeatures, file.path(providerPressureExportDir, "features.csv"), row.names = FALSE, na = "")
+utils::write.csv(providerSignals, file.path(providerPressureExportDir, "signals.csv"), row.names = FALSE, na = "")
+utils::write.csv(providerDecisions, file.path(providerPressureExportDir, "decisions.csv"), row.names = FALSE, na = "")
+utils::write.csv(providerPacing, file.path(providerPressureExportDir, "pacing_events.csv"), row.names = FALSE, na = "")
+providerSummary <- acmm_provider_pressure_summary(providerPressureExportDir)
+assert_equal(nrow(providerSummary$snapshot_summary), 2L)
+assert_equal(nrow(providerSummary$pacing_summary), 2L)
+assert_equal(providerSummary$feature_summary$final_score, 2.5)
+assert_equal(providerSummary$feature_summary$maximum_score, 2.5)
+
+providerPlotRoot <- file.path(root, "provider_pressure_plot_smoke")
+dir.create(file.path(providerPlotRoot, "data", "provider_pressure"), recursive = TRUE, showWarnings = FALSE)
+utils::write.csv(
+    providerSummary$pacing_summary,
+    file.path(providerPlotRoot, "data", "provider_pressure", "provider_pressure_pacing_summary.csv"),
+    row.names = FALSE,
+    na = ""
+)
+utils::write.csv(
+    providerSummary$feature_summary,
+    file.path(providerPlotRoot, "data", "provider_pressure", "provider_pressure_feature_summary.csv"),
+    row.names = FALSE,
+    na = ""
+)
+utils::write.csv(
+    providerSummary$feature_trajectory,
+    file.path(providerPlotRoot, "data", "provider_pressure", "provider_pressure_feature_trajectory.csv"),
+    row.names = FALSE,
+    na = ""
+)
+acmm_plot_provider_pressure_pacing(providerPlotRoot, formats = c("png"))
+acmm_plot_provider_pressure_feature_scores(providerPlotRoot, topN = 1L, formats = c("png"))
+assert_true(file.exists(file.path(providerPlotRoot, "figures/provider_pressure/pacing_trajectory.png")))
+assert_true(file.exists(file.path(providerPlotRoot, "figures/provider_pressure/feature_scores.png")))

@@ -9,8 +9,8 @@ import jsonschema
 import yaml
 
 
-ANALYSIS_PLAN_SCHEMA_VERSION = "0.4"
-ANALYSIS_PLAN_SCHEMA_VERSIONS = ("0.1", "0.2", "0.3", "0.4")
+ANALYSIS_PLAN_SCHEMA_VERSION = "0.5"
+ANALYSIS_PLAN_SCHEMA_VERSIONS = ("0.1", "0.2", "0.3", "0.4", "0.5")
 DEFAULT_BOOTSTRAP_REPLICATES = 2000
 DEFAULT_BOOTSTRAP_SEED = 12345
 DEFAULT_CONFIDENCE_LEVEL = 0.95
@@ -23,6 +23,7 @@ ANALYSIS_KINDS = (
     "availability",
     "interaction",
     "trajectory",
+    "provider_pressure_summary",
 )
 REPORT_KINDS = (
     "compliance_workbook",
@@ -39,6 +40,8 @@ PLOT_KINDS = (
     "trajectory_tool_usage",
     "trajectory_error_rate",
     "trajectory_tool_composition",
+    "provider_pressure_pacing",
+    "provider_pressure_feature_scores",
 )
 
 _PLOT_STAGE_BY_KIND = {
@@ -51,6 +54,8 @@ _PLOT_STAGE_BY_KIND = {
     "trajectory_tool_usage": "plot_trajectory_tool_usage",
     "trajectory_error_rate": "plot_trajectory_error_rate",
     "trajectory_tool_composition": "plot_trajectory_tool_composition",
+    "provider_pressure_pacing": "plot_provider_pressure_pacing",
+    "provider_pressure_feature_scores": "plot_provider_pressure_feature_scores",
 }
 
 _STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
@@ -61,6 +66,7 @@ _STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "availability": (),
     "interaction": (),
     "trajectory": (),
+    "provider_pressure_summary": (),
     "compliance_workbook": (
         "requirement_uncertainty",
         "dimension_uncertainty",
@@ -76,6 +82,8 @@ _STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "plot_trajectory_tool_usage": ("trajectory",),
     "plot_trajectory_error_rate": ("trajectory",),
     "plot_trajectory_tool_composition": ("trajectory",),
+    "plot_provider_pressure_pacing": ("provider_pressure_summary",),
+    "plot_provider_pressure_feature_scores": ("provider_pressure_summary",),
 }
 
 
@@ -114,7 +122,8 @@ class analysis_plan:
     raw_bytes: bytes
     raw: Mapping[str, Any]
     schema_version: str
-    population_policy: str
+    source_kind: str
+    population_policy: str | None
     bootstrap_defaults: bootstrap_parameters
     analyses: tuple[analysis_request, ...]
     reports: tuple[str, ...]
@@ -145,6 +154,8 @@ def default_analysis_plan_schema_path(schema_version: str = ANALYSIS_PLAN_SCHEMA
         return root / "analysis_plan_v0_3.schema.json"
     if schema_version == "0.4":
         return root / "analysis_plan_v0_4.schema.json"
+    if schema_version == "0.5":
+        return root / "analysis_plan_v0_5.schema.json"
     raise analysis_plan_error(
         f"Unsupported analysis plan schema_version '{schema_version}'."
     )
@@ -196,6 +207,23 @@ def load_analysis_plan(
             f"Analysis plan failed schema validation{prefix}: {exc.message}"
         ) from exc
 
+    source_kind = str(value.get("source", "experiment"))
+    population_value = value.get("population")
+    if source_kind == "experiment":
+        if not isinstance(population_value, dict) or "policy" not in population_value:
+            raise analysis_plan_error(
+                "Experiment analysis plans must define population.policy."
+            )
+        population_policy: str | None = str(population_value["policy"])
+    elif source_kind == "provider_pressure":
+        if population_value is not None:
+            raise analysis_plan_error(
+                "Provider Pressure analysis plans must not define a GOBPFR population policy."
+            )
+        population_policy = None
+    else:
+        raise analysis_plan_error(f"Unsupported analysis source '{source_kind}'.")
+
     analyses_value = value["analyses"]
     report_value = value.get("reports", [])
     plot_value = value.get("plots", [])
@@ -206,6 +234,36 @@ def load_analysis_plan(
     _reject_duplicates(report_kinds, "report")
     _reject_duplicates(plot_kinds, "plot")
 
+    pressure_analysis_kinds = {"provider_pressure_summary"}
+    pressure_plot_kinds = {"provider_pressure_pacing", "provider_pressure_feature_scores"}
+    if source_kind == "provider_pressure":
+        unsupported_analyses = sorted(set(analysis_kinds) - pressure_analysis_kinds)
+        unsupported_plots = sorted(set(plot_kinds) - pressure_plot_kinds)
+        if unsupported_analyses or unsupported_plots or report_kinds:
+            details = []
+            if unsupported_analyses:
+                details.append("analyses=" + ",".join(unsupported_analyses))
+            if unsupported_plots:
+                details.append("plots=" + ",".join(unsupported_plots))
+            if report_kinds:
+                details.append("reports=" + ",".join(report_kinds))
+            raise analysis_plan_error(
+                "Provider Pressure plans may request only provider-pressure summary/plots ("
+                + "; ".join(details)
+                + ")."
+            )
+    else:
+        pressure_requests = sorted(
+            (set(analysis_kinds) & pressure_analysis_kinds)
+            | (set(plot_kinds) & pressure_plot_kinds)
+        )
+        if pressure_requests:
+            raise analysis_plan_error(
+                "Experiment analysis plans cannot request Provider Pressure stages: "
+                + ", ".join(pressure_requests)
+                + "."
+            )
+
     if "interaction_workbook" in report_kinds and "interaction" not in analysis_kinds:
         raise analysis_plan_error(
             "interaction_workbook requires an explicit interaction analysis with a design path."
@@ -215,7 +273,7 @@ def load_analysis_plan(
     default_bootstrap = _bootstrap_parameters(defaults.get("bootstrap", {}), None)
     default_plot_formats = _plot_formats(
         defaults.get("plot_formats"),
-        ("png",) if schema_version in {"0.3", "0.4"} else ("png", "pdf"),
+        ("png",) if schema_version in {"0.3", "0.4", "0.5"} else ("png", "pdf"),
     )
     requests: list[analysis_request] = []
 
@@ -277,7 +335,8 @@ def load_analysis_plan(
         raw_bytes=raw_bytes,
         raw=value,
         schema_version=schema_version,
-        population_policy=value["population"]["policy"],
+        source_kind=source_kind,
+        population_policy=population_policy,
         bootstrap_defaults=default_bootstrap,
         analyses=tuple(requests),
         reports=tuple(report_kinds),
