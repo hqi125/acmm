@@ -171,6 +171,8 @@ _STAGE_DEFINITIONS: dict[str, _stage_definition] = {
             "data/provider_pressure/provider_pressure_pacing_summary.csv",
             "data/provider_pressure/provider_pressure_feature_summary.csv",
             "data/provider_pressure/provider_pressure_feature_trajectory.csv",
+            "data/provider_pressure/provider_pressure_admission_summary.csv",
+            "data/provider_pressure/provider_pressure_utilization_summary.csv",
         ),
     ),
     "plot_run_duration": _stage_definition(
@@ -270,6 +272,42 @@ _STAGE_DEFINITIONS: dict[str, _stage_definition] = {
         expected_outputs=(
             "figures/provider_pressure/feature_scores.png",
             "figures/provider_pressure/feature_scores.pdf",
+        ),
+    ),
+    "plot_provider_pressure_admission_waits": _stage_definition(
+        kind="plot_provider_pressure_admission_waits",
+        label="Provider Pressure admission-wait plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/provider_pressure/admission_waits.png",
+            "figures/provider_pressure/admission_waits.pdf",
+        ),
+    ),
+    "plot_provider_pressure_utilization_envelope": _stage_definition(
+        kind="plot_provider_pressure_utilization_envelope",
+        label="Provider Pressure utilization-envelope plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/provider_pressure/utilization_envelope.png",
+            "figures/provider_pressure/utilization_envelope.pdf",
+        ),
+    ),
+    "plot_provider_pressure_utilization_by_subject": _stage_definition(
+        kind="plot_provider_pressure_utilization_by_subject",
+        label="Provider Pressure utilization-by-subject plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/provider_pressure/utilization_by_subject.png",
+            "figures/provider_pressure/utilization_by_subject.pdf",
+        ),
+    ),
+    "plot_provider_pressure_wait_vs_actions": _stage_definition(
+        kind="plot_provider_pressure_wait_vs_actions",
+        label="Provider Pressure wait-versus-actions plot",
+        script_name="plot_analysis.R",
+        expected_outputs=(
+            "figures/provider_pressure/admission_wait_vs_actions.png",
+            "figures/provider_pressure/admission_wait_vs_actions.pdf",
         ),
     ),
     "compliance_workbook": _stage_definition(
@@ -617,6 +655,10 @@ def _stage_command(
         "plot_trajectory_tool_composition": "trajectory_tool_composition",
         "plot_provider_pressure_pacing": "provider_pressure_pacing",
         "plot_provider_pressure_feature_scores": "provider_pressure_feature_scores",
+        "plot_provider_pressure_admission_waits": "provider_pressure_admission_waits",
+        "plot_provider_pressure_utilization_envelope": "provider_pressure_utilization_envelope",
+        "plot_provider_pressure_utilization_by_subject": "provider_pressure_utilization_by_subject",
+        "plot_provider_pressure_wait_vs_actions": "provider_pressure_wait_vs_actions",
     }
     plot_kind = plot_stage_to_kind.get(stage_kind)
     if plot_kind is not None:
@@ -745,6 +787,10 @@ def _scope_for_stage(kind: str) -> str:
         "provider_pressure_summary",
         "plot_provider_pressure_pacing",
         "plot_provider_pressure_feature_scores",
+        "plot_provider_pressure_admission_waits",
+        "plot_provider_pressure_utilization_envelope",
+        "plot_provider_pressure_utilization_by_subject",
+        "plot_provider_pressure_wait_vs_actions",
     }:
         return PROVIDER_PRESSURE_SCOPE
     return COMPLIANCE_SCOPE
@@ -890,9 +936,9 @@ def _validate_export_binding(manifest: Mapping[str, Any]) -> None:
         )
     source_kind = source.get("kind")
     if source_kind == "provider_pressure":
-        if schema_version not in {"0.1", "0.2", "0.3", "0.4"}:
+        if schema_version not in {"0.1", "0.2", "0.3", "0.4", "0.5", "0.6"}:
             raise analysis_run_error(
-                "Provider Pressure analysis exports require schema_version '0.1', '0.2', '0.3', or '0.4'.",
+                "Provider Pressure analysis exports require schema_version '0.1', '0.2', '0.3', '0.4', '0.5', or '0.6'.",
                 exit_code=2,
             )
         digest = source.get("source_digest_sha256")
@@ -903,7 +949,7 @@ def _validate_export_binding(manifest: Mapping[str, Any]) -> None:
             )
         return
 
-    if schema_version not in {"0.1", "0.2", "0.3", "0.4"}:
+    if schema_version not in {"0.1", "0.2", "0.3", "0.4", "0.5"}:
         raise analysis_run_error(
             f"Unsupported analysis export schema_version '{schema_version}'.",
             exit_code=2,
@@ -928,6 +974,18 @@ def _validate_plan_export_compatibility(
                 "Provider Pressure analysis plans require a Provider Pressure export.",
                 exit_code=2,
             )
+        utilization_stages = {
+            "plot_provider_pressure_utilization_envelope",
+            "plot_provider_pressure_utilization_by_subject",
+        }
+        if utilization_stages.intersection(plan.resolved_stages):
+            schema_version = str(manifest.get("schema_version", ""))
+            if schema_version != "0.6":
+                raise analysis_run_error(
+                    "Provider Pressure utilization plots require export schema 0.6 "
+                    "with utilization_summary.csv.",
+                    exit_code=2,
+                )
         return
     if source_kind == "provider_pressure":
         raise analysis_run_error(
@@ -1090,6 +1148,10 @@ _PLOT_OUTPUT_STEM_BY_STAGE = {
     "plot_trajectory_tool_composition": "figures/trajectory/trajectory_tool_composition",
     "plot_provider_pressure_pacing": "figures/provider_pressure/pacing_trajectory",
     "plot_provider_pressure_feature_scores": "figures/provider_pressure/feature_scores",
+    "plot_provider_pressure_admission_waits": "figures/provider_pressure/admission_waits",
+    "plot_provider_pressure_utilization_envelope": "figures/provider_pressure/utilization_envelope",
+    "plot_provider_pressure_utilization_by_subject": "figures/provider_pressure/utilization_by_subject",
+    "plot_provider_pressure_wait_vs_actions": "figures/provider_pressure/admission_wait_vs_actions",
 }
 
 
@@ -1113,6 +1175,10 @@ def _expected_outputs_for_stage(
         "plot_trajectory_tool_composition": "trajectory_tool_composition",
         "plot_provider_pressure_pacing": "provider_pressure_pacing",
         "plot_provider_pressure_feature_scores": "provider_pressure_feature_scores",
+        "plot_provider_pressure_admission_waits": "provider_pressure_admission_waits",
+        "plot_provider_pressure_utilization_envelope": "provider_pressure_utilization_envelope",
+        "plot_provider_pressure_utilization_by_subject": "provider_pressure_utilization_by_subject",
+        "plot_provider_pressure_wait_vs_actions": "provider_pressure_wait_vs_actions",
     }[stage_kind]
     request = plan.plot(plot_kind)
     if request is None:

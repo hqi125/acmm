@@ -110,9 +110,9 @@ the Excel files; selectable figures are rendered by R as standalone artifacts un
 
 ## Plot modules
 
-Plan schemas 0.2 through 0.4 expose generic R plot modules through `plots:`. Each requested plot is a
+Plan schemas 0.2 through 0.5 expose generic R plot modules through `plots:`. Each requested plot is a
 normal analysis stage with deterministic dependencies, progress output, logs, manifest provenance,
-and hashed figure outputs. Schema 0.2 preserves the historical PNG+PDF pair. Schemas 0.3 and 0.4 default to PNG only and
+and hashed figure outputs. Schema 0.2 preserves the historical PNG+PDF pair. Schemas 0.3 through 0.6 default to PNG only and
 allow `defaults.plot_formats` or a per-plot `formats` override using `png` and/or `pdf`. PDF is
 therefore opt-in in the preferred standard plan.
 
@@ -128,6 +128,18 @@ Implemented plot kinds are:
 - `trajectory_error_rate` (schema 0.4): per-run tool-result error-rate distribution by subject;
 - `trajectory_tool_composition` (schema 0.4): separate per-subject top-N raw tool-name shares. Raw
   names are intentionally not canonicalized across adapters.
+- `provider_pressure_pacing` (schema 0.5): pacing burden by checkpoint and recorded pacing reason;
+- `provider_pressure_admission_waits` (schema 0.5): per-run total action-admission wait distribution
+  by subject;
+- `provider_pressure_utilization_envelope` (schema 0.6): per-run maximum recorded content-request
+  utilization across pressure-event order, expressed as a percentage of the recorded operational
+  threshold;
+- `provider_pressure_utilization_by_subject` (schema 0.6): subject-wise distributions of per-run
+  maximum requests/hour and requests/minute utilization;
+- `provider_pressure_wait_vs_actions` (schema 0.6): observed run-level provider-managed action count
+  versus total admission wait, with no fitted model. The historical `provider_pressure_feature_scores`
+  plot remains supported but is not in the preferred pressure plan because saturated feature scores
+  can be visually uninformative.
 
 Trajectory run metrics currently selectable for plotting are `tool_calls`, `distinct_tools`,
 `error_rate`, `repeated_calls`, and `unmatched_calls`. `repeated_calls` means repeated use of a tool
@@ -158,6 +170,17 @@ classification/sequence contract rather than experiment-specific assumptions hid
 Campaign export schema 0.2 remains valid for the pre-trajectory statistical modules, but requesting
 `trajectory` (directly or through a trajectory plot) against a 0.2 export is rejected before R
 runtime work begins.
+
+## Provider Pressure analysis
+
+Provider Pressure uses a separate lightweight analysis family with no experiment population policy.
+The preferred plan is `analysis/plans/provider_pressure_v0_3.yaml`. It requests the compact pressure
+summary plus four descriptive figures: maximum recorded provider utilization across run
+occurrences, utilization distributions by subject, per-run admission-wait burden, and admission wait
+versus provider-managed action count. The utilization plots use the recorded operational-threshold
+fractions directly; they do not infer a rate-limit wall or a latent provider state. Historical pacing
+and learned-feature plots remain supported by earlier plans, while feature-state, signal, decision,
+and pacing-event tables remain exported for audit and follow-up work.
 
 ## Dependencies
 

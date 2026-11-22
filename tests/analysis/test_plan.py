@@ -265,6 +265,44 @@ def test_provider_pressure_plan_v05_has_no_population_and_resolves_lightweight_s
     )
 
 
+def test_provider_pressure_plan_v02_prefers_pacing_and_admission_waits() -> None:
+    plan = load_analysis_plan(
+        ROOT / "analysis" / "plans" / "provider_pressure_v0_2.yaml"
+    )
+
+    assert plan.source_kind == "provider_pressure"
+    assert plan.population_policy is None
+    assert plan.plot("provider_pressure_admission_waits") is not None
+    assert plan.plot("provider_pressure_feature_scores") is None
+    assert plan.resolved_stages == (
+        "provider_pressure_summary",
+        "plot_provider_pressure_pacing",
+        "plot_provider_pressure_admission_waits",
+    )
+
+
+def test_provider_pressure_plan_v03_prefers_utilization_and_run_burden_views() -> None:
+    plan = load_analysis_plan(
+        ROOT / "analysis" / "plans" / "provider_pressure_v0_3.yaml"
+    )
+
+    assert plan.schema_version == "0.6"
+    assert plan.source_kind == "provider_pressure"
+    assert plan.population_policy is None
+    assert plan.plot("provider_pressure_utilization_envelope") is not None
+    assert plan.plot("provider_pressure_utilization_by_subject") is not None
+    assert plan.plot("provider_pressure_admission_waits") is not None
+    assert plan.plot("provider_pressure_wait_vs_actions") is not None
+    assert plan.plot("provider_pressure_pacing") is None
+    assert plan.resolved_stages == (
+        "provider_pressure_summary",
+        "plot_provider_pressure_utilization_envelope",
+        "plot_provider_pressure_utilization_by_subject",
+        "plot_provider_pressure_admission_waits",
+        "plot_provider_pressure_wait_vs_actions",
+    )
+
+
 def test_provider_pressure_plan_rejects_experiment_analysis_kinds(tmp_path: Path) -> None:
     plan_path = _write(
         tmp_path / "plan.yaml",

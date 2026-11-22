@@ -86,6 +86,18 @@ if (identical(plotKind, "run_duration"))
     topN <- if (length(plotArguments) >= 1) as.integer(plotArguments[[1]]) else 8L
     acmm_assert(!is.na(topN) && topN >= 1, "provider_pressure_feature_scores top_n must be positive.")
     acmm_plot_provider_pressure_feature_scores(outputRoot, topN, formats)
+} else if (identical(plotKind, "provider_pressure_admission_waits"))
+{
+    acmm_plot_provider_pressure_admission_waits(outputRoot, formats)
+} else if (identical(plotKind, "provider_pressure_utilization_envelope"))
+{
+    acmm_plot_provider_pressure_utilization_envelope(outputRoot, formats)
+} else if (identical(plotKind, "provider_pressure_utilization_by_subject"))
+{
+    acmm_plot_provider_pressure_utilization_by_subject(outputRoot, formats)
+} else if (identical(plotKind, "provider_pressure_wait_vs_actions"))
+{
+    acmm_plot_provider_pressure_wait_vs_actions(outputRoot, formats)
 } else
 {
     stop(paste0("Unsupported plot kind '", plotKind, "'."))

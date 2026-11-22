@@ -452,6 +452,21 @@
               "$ref": "#/$defs/plotFormats"
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "provider_pressure_admission_waits"
+            },
+            "formats": {
+              "$ref": "#/$defs/plotFormats"
+            }
+          }
         }
       ]
     },

@@ -25,7 +25,7 @@ acmm export campaign \
     ~/acmm_generated/<experiment_id>/campaign_<campaign_id>/merged/merge_<merge_id>
 ```
 
-Provider Pressure export (schema 0.4):
+Provider Pressure export (schema 0.6):
 
 ```text
 acmm export provider-pressure ~/acmm_generated/provider_pressure
@@ -41,6 +41,13 @@ python tools/upgrade_provider_pressure_store.py ~/acmm_generated/provider_pressu
 
 The upgrader writes `store_v2` beside the immutable legacy files, never deletes or rewrites the
 legacy source, and resumes from sealed checkpoints after interruption.
+
+Provider Pressure export schema 0.6 retains the compact `admission_summary.csv` and adds
+`utilization_summary.csv`, a per-run/checkpoint summary of the recorded provider-utilization
+envelope. It carries action/sample counts, event-order bounds, and mean/maximum utilization for the
+recorded content-requests/hour and content-requests/minute dimensions. The raw `decisions.csv`
+remains the audit surface; ordinary pressure analysis uses compact summaries without loading the
+full decision history.
 
 By default the export is published under:
 
@@ -96,7 +103,7 @@ provenance. A mismatch is fatal rather than reconciled heuristically.
 
 ## Provider Pressure export
 
-Provider Pressure export is a separate source family from run and Campaign export. Schema 0.4
+Provider Pressure export is a separate source family from run and Campaign export. Schema 0.6
 normalizes one or more Provider Pressure lineages into:
 
 ```text
@@ -107,14 +114,18 @@ signals.csv
 decisions.csv
 pacing_events.csv
 pacing_summary.csv
+admission_summary.csv
+utilization_summary.csv
 export_manifest.yaml
 ```
 
 For native `store_v2` input, the exporter walks checkpoints and segmented event records
 incrementally, verifies event/checkpoint hash chains, and keeps memory bounded to the current
-source record plus small aggregation state. `pacing_summary.csv` is produced while streaming so
-ordinary pressure analysis and plots do not need to materialize the full raw pacing-event table.
-The raw event tables remain available for audit.
+source record plus small aggregation state. `pacing_summary.csv`, `admission_summary.csv`, and
+`utilization_summary.csv` are produced while streaming so ordinary pressure analysis and plots do
+not need to materialize the full raw pacing/decision tables. Utilization is reported exactly as the
+recorded fraction of the controller's operational threshold; export does not reinterpret that
+threshold as a provider hard limit. The raw event tables remain available for audit.
 
 The export manifest binds the terminal lineage/checkpoint/event identity rather than enumerating an
 ever-growing source tree. Full chain integrity is still verified while the source is traversed.

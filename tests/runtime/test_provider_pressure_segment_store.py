@@ -111,7 +111,26 @@ def _legacy_snapshot(
                 for _ in range(event_count)
             ],
             "decisions": [
-                {"decision_kind": "action", "decision_id": f"d-{sequence}-{i}", "action_id": "mcp.rest.read"}
+                {
+                    "decision_kind": "action",
+                    "decision_id": f"d-{sequence}-{i}",
+                    "action_id": "mcp.rest.read",
+                    "run_index": 0,
+                    "subject_id": "subject_a",
+                    "scenario_id": "scenario_a",
+                    "metadata": {
+                        "app_suspension": {
+                            "metadata": {
+                                "cold_start_prior": {
+                                    "utilization": {
+                                        "content_requests_per_hour": 0.2,
+                                        "content_requests_per_minute": 0.3,
+                                    }
+                                }
+                            }
+                        }
+                    },
+                }
                 for i in range(event_count)
             ],
             "pacing_events": [
@@ -309,9 +328,10 @@ def test_legacy_upgrade_is_restart_safe_and_exports_segmented_store(
         tmp_path / "exports",
     )
     manifest = yaml.safe_load(exported.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == "0.4"
+    assert manifest["schema_version"] == "0.6"
     assert manifest["source"]["storage_kind"] == "segmented"
     assert manifest["tables"]["snapshots"]["rows"] == 2
     assert manifest["tables"]["signals"]["rows"] == 6
     assert manifest["tables"]["decisions"]["rows"] == 6
     assert manifest["tables"]["pacing_events"]["rows"] == 6
+    assert manifest["tables"]["utilization_summary"]["rows"] == 2

@@ -26,7 +26,7 @@ from acmm.analysis.export import (
 )
 
 
-PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION = "0.4"
+PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION = "0.6"
 LEGACY_PROVIDER_PRESSURE_SAFE_LOAD_MAX_BYTES = 16 * 1024 * 1024
 
 LINEAGE_COLUMNS = (
@@ -193,6 +193,45 @@ PACING_SUMMARY_COLUMNS = (
     "pacing_seconds",
 )
 
+ADMISSION_SUMMARY_COLUMNS = (
+    "export_schema_version",
+    "lineage_id",
+    "sequence",
+    "created_at",
+    "source_execution_id",
+    "run_index",
+    "subject_id",
+    "scenario_id",
+    "action_count",
+    "total_admission_wait_seconds",
+    "mean_admission_wait_seconds",
+    "max_admission_wait_seconds",
+    "event_pph_wait_seconds",
+    "app_suspension_seconds",
+    "baseline_spacing_wait_seconds",
+    "provider_wait_seconds",
+    "underprediction_seconds",
+)
+
+UTILIZATION_SUMMARY_COLUMNS = (
+    "export_schema_version",
+    "lineage_id",
+    "sequence",
+    "created_at",
+    "source_execution_id",
+    "run_index",
+    "subject_id",
+    "scenario_id",
+    "action_count",
+    "utilization_sample_count",
+    "first_decision_index",
+    "last_decision_index",
+    "mean_content_requests_per_hour_utilization",
+    "max_content_requests_per_hour_utilization",
+    "mean_content_requests_per_minute_utilization",
+    "max_content_requests_per_minute_utilization",
+)
+
 _TOTAL_FIELDS = (
     "observations",
     "reward_events",
@@ -215,6 +254,8 @@ class provider_pressure_export_result:
     decisions_path: Path
     pacing_events_path: Path
     pacing_summary_path: Path
+    admission_summary_path: Path
+    utilization_summary_path: Path
     manifest_path: Path
     lineage_rows: int
     snapshot_rows: int
@@ -223,6 +264,8 @@ class provider_pressure_export_result:
     decision_rows: int
     pacing_event_rows: int
     pacing_summary_rows: int
+    admission_summary_rows: int
+    utilization_summary_rows: int
 
 
 @dataclass(frozen=True)
@@ -330,6 +373,12 @@ def export_provider_pressure(
                 "pacing_summary": stack.enter_context(
                     _csv_table_writer(staging_dir / "pacing_summary.csv", PACING_SUMMARY_COLUMNS)
                 ),
+                "admission_summary": stack.enter_context(
+                    _csv_table_writer(staging_dir / "admission_summary.csv", ADMISSION_SUMMARY_COLUMNS)
+                ),
+                "utilization_summary": stack.enter_context(
+                    _csv_table_writer(staging_dir / "utilization_summary.csv", UTILIZATION_SUMMARY_COLUMNS)
+                ),
             }
 
             for lineage in lineages:
@@ -348,7 +397,18 @@ def export_provider_pressure(
                     writers["snapshots"].write(_snapshot_row(lineage, snapshot))
                     writers["features"].write_many(_feature_rows(lineage, snapshot))
                     writers["signals"].write_many(_signal_rows(lineage, snapshot))
-                    writers["decisions"].write_many(_decision_rows(lineage, snapshot))
+                    admission_summary: dict[tuple[str, str, str], dict[str, Any]] = {}
+                    utilization_summary: dict[tuple[str, str, str], dict[str, Any]] = {}
+                    for decision_row in _decision_rows(lineage, snapshot):
+                        writers["decisions"].write(decision_row)
+                        _accumulate_admission_summary(admission_summary, decision_row)
+                        _accumulate_utilization_summary(utilization_summary, decision_row)
+                    writers["admission_summary"].write_many(
+                        _finalize_admission_summary(admission_summary)
+                    )
+                    writers["utilization_summary"].write_many(
+                        _finalize_utilization_summary(utilization_summary)
+                    )
                     pacing_summary: dict[tuple[str, str], dict[str, Any]] = {}
                     for pacing_row in _pacing_rows(lineage, snapshot):
                         writers["pacing_events"].write(pacing_row)
@@ -409,6 +469,8 @@ def export_provider_pressure(
         decisions_path=output_dir / "decisions.csv",
         pacing_events_path=output_dir / "pacing_events.csv",
         pacing_summary_path=output_dir / "pacing_summary.csv",
+        admission_summary_path=output_dir / "admission_summary.csv",
+        utilization_summary_path=output_dir / "utilization_summary.csv",
         manifest_path=output_dir / "export_manifest.yaml",
         lineage_rows=counts["lineages"],
         snapshot_rows=counts["snapshots"],
@@ -417,6 +479,8 @@ def export_provider_pressure(
         decision_rows=counts["decisions"],
         pacing_event_rows=counts["pacing_events"],
         pacing_summary_rows=counts["pacing_summary"],
+        admission_summary_rows=counts["admission_summary"],
+        utilization_summary_rows=counts["utilization_summary"],
     )
 
 
@@ -478,6 +542,8 @@ def _export_segmented_provider_pressure(
                 "decisions": stack.enter_context(_csv_table_writer(staging_dir / "decisions.csv", DECISION_COLUMNS)),
                 "pacing_events": stack.enter_context(_csv_table_writer(staging_dir / "pacing_events.csv", PACING_COLUMNS)),
                 "pacing_summary": stack.enter_context(_csv_table_writer(staging_dir / "pacing_summary.csv", PACING_SUMMARY_COLUMNS)),
+                "admission_summary": stack.enter_context(_csv_table_writer(staging_dir / "admission_summary.csv", ADMISSION_SUMMARY_COLUMNS)),
+                "utilization_summary": stack.enter_context(_csv_table_writer(staging_dir / "utilization_summary.csv", UTILIZATION_SUMMARY_COLUMNS)),
             }
             processed = 0
             report_every = max(25, checkpoint_count // 10) if checkpoint_count else 1
@@ -495,6 +561,8 @@ def _export_segmented_provider_pressure(
                     decision_count = 0
                     pacing_count = 0
                     pacing_summary: dict[tuple[str, str], dict[str, Any]] = {}
+                    admission_summary: dict[tuple[str, str, str], dict[str, Any]] = {}
+                    utilization_summary: dict[tuple[str, str, str], dict[str, Any]] = {}
                     while next_event is not None and next_event.sequence <= checkpoint.event_sequence:
                         payload = _strip_migration_marker(next_event.payload)
                         if next_event.kind == "signal":
@@ -503,9 +571,12 @@ def _export_segmented_provider_pressure(
                             )
                             signal_count += 1
                         elif next_event.kind == "decision":
-                            writers["decisions"].write(
-                                _segmented_decision_row(lineage_id, checkpoint.sequence, next_event, payload)
+                            decision_row = _segmented_decision_row(
+                                lineage_id, checkpoint.sequence, next_event, payload
                             )
+                            writers["decisions"].write(decision_row)
+                            _accumulate_admission_summary(admission_summary, decision_row)
+                            _accumulate_utilization_summary(utilization_summary, decision_row)
                             decision_count += 1
                         elif next_event.kind == "pacing":
                             pacing_row = _segmented_pacing_row(
@@ -516,6 +587,12 @@ def _export_segmented_provider_pressure(
                             pacing_count += 1
                         next_event = next(events, None)
                     writers["pacing_summary"].write_many(pacing_summary.values())
+                    writers["admission_summary"].write_many(
+                        _finalize_admission_summary(admission_summary)
+                    )
+                    writers["utilization_summary"].write_many(
+                        _finalize_utilization_summary(utilization_summary)
+                    )
                     before = previous_profile if previous_profile is not None else checkpoint.profile
                     writers["snapshots"].write(
                         _segmented_snapshot_row(
@@ -598,6 +675,8 @@ def _export_segmented_provider_pressure(
         decisions_path=output_dir / "decisions.csv",
         pacing_events_path=output_dir / "pacing_events.csv",
         pacing_summary_path=output_dir / "pacing_summary.csv",
+        admission_summary_path=output_dir / "admission_summary.csv",
+        utilization_summary_path=output_dir / "utilization_summary.csv",
         manifest_path=output_dir / "export_manifest.yaml",
         lineage_rows=counts["lineages"],
         snapshot_rows=counts["snapshots"],
@@ -606,6 +685,8 @@ def _export_segmented_provider_pressure(
         decision_rows=counts["decisions"],
         pacing_event_rows=counts["pacing_events"],
         pacing_summary_rows=counts["pacing_summary"],
+        admission_summary_rows=counts["admission_summary"],
+        utilization_summary_rows=counts["utilization_summary"],
     )
 
 
@@ -786,6 +867,151 @@ def _accumulate_pacing_summary(
     current["pacing_seconds"] = float(current["pacing_seconds"]) + float(
         _number(row.get("duration_seconds", 0))
     )
+
+def _accumulate_admission_summary(
+    summary: dict[tuple[str, str, str], dict[str, Any]],
+    row: Mapping[str, Any],
+) -> None:
+    if str(row.get("decision_kind") or "") != "action":
+        return
+    run_index = str(row.get("run_index") or "")
+    subject_id = str(row.get("subject_id") or "")
+    scenario_id = str(row.get("scenario_id") or "")
+    key = (run_index, subject_id, scenario_id)
+    current = summary.get(key)
+    if current is None:
+        current = {
+            "export_schema_version": PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION,
+            "lineage_id": row.get("lineage_id", ""),
+            "sequence": row.get("sequence", ""),
+            "created_at": row.get("created_at", ""),
+            "source_execution_id": row.get("source_execution_id", ""),
+            "run_index": run_index,
+            "subject_id": subject_id,
+            "scenario_id": scenario_id,
+            "action_count": 0,
+            "total_admission_wait_seconds": 0.0,
+            "max_admission_wait_seconds": 0.0,
+            "event_pph_wait_seconds": 0.0,
+            "app_suspension_seconds": 0.0,
+            "baseline_spacing_wait_seconds": 0.0,
+            "provider_wait_seconds": 0.0,
+            "underprediction_seconds": 0.0,
+        }
+        summary[key] = current
+    total_wait = float(_number(row.get("total_admission_wait_seconds", 0)))
+    current["action_count"] = int(current["action_count"]) + 1
+    current["total_admission_wait_seconds"] = float(current["total_admission_wait_seconds"]) + total_wait
+    current["max_admission_wait_seconds"] = max(
+        float(current["max_admission_wait_seconds"]), total_wait
+    )
+    for field in (
+        "event_pph_wait_seconds",
+        "app_suspension_seconds",
+        "baseline_spacing_wait_seconds",
+        "provider_wait_seconds",
+        "underprediction_seconds",
+    ):
+        current[field] = float(current[field]) + float(_number(row.get(field, 0)))
+
+
+def _finalize_admission_summary(
+    summary: Mapping[tuple[str, str, str], Mapping[str, Any]],
+) -> Iterator[dict[str, Any]]:
+    for key in sorted(summary):
+        row = dict(summary[key])
+        count = int(row.get("action_count", 0))
+        total = float(row.get("total_admission_wait_seconds", 0.0))
+        row["mean_admission_wait_seconds"] = total / count if count else 0.0
+        yield row
+
+
+def _accumulate_utilization_summary(
+    summary: dict[tuple[str, str, str], dict[str, Any]],
+    row: Mapping[str, Any],
+) -> None:
+    if str(row.get("decision_kind") or "") != "action":
+        return
+
+    run_index = str(row.get("run_index") or "")
+    subject_id = str(row.get("subject_id") or "")
+    scenario_id = str(row.get("scenario_id") or "")
+    key = (run_index, subject_id, scenario_id)
+    current = summary.get(key)
+    if current is None:
+        current = {
+            "export_schema_version": PROVIDER_PRESSURE_EXPORT_SCHEMA_VERSION,
+            "lineage_id": row.get("lineage_id", ""),
+            "sequence": row.get("sequence", ""),
+            "created_at": row.get("created_at", ""),
+            "source_execution_id": row.get("source_execution_id", ""),
+            "run_index": run_index,
+            "subject_id": subject_id,
+            "scenario_id": scenario_id,
+            "action_count": 0,
+            "utilization_sample_count": 0,
+            "first_decision_index": "",
+            "last_decision_index": "",
+            "_hour_sum": 0.0,
+            "_hour_count": 0,
+            "_hour_max": None,
+            "_minute_sum": 0.0,
+            "_minute_count": 0,
+            "_minute_max": None,
+        }
+        summary[key] = current
+
+    current["action_count"] = int(current["action_count"]) + 1
+    decision_index = row.get("decision_index", "")
+    if current["first_decision_index"] == "":
+        current["first_decision_index"] = decision_index
+    current["last_decision_index"] = decision_index
+
+    metadata_text = row.get("metadata_json", "")
+    try:
+        metadata = json.loads(str(metadata_text)) if metadata_text else {}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        metadata = {}
+    app = _mapping(metadata.get("app_suspension"))
+    app_metadata = _mapping(app.get("metadata"))
+    prior = _mapping(app_metadata.get("cold_start_prior"))
+    utilization = _mapping(prior.get("utilization"))
+
+    hour = _optional_number(utilization.get("content_requests_per_hour"))
+    minute = _optional_number(utilization.get("content_requests_per_minute"))
+    if hour is None and minute is None:
+        return
+
+    current["utilization_sample_count"] = int(current["utilization_sample_count"]) + 1
+    if hour is not None:
+        current["_hour_sum"] = float(current["_hour_sum"]) + hour
+        current["_hour_count"] = int(current["_hour_count"]) + 1
+        current["_hour_max"] = hour if current["_hour_max"] is None else max(float(current["_hour_max"]), hour)
+    if minute is not None:
+        current["_minute_sum"] = float(current["_minute_sum"]) + minute
+        current["_minute_count"] = int(current["_minute_count"]) + 1
+        current["_minute_max"] = minute if current["_minute_max"] is None else max(float(current["_minute_max"]), minute)
+
+
+def _finalize_utilization_summary(
+    summary: Mapping[tuple[str, str, str], Mapping[str, Any]],
+) -> Iterator[dict[str, Any]]:
+    for key in sorted(summary):
+        source = dict(summary[key])
+        sample_count = int(source.pop("utilization_sample_count", 0))
+        hour_sum = float(source.pop("_hour_sum", 0.0))
+        hour_count = int(source.pop("_hour_count", 0))
+        hour_max = source.pop("_hour_max", None)
+        minute_sum = float(source.pop("_minute_sum", 0.0))
+        minute_count = int(source.pop("_minute_count", 0))
+        minute_max = source.pop("_minute_max", None)
+        source["utilization_sample_count"] = sample_count
+        source["mean_content_requests_per_hour_utilization"] = hour_sum / hour_count if hour_count and hour_max is not None else ""
+        source["max_content_requests_per_hour_utilization"] = hour_max if hour_max is not None else ""
+        source["mean_content_requests_per_minute_utilization"] = minute_sum / minute_count if minute_count and minute_max is not None else ""
+        source["max_content_requests_per_minute_utilization"] = minute_max if minute_max is not None else ""
+        yield source
+
 
 def _strip_migration_marker(value: Mapping[str, Any]) -> dict[str, Any]:
     result = dict(value)
@@ -1305,6 +1531,15 @@ def _number(value: Any) -> float | int:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _optional_number(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 

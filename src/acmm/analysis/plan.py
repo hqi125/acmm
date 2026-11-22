@@ -9,8 +9,8 @@ import jsonschema
 import yaml
 
 
-ANALYSIS_PLAN_SCHEMA_VERSION = "0.5"
-ANALYSIS_PLAN_SCHEMA_VERSIONS = ("0.1", "0.2", "0.3", "0.4", "0.5")
+ANALYSIS_PLAN_SCHEMA_VERSION = "0.6"
+ANALYSIS_PLAN_SCHEMA_VERSIONS = ("0.1", "0.2", "0.3", "0.4", "0.5", "0.6")
 DEFAULT_BOOTSTRAP_REPLICATES = 2000
 DEFAULT_BOOTSTRAP_SEED = 12345
 DEFAULT_CONFIDENCE_LEVEL = 0.95
@@ -42,6 +42,10 @@ PLOT_KINDS = (
     "trajectory_tool_composition",
     "provider_pressure_pacing",
     "provider_pressure_feature_scores",
+    "provider_pressure_admission_waits",
+    "provider_pressure_utilization_envelope",
+    "provider_pressure_utilization_by_subject",
+    "provider_pressure_wait_vs_actions",
 )
 
 _PLOT_STAGE_BY_KIND = {
@@ -56,6 +60,10 @@ _PLOT_STAGE_BY_KIND = {
     "trajectory_tool_composition": "plot_trajectory_tool_composition",
     "provider_pressure_pacing": "plot_provider_pressure_pacing",
     "provider_pressure_feature_scores": "plot_provider_pressure_feature_scores",
+    "provider_pressure_admission_waits": "plot_provider_pressure_admission_waits",
+    "provider_pressure_utilization_envelope": "plot_provider_pressure_utilization_envelope",
+    "provider_pressure_utilization_by_subject": "plot_provider_pressure_utilization_by_subject",
+    "provider_pressure_wait_vs_actions": "plot_provider_pressure_wait_vs_actions",
 }
 
 _STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
@@ -84,6 +92,10 @@ _STAGE_DEPENDENCIES: dict[str, tuple[str, ...]] = {
     "plot_trajectory_tool_composition": ("trajectory",),
     "plot_provider_pressure_pacing": ("provider_pressure_summary",),
     "plot_provider_pressure_feature_scores": ("provider_pressure_summary",),
+    "plot_provider_pressure_admission_waits": ("provider_pressure_summary",),
+    "plot_provider_pressure_utilization_envelope": ("provider_pressure_summary",),
+    "plot_provider_pressure_utilization_by_subject": ("provider_pressure_summary",),
+    "plot_provider_pressure_wait_vs_actions": ("provider_pressure_summary",),
 }
 
 
@@ -156,6 +168,8 @@ def default_analysis_plan_schema_path(schema_version: str = ANALYSIS_PLAN_SCHEMA
         return root / "analysis_plan_v0_4.schema.json"
     if schema_version == "0.5":
         return root / "analysis_plan_v0_5.schema.json"
+    if schema_version == "0.6":
+        return root / "analysis_plan_v0_6.schema.json"
     raise analysis_plan_error(
         f"Unsupported analysis plan schema_version '{schema_version}'."
     )
@@ -235,7 +249,14 @@ def load_analysis_plan(
     _reject_duplicates(plot_kinds, "plot")
 
     pressure_analysis_kinds = {"provider_pressure_summary"}
-    pressure_plot_kinds = {"provider_pressure_pacing", "provider_pressure_feature_scores"}
+    pressure_plot_kinds = {
+        "provider_pressure_pacing",
+        "provider_pressure_feature_scores",
+        "provider_pressure_admission_waits",
+        "provider_pressure_utilization_envelope",
+        "provider_pressure_utilization_by_subject",
+        "provider_pressure_wait_vs_actions",
+    }
     if source_kind == "provider_pressure":
         unsupported_analyses = sorted(set(analysis_kinds) - pressure_analysis_kinds)
         unsupported_plots = sorted(set(plot_kinds) - pressure_plot_kinds)
@@ -273,7 +294,7 @@ def load_analysis_plan(
     default_bootstrap = _bootstrap_parameters(defaults.get("bootstrap", {}), None)
     default_plot_formats = _plot_formats(
         defaults.get("plot_formats"),
-        ("png",) if schema_version in {"0.3", "0.4", "0.5"} else ("png", "pdf"),
+        ("png",) if schema_version in {"0.3", "0.4", "0.5", "0.6"} else ("png", "pdf"),
     )
     requests: list[analysis_request] = []
 

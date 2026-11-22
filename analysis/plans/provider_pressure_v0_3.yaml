@@ -1,0 +1,12 @@
+schema_version: '0.6'
+source: provider_pressure
+defaults:
+  plot_formats:
+    - png
+analyses:
+  - kind: provider_pressure_summary
+plots:
+  - kind: provider_pressure_utilization_envelope
+  - kind: provider_pressure_utilization_by_subject
+  - kind: provider_pressure_admission_waits
+  - kind: provider_pressure_wait_vs_actions

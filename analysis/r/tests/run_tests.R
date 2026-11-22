@@ -1680,15 +1680,39 @@ providerPacing <- data.frame(
     metadata_json = c("{}", "{}"),
     stringsAsFactors = FALSE
 )
+providerUtilization <- data.frame(
+    export_schema_version = "0.6",
+    lineage_id = "lineage_fixture",
+    sequence = 1,
+    created_at = "2026-11-21T00:01:00Z",
+    source_execution_id = "execution_fixture",
+    run_index = 0,
+    subject_id = "subject_a",
+    scenario_id = "scenario_a",
+    action_count = 1,
+    utilization_sample_count = 1,
+    first_decision_index = 1,
+    last_decision_index = 1,
+    mean_content_requests_per_hour_utilization = 0.25,
+    max_content_requests_per_hour_utilization = 0.25,
+    mean_content_requests_per_minute_utilization = 0.50,
+    max_content_requests_per_minute_utilization = 0.50,
+    stringsAsFactors = FALSE
+)
 utils::write.csv(providerLineages, file.path(providerPressureExportDir, "lineages.csv"), row.names = FALSE, na = "")
 utils::write.csv(providerSnapshots, file.path(providerPressureExportDir, "snapshots.csv"), row.names = FALSE, na = "")
 utils::write.csv(providerFeatures, file.path(providerPressureExportDir, "features.csv"), row.names = FALSE, na = "")
 utils::write.csv(providerSignals, file.path(providerPressureExportDir, "signals.csv"), row.names = FALSE, na = "")
 utils::write.csv(providerDecisions, file.path(providerPressureExportDir, "decisions.csv"), row.names = FALSE, na = "")
 utils::write.csv(providerPacing, file.path(providerPressureExportDir, "pacing_events.csv"), row.names = FALSE, na = "")
+utils::write.csv(providerUtilization, file.path(providerPressureExportDir, "utilization_summary.csv"), row.names = FALSE, na = "")
 providerSummary <- acmm_provider_pressure_summary(providerPressureExportDir)
 assert_equal(nrow(providerSummary$snapshot_summary), 2L)
 assert_equal(nrow(providerSummary$pacing_summary), 2L)
+assert_equal(nrow(providerSummary$admission_summary), 1L)
+assert_equal(providerSummary$admission_summary$total_admission_wait_seconds, 31)
+assert_equal(nrow(providerSummary$utilization_summary), 1L)
+assert_equal(providerSummary$utilization_summary$max_content_requests_per_minute_utilization, 0.5)
 assert_equal(providerSummary$feature_summary$final_score, 2.5)
 assert_equal(providerSummary$feature_summary$maximum_score, 2.5)
 
@@ -1727,7 +1751,27 @@ utils::write.csv(
     row.names = FALSE,
     na = ""
 )
+utils::write.csv(
+    providerSummary$admission_summary,
+    file.path(providerPlotRoot, "data", "provider_pressure", "provider_pressure_admission_summary.csv"),
+    row.names = FALSE,
+    na = ""
+)
+utils::write.csv(
+    providerSummary$utilization_summary,
+    file.path(providerPlotRoot, "data", "provider_pressure", "provider_pressure_utilization_summary.csv"),
+    row.names = FALSE,
+    na = ""
+)
 acmm_plot_provider_pressure_pacing(providerPlotRoot, formats = c("png"))
 acmm_plot_provider_pressure_feature_scores(providerPlotRoot, topN = 1L, formats = c("png"))
+acmm_plot_provider_pressure_admission_waits(providerPlotRoot, formats = c("png"))
+acmm_plot_provider_pressure_utilization_envelope(providerPlotRoot, formats = c("png"))
+acmm_plot_provider_pressure_utilization_by_subject(providerPlotRoot, formats = c("png"))
+acmm_plot_provider_pressure_wait_vs_actions(providerPlotRoot, formats = c("png"))
 assert_true(file.exists(file.path(providerPlotRoot, "figures/provider_pressure/pacing_trajectory.png")))
 assert_true(file.exists(file.path(providerPlotRoot, "figures/provider_pressure/feature_scores.png")))
+assert_true(file.exists(file.path(providerPlotRoot, "figures/provider_pressure/admission_waits.png")))
+assert_true(file.exists(file.path(providerPlotRoot, "figures/provider_pressure/utilization_envelope.png")))
+assert_true(file.exists(file.path(providerPlotRoot, "figures/provider_pressure/utilization_by_subject.png")))
+assert_true(file.exists(file.path(providerPlotRoot, "figures/provider_pressure/admission_wait_vs_actions.png")))

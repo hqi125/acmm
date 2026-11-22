@@ -48,7 +48,9 @@ tables <- list(
     provider_pressure_snapshot_summary = summary$snapshot_summary,
     provider_pressure_pacing_summary = summary$pacing_summary,
     provider_pressure_feature_summary = summary$feature_summary,
-    provider_pressure_feature_trajectory = summary$feature_trajectory
+    provider_pressure_feature_trajectory = summary$feature_trajectory,
+    provider_pressure_admission_summary = summary$admission_summary,
+    provider_pressure_utilization_summary = summary$utilization_summary
 )
 
 for (tableName in names(tables))
@@ -65,3 +67,5 @@ cat("Provider Pressure analysis completed successfully.\n")
 cat("Snapshots:", nrow(summary$snapshot_summary), "\n")
 cat("Pacing groups:", nrow(summary$pacing_summary), "\n")
 cat("Final feature states:", nrow(summary$feature_summary), "\n")
+cat("Run admission summaries:", nrow(summary$admission_summary), "\n")
+cat("Run utilization summaries:", nrow(summary$utilization_summary), "\n")

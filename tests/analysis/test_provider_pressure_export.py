@@ -123,7 +123,20 @@ def _snapshot(sequence: int, parent: str | None, source_kind: str, execution_id:
                     "total_admission_wait_seconds": 5.0,
                     "recommended_wait_seconds": 5.0,
                     "features": {"provider.github.shared_pressure": 1.0},
-                    "metadata": {},
+                    "metadata": {
+                        "app_suspension": {
+                            "duration_seconds": 0.0,
+                            "reason": "adaptive_pressure_pocket",
+                            "metadata": {
+                                "cold_start_prior": {
+                                    "utilization": {
+                                        "content_requests_per_hour": 0.25,
+                                        "content_requests_per_minute": 0.5,
+                                    }
+                                }
+                            },
+                        }
+                    },
                 }
             ] if sequence else [],
             "pacing_events": [
@@ -216,12 +229,14 @@ def test_provider_pressure_export_validates_chain_and_normalizes_tables(tmp_path
     assert result.decision_rows == 1
     assert result.pacing_event_rows == 1
     assert result.pacing_summary_rows == 1
+    assert result.admission_summary_rows == 1
+    assert result.utilization_summary_rows == 1
     assert result.output_dir.parent.name == "provider_pressure"
     assert messages[0].startswith("discovering")
     assert messages[-1].startswith("publishing")
 
     manifest = yaml.safe_load(result.manifest_path.read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == "0.4"
+    assert manifest["schema_version"] == "0.6"
     assert manifest["source"]["kind"] == "provider_pressure"
     assert manifest["source"]["lineage_count"] == 1
     assert manifest["source"]["snapshot_count"] == 2
@@ -244,6 +259,16 @@ def test_provider_pressure_export_validates_chain_and_normalizes_tables(tmp_path
     assert pacing_summary[0]["reason"] == "learned_provider_pressure"
     assert pacing_summary[0]["pacing_events"] == "1"
     assert pacing_summary[0]["pacing_seconds"] == "5.0"
+    admission_summary = _rows(result.admission_summary_path)
+    assert admission_summary[0]["subject_id"] == "subject_a"
+    assert admission_summary[0]["action_count"] == "1"
+    assert admission_summary[0]["total_admission_wait_seconds"] == "5.0"
+    assert admission_summary[0]["event_pph_wait_seconds"] == "5.0"
+    utilization_summary = _rows(result.utilization_summary_path)
+    assert utilization_summary[0]["subject_id"] == "subject_a"
+    assert utilization_summary[0]["utilization_sample_count"] == "1"
+    assert utilization_summary[0]["max_content_requests_per_hour_utilization"] == "0.25"
+    assert utilization_summary[0]["max_content_requests_per_minute_utilization"] == "0.5"
 
     second_root = tmp_path / "exports2"
     second = export_provider_pressure(lineage, second_root)
