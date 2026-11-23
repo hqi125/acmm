@@ -35,6 +35,25 @@ Exact subject images, digests, baseline settings, and LLM definitions are versio
 
 The examples below use neutral placeholders such as `<core-repository>`, `<package-directory>`, and `<experiment-selector>`. See [`docs/operator_conventions.md`](docs/operator_conventions.md) for the complete notation and generated-artifact layout used throughout the documentation.
 
+### 0. Confirm host-level prerequisites
+
+ACMM reconciles its managed subject deployments and package integrations, but it does not install every
+host-level dependency or create accounts and credentials at external providers. Before treating a new
+machine as ready, confirm the prerequisites required by the selected study:
+
+- Docker Engine/CLI and Docker Compose are available and the daemon is running. The frozen Windows
+  reference uses Docker Desktop with WSL integration.
+- The selected Ollama host is running and reachable from the subject containers. The frozen LLM baseline
+  points containers at `host.docker.internal:11434` and requires `gpt-oss:120b-cloud` to be registered on
+  that Ollama host. If `acmm env doctor` reports that the model is unavailable, prepare it on the host
+  (for example, `ollama pull gpt-oss:120b-cloud`) before qualification.
+- The `core:ollama_api_key` secret described below is for Ollama Cloud **usage telemetry**. It does not
+  replace host-side Ollama/model availability or provider authentication needed by the Ollama installation.
+- `Rscript` and the documented CRAN packages are required only when running the R analysis layer.
+- Package-specific documentation may declare additional external prerequisites such as Git, OpenSSL,
+  provider accounts, provider applications, or manually generated credentials. `acmm package install`
+  does not create those external resources.
+
 ### 1. Create the Python environment
 
 From a local Core checkout:
@@ -95,7 +114,7 @@ acmm secret bind core ollama_api_key --file <secret-file>
 
 Experiment- and integration-scoped credentials are declared by the installed package and are bound through the corresponding `acmm secret bind` scope. See [`docs/security/secrets.md`](docs/security/secrets.md).
 
-### 5. Validate and install an Experiment Package
+### 5. Validate, install, apply, and verify an Experiment Package
 
 ```text
 acmm package validate <package-directory>
@@ -105,12 +124,22 @@ acmm package list
 
 A package is installed as an immutable content-addressed revision. Use the experiment ID when only one revision is installed, or `EXPERIMENT_ID@SHA_PREFIX` to select an exact revision.
 
-Before real execution, verify the environment and preview the selected work:
+**Installation alone is not a readiness check.** A package with integrations or external resources may
+still require local reconciliation, package-declared secrets, and explicit operator-owned provider setup.
+For first-time setup, apply the package explicitly so failures are separated from scientific execution:
 
 ```text
+acmm package apply <experiment-selector>
+acmm secret validate
 acmm env doctor --start-if-needed
 acmm run <experiment-selector> --preview
 ```
+
+Treat `acmm env doctor` as the final non-scientific readiness gate for the currently converged package.
+Do not begin acquisition while it reports a required subject, integration, package diagnostic, model, or
+external dependency as NOT READY. Some packages also expose explicit mutating qualification actions through
+`acmm run apparatus`; those actions are intentionally **not** run by package install/apply/doctor. Follow the
+package's reproduction document when it requires one before scientific execution.
 
 ## Choosing an execution path
 

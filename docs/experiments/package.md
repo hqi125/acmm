@@ -69,6 +69,26 @@ integration later becomes useful to several experiments, it can be extracted int
 integration distribution behind the same Core interface; package-local integrations remain valid for
 experiments that require deep tailoring.
 
+## Operator-owned external prerequisites
+
+Core deliberately cannot infer or manufacture provider-side prerequisites for an arbitrary integration.
+A package that depends on an external service should document any operator-created account, application,
+repository, credential, host executable, or network prerequisite required before reconciliation can succeed.
+
+The lifecycle boundaries are intentionally distinct:
+
+- `acmm package install` validates and snapshots an immutable package revision; it does **not** create
+  provider accounts, applications, credentials, or arbitrary external provider state.
+- `acmm package apply <selector>` reconciles declared local subject/integration desired state.
+- `acmm env doctor` observes the converged environment and package diagnostics without silently performing
+  package-defined free-form mutations.
+- `acmm run apparatus exec <action>` is the explicit surface for package-defined engineering/setup actions
+  that may mutate the external experiment world.
+
+Therefore, a successful package install must not be interpreted as proof that the package is ready for
+scientific execution. Package documentation should identify any required apparatus action and the expected
+post-setup verification gate.
+
 ## Subject reconciliation
 
 The package-aware manager construction path is:
