@@ -117,8 +117,7 @@ add an explicit Campaign planned-run table so an unattempted logical slot remain
 denominator. Invalid/non-selected attempts remain available as diagnostics but are not part of the
 selected valid statistical population.
 
-The initial estimator surface is requirement-level and implements three alternatives already
-defined by ACMM quantification work:
+Requirement-level analysis implements three explicit weighting alternatives:
 
 ```text
 opportunity-weighted compliance
@@ -130,8 +129,7 @@ scenario-weighted compliance
 `not_applicable` is excluded from both. A zero estimable denominator produces `NA` rather than an
 invented numerical result.
 
-The second statistical milestone adds uncertainty estimation without changing the underlying
-estimands. `interval_acmm_hierarchical()` performs scenario-to-run cluster resampling and percentile
+Uncertainty estimation is implemented without changing the underlying estimands. `interval_acmm_hierarchical()` performs scenario-to-run cluster resampling and percentile
 intervals while retaining opportunities inside sampled runs. It refuses scenario-generalized
 intervals when fewer than two scenario clusters are observed. `interval_acmm_wilson()` is available
 only as an explicitly opted-in independent-binomial opportunity baseline.
@@ -148,7 +146,7 @@ See `analysis/r/README.md` for setup, validation rules, estimators, and uncertai
 
 The downstream R analysis layer may aggregate validated requirement-level compliance estimates into
 dimension-level `S_D` point scores. The aggregation method must remain explicit: arithmetic,
-geometric, harmonic, or minimum. The initial implementation uses equal requirement weights only and
+geometric, harmonic, or minimum. The implemented dimension aggregation uses equal requirement weights and
 refuses to renormalize over missing requirement estimates. The same scenario-to-run hierarchical
 bootstrap can now be propagated through `S_D`; dimension intervals are therefore based on replicate
 dimension scores, not on separately aggregated requirement interval endpoints.
@@ -197,4 +195,3 @@ Experiment-specific scientific choices are expressed as downstream plan/design d
 2 x 2 interaction design may be referenced by an analysis plan, while the executable interaction
 implementation remains generic Core R code. No post-acquisition analysis code or plan is required to
 be added to a frozen Experiment Package.
-

@@ -1,8 +1,6 @@
 # Secret Handling
 
-ACMM repositories must not contain live API keys, tokens, passwords, or other credentials. Runtime
-credentials are local operator configuration, not Experiment Package content and not reproducibility
-artifacts.
+ACMM repositories must not contain live API keys, personal access tokens, passwords, private keys, or other credentials. Runtime credentials are local operator configuration; they are not Experiment Package content and are not reproducibility artifacts.
 
 ## Local secret store
 
@@ -12,140 +10,100 @@ Initialize the local store explicitly:
 acmm secret init
 ```
 
-The default layout is:
+Core maintains a versioned local binding registry and a local secrets directory outside the repositories. The default location is under the operator's ACMM configuration directory, but commands should refer to credential files through explicit local paths rather than assuming a repository-relative location.
+
+A secret source file must remain operator-controlled. On POSIX systems, use owner-only permissions where practical:
 
 ```text
-~/.config/acmm/
-  secret-bindings.yaml
-  secrets/
-    ollama_api_key
-    github_mcp_access_token
-    acmm-experiment-2-mcp-subject-pat
-    acmm-experiment-2-mcp-controller-pat
+chmod 600 <secret-file>
 ```
 
-`acmm secret init` creates the `secrets/` directory with owner-only directory permissions on POSIX
-systems and creates an empty current-version registry when no registry exists. It does not create,
-copy, rotate, or delete credential files. Secret source files remain operator-owned and should use
-mode `0600` on POSIX systems.
+`<secret-file>` means a local file containing exactly one credential value. It must not be placed inside the Core or Experiment Package repository.
 
-The main repo and the experiment-package repo ignore common local secret paths such as `.env`,
-`secrets/`, and common API-key filenames. `.gitignore` is only a first defense: it does not protect a
-secret pasted into an already tracked source, documentation, YAML, or test file.
+## Binding scopes
 
-## Before committing or pushing
+The registry stores binding metadata and local source paths, never secret values or secret digests.
 
-Always inspect staged changes and final repository status before pushing:
+Three scopes are available:
 
-```text
-git diff --cached
+- **Core** — consumed only by Core services, for example provider-usage telemetry.
+- **Experiment** — available only to the trusted runtime of one Experiment Package.
+- **Integration** — available only to one declared package integration.
 
-git status --short
-```
-
-If the repositories are hosted on GitHub, enable Secret Protection / secret scanning and Push
-Protection when available. Push Protection can block a command-line push when a supported secret is
-detected. This protection is stronger than `.gitignore` because it can inspect secret-like content
-inside tracked files.
-
-Push protection is a repository/account setting rather than a committed workflow file, so ACMM does
-not attempt to emulate it with a CI workflow that would run only after a push has already reached the
-remote.
-
-## If a secret is committed
-
-Treat a committed credential as exposed. Revoke or rotate it at the provider, remove it from the
-working tree, and clean repository history when necessary. Merely adding the file to `.gitignore`
-afterward does not remove an already committed secret.
-
-## Experiment Package rule
-
-Experiment Packages may describe which external capability is required, but they must never embed
-live credentials needed to access it. ACMM obtains runtime credentials only through the local secret
-binding workflow; package code and Core services do not read secret values from ad hoc CLI options or
-provider-specific environment variables.
-
-## Secret binding scopes
-
-The registry stores only binding metadata and local source paths, never secret values or secret
-digests. Three scopes are available:
-
-- **Core** bindings are consumed only by Core services. Example: `core:ollama_api_key`.
-- **Experiment** bindings are declared by a package runtime and are available only to that package's
-  trusted runtime context.
-- **Integration** bindings are declared by a package integration and are available only to that
-  integration.
-
-Bind local files through one scope-explicit command family:
+Bind a credential through the matching scope:
 
 ```text
-acmm secret bind core SECRET_ID --file PATH
-acmm secret bind experiment EXPERIMENT_ID SECRET_ID --file PATH
-acmm secret bind integration EXPERIMENT_ID INTEGRATION_ID SECRET_ID --file PATH
+acmm secret bind core <secret-id> --file <secret-file>
+acmm secret bind experiment <experiment-id> <secret-id> --file <secret-file>
+acmm secret bind integration <experiment-id> <integration-id> <secret-id> --file <secret-file>
 acmm secret list
 ```
 
-The full scoped key is the registry identity. A `secret_id` may therefore appear legitimately in
-multiple scopes, experiments, or integrations. Rebinding an exact key to the same source file is
-idempotent. Changing an existing exact key to a different source file requires `--replace`; Core
-never silently retargets a binding.
+The full scoped key is the registry identity. Rebinding the same key to the same source file is idempotent. Retargeting an existing key requires the explicit replacement option supported by the CLI.
 
-Use the matching scope for removal:
+Remove only the registry reference with the corresponding scope:
 
 ```text
-acmm secret unbind core SECRET_ID
-acmm secret unbind experiment EXPERIMENT_ID SECRET_ID
-acmm secret unbind integration EXPERIMENT_ID INTEGRATION_ID SECRET_ID
+acmm secret unbind core <secret-id>
+acmm secret unbind experiment <experiment-id> <secret-id>
+acmm secret unbind integration <experiment-id> <integration-id> <secret-id>
 ```
 
-`acmm secret unbind` requires an exact scoped key. If that key is absent, the command fails and
-reports same-name bindings under other scoped keys when present. Unbind removes only the registry
-reference and never removes the secret source file. This prevents registry maintenance from
-accidentally destroying a credential that may still be used elsewhere.
+Unbinding never deletes the source file.
 
-## Registry schema and upgrades
+## Validation and registry upgrades
 
-`~/.config/acmm/secret-bindings.yaml` is a versioned local data format. Every registry must declare a
-non-empty `schema_version`. Core bundles one JSON Schema file per supported registry version and
-validates the YAML document against the schema named by that field.
-
-Ordinary operations (`bind`, `unbind`, `list`, and runtime secret resolution) require the registry
-version used by the running Core. A structurally valid older registry is still rejected with an
-explicit version-mismatch error. Core never upgrades or rewrites an older registry as a side effect
-of another command.
-
-Use:
+Validate the registry and all bound source files without displaying secret values:
 
 ```text
 acmm secret validate
+```
+
+When Core reports that an older registry version must be upgraded, perform the migration explicitly:
+
+```text
 acmm secret upgrade
 ```
 
-`acmm secret validate` requires the current Core version and validates both layers of the local
-secret store. It first checks the registry schema and semantic key invariants, then checks every
-bound source file without displaying its value. A bound source must still resolve to a regular file,
-pass the owner-only permission policy on POSIX systems, be readable as UTF-8 text, and contain a
-non-empty secret value. Validation reports all unusable bindings found in one pass so stale paths,
-permission drift, and empty credentials can be repaired before provisioning begins.
+`acmm secret init` does not silently upgrade an existing registry. Ordinary runtime commands also refuse to reinterpret an unsupported registry version.
 
-`acmm secret upgrade` is the explicit version-to-version transformation command: it validates the
-declared source schema, applies the registered migration step(s), validates the target schema, and
-atomically replaces the registry. Current v0.1 registries upgrade to v0.2 by preserving every
-existing Integration-scoped binding and adding the explicit `scope: integration` field required by
-v0.2.
+## Experiment Package rule
 
-`acmm secret init` never performs this upgrade implicitly. If it finds a valid older registry, it
-reports that an upgrade is required and leaves the registry content unchanged.
+A package may declare which credentials its runtime or integrations require, but it must never embed the values. Core resolves declared secrets only through the local binding registry. Secret values must not be passed through committed command examples, package manifests, integration configuration, test fixtures, or generated scientific provenance.
+
+## Before committing or publishing
+
+At minimum, inspect staged content and repository status:
+
+```text
+git diff --cached
+git status --short
+```
+
+For a public repository, also scan the complete Git history. A credential that appeared in an earlier commit remains exposed even if the current working tree is clean.
+
+When the repository is hosted on a platform that provides secret scanning or push protection, enable those controls as an additional defense. They complement local review; they do not replace it.
+
+## If a secret is committed
+
+Treat the credential as exposed:
+
+1. revoke or rotate it at the provider;
+2. remove it from the working tree;
+3. clean repository history when required; and
+4. verify the rewritten history before publication.
+
+Adding a path to `.gitignore` after a credential was committed does not remove the credential from history.
 
 ## Typical local setup
 
+A minimal Core-scoped binding looks like:
+
 ```text
 acmm secret init
-chmod 600 ~/.config/acmm/secrets/ollama_api_key
-chmod 600 ~/.config/acmm/secrets/github_mcp_access_token
-chmod 600 ~/.config/acmm/secrets/acmm-experiment-2-mcp-subject-pat
-chmod 600 ~/.config/acmm/secrets/acmm-experiment-2-mcp-controller-pat
+chmod 600 <secret-file>
+acmm secret bind core ollama_api_key --file <secret-file>
+acmm secret validate
 ```
 
-Neither secret values nor secret digests belong in package provenance, deployment markers, status
-output, or execution manifests.
+Package-specific bindings use the experiment or integration scope declared by that package. Neither secret values nor local secret-file paths belong in scientific Run Records, execution manifests, package provenance, or public documentation examples.

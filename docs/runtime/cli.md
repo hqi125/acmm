@@ -1,86 +1,109 @@
-# ACMM CLI Responsibility Boundary
+# ACMM CLI Command Map
 
-## Purpose
+The `acmm` command is the researcher-facing interface to ACMM Core. The CLI coordinates existing subsystems and presents stable operator commands; domain rules remain owned by the runtime, package, record, Campaign, export, and analysis modules that implement them.
 
-`src/acmm/cli.py` is the top-level researcher-facing command surface. It should coordinate
-existing ACMM subsystems rather than become the owner of experiment, runtime, record, analysis,
-or infrastructure business logic.
+## Main command families
 
-The CLI owns:
-
-- top-level parser assembly and command dispatch;
-- researcher-facing terminal presentation;
-- cross-subsystem orchestration for `acmm run`;
-- conversion of subsystem failures into stable command exit behavior.
-
-The CLI does not own domain logic merely because that logic is reached from a command.
-
-## Ownership scan checkpoint
-
-The EP-5H responsibility scan moved code only where an existing subsystem already had a clear
-claim. No new subsystem or folder was invented merely to shrink `cli.py`.
-
-### Runtime planning
-
-Run-index parsing, run/subject filtering, and selected-subject ordering are owned by
-`acmm.runtime.planner`:
+### Environment
 
 ```text
-Experiment Contract
-    -> experiment_plan
-    -> select_planned_runs()
-    -> selected_subject_ids()
+acmm env set-llm <llm-id>
+acmm env status
+acmm env doctor --start-if-needed
+acmm env stop
 ```
 
-The CLI supplies selectors and renders the resulting plan. It does not define selection
-semantics.
+Use `acmm env` for experiment-independent subject baseline management.
 
-### Schema locations
-
-The default Contract and Run Record schema paths are owned by their validators:
+### Secrets
 
 ```text
-acmm.contract.validator.default_contract_schema_path()
-acmm.record.validator.default_run_record_schema_path()
+acmm secret init
+acmm secret bind ...
+acmm secret validate
+acmm secret list
+acmm secret upgrade
 ```
 
-CLI, package management, and analysis/export reuse those definitions instead of reconstructing
-repository paths independently.
+Secrets remain local operator configuration. See [`../security/secrets.md`](../security/secrets.md).
 
-### Execution summary artifacts
-
-Human-readable `execution_summary.txt` persistence and execution timestamp/duration formatting
-are owned by `acmm.runtime.execution_summary`.
-
-The terminal-facing completion/interruption display remains in the CLI because it is presentation
-rather than canonical result persistence.
-
-## Responsibilities intentionally retained in `cli.py`
-
-The `run` command remains a substantial orchestration function because it crosses several
-independent subsystem boundaries in a specific operator workflow:
+### Experiment Packages
 
 ```text
-installed Experiment Package resolution
-    -> package runtime activation
-    -> harness compatibility
-    -> run selection
-    -> subject binding resolution
-    -> deployment preflight / optional apply-if-needed
-    -> live readiness / optional start-if-needed
-    -> optional startup retry / selected-subject pre-start
-    -> runtime log-window orchestration
-    -> registry composition
-    -> experiment execution
-    -> cleanup
-    -> persisted-record verification
-    -> terminal presentation
+acmm package validate <package-directory>
+acmm package install <package-directory>
+acmm package apply <experiment-selector>
+acmm package list
+acmm package show <experiment-selector>
+acmm package detach <experiment-selector>
+acmm package uninstall <experiment-selector>
 ```
 
-Splitting those steps into arbitrary modules solely to reduce line count would hide the workflow
-rather than improve ownership. Individual steps should move only when an existing subsystem gains
-a reusable domain operation that naturally owns them.
+Packages are immutable installed scientific revisions. See [`../experiments/package.md`](../experiments/package.md).
 
-The same rule applies to the small `export` and `validate-record` command wrappers: the analysis
-and record subsystems own the work; the CLI owns argument translation, status reporting, and exit
-codes.
+### Immediate execution
+
+```text
+acmm run <experiment-selector> --preview
+acmm run <experiment-selector> [selection options] [execution options]
+```
+
+`acmm run` owns the immediate operator workflow across package resolution, deterministic selection, deployment preflight, readiness, execution, cleanup, persistence verification, and terminal presentation. The individual semantics remain implemented by their owning subsystems.
+
+### Campaigns
+
+```text
+acmm campaign create <experiment-selector>
+acmm campaign execute <campaign-id> ...
+acmm campaign status <campaign-id>
+acmm campaign resume <campaign-id> ...
+acmm campaign adjudicate <campaign-id> --package <adjudicator-selector>
+acmm campaign merge <campaign-id> ...
+```
+
+See [`campaign.md`](campaign.md).
+
+### Export
+
+```text
+acmm export run <execution-directory>
+acmm export campaign <campaign-directory> <merge-directory>
+acmm export provider-pressure <provider-pressure-root>
+```
+
+Export is mechanical and deterministic. See [`../analysis/export.md`](../analysis/export.md).
+
+### Analysis
+
+```text
+acmm analyze <export-directory> --plan <analysis-plan>
+```
+
+Analysis plans select generic R analysis/report/plot modules. See [`../analysis/plan.md`](../analysis/plan.md).
+
+### Record validation
+
+```text
+acmm validate-record <run-record-file> ...
+```
+
+Run Record semantic rules are documented in [`../record/semantics.md`](../record/semantics.md).
+
+## Lower-level infrastructure CLI
+
+`acmm-infra` is a separate engineering/diagnostic command surface for individual subject deployments:
+
+```text
+acmm-infra <subject> init
+acmm-infra <subject> apply
+acmm-infra <subject> up
+acmm-infra <subject> status
+acmm-infra <subject> doctor
+acmm-infra <subject> down
+```
+
+Normal research workflows should prefer `acmm env`, package lifecycle commands, and `acmm run`/`acmm campaign`.
+
+## Ownership rule
+
+The CLI owns parser assembly, command dispatch, terminal presentation, and the cross-subsystem ordering required by an operator workflow. It does not redefine Contract validation, run planning, persistence, statistical analysis, or package/integration semantics merely because those operations are reachable from a command.

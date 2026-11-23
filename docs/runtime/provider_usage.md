@@ -1,87 +1,36 @@
 # Provider Usage Observability
 
-ACMM can record best-effort provider-side usage around an experiment execution. Provider usage is
-operational provenance only. It does not affect Run Record validity, retries, ACMM judgments,
-availability analysis, or statistical results.
+ACMM can record best-effort provider-side usage around an experiment execution. Provider usage is operational provenance only. It does not affect Run Record validity, retries, compliance judgments, availability analysis, or statistical results.
 
 ## Ollama Cloud
 
-When every selected LLM binding relevant to an execution uses the Ollama Cloud provider, `acmm run`
-creates an Ollama Cloud usage monitor. The monitor samples the official `GET /api/usage` endpoint
-immediately before experiment-level execution and initially again at execution completion with:
+When the relevant selected LLM bindings use Ollama Cloud, `acmm run` can sample the provider usage endpoint before and after experiment-level execution. The persisted execution manifest records the observations and the human-readable execution summary reports a best-effort request-count delta.
 
-```text
-range=24h
-scope=self
-group_by=model
-```
+Provider usage views can lag completed inference requests. ACMM therefore uses a bounded post-execution settling schedule when the immediate observation is below the known minimum request floor for selected cloud-backed runs. A lagging or unavailable usage view never changes scientific validity.
 
-The samples are persisted under:
-
-```text
-execution.provider_usage.ollama_cloud
-```
-
-The human-readable `execution_summary.txt` and the final `acmm run` console summary also report an
-Ollama Cloud request-count delta. ACMM prefers complete model-scoped deltas for the selected models.
-If the provider omits a required model group, ACMM falls back to the account-scope request delta and
-labels that fallback explicitly. If telemetry is unavailable, the summary reports `N/A` with the
-reason.
-
-The provider's usage view can lag behind completed inference requests. ACMM therefore knows the
-minimum expected request count from the selected Ollama Cloud-backed runs. If the immediate
-post-execution snapshot is below that floor, ACMM performs bounded settling samples after 1, 2, 4,
-and 8 seconds, stopping as soon as the model-scoped delta reaches the floor. The manifest records
-the initial post-execution snapshot when settling was needed, the final snapshot, the wait schedule,
-and whether the expected floor was reached.
-
-A delta below the expected floor after settling is reported explicitly. It means provider telemetry
-had not caught up within the bounded window (or was affected by another provider-side reporting
-limitation); it does not change experiment validity. Likewise, a zero delta must not be interpreted
-as proof that the agent made no inference requests.
-
-### Cloud model names
-
-Ollama uses `-cloud` aliases such as `gpt-oss:120b-cloud` when a local Ollama server proxies a cloud
-model. Direct cloud usage reporting can identify the same model as `gpt-oss:120b`. ACMM treats the
-non-`-cloud` name as an accepted provider-side alias while preserving the configured model name in
-experiment provenance.
+Provider-side aliases may differ from the configured local model name. ACMM preserves configured model provenance while accepting the known provider-side alias where required for usage matching.
 
 ## API key
 
-The usage endpoint requires direct Ollama Cloud authentication. ACMM Core resolves the credential
-only through the global secret-binding registry using the Core-scoped key `core:ollama_api_key`.
-There is no `acmm run` API-key option and no environment-variable fallback. The API key remains
-optional for ACMM execution: without a valid binding, provider telemetry is recorded as unavailable
-and the experiment proceeds normally.
+Direct usage telemetry requires an Ollama Cloud credential. Core resolves it only through the local secret-binding registry using the Core-scoped key `core:ollama_api_key`.
 
-Keep the key outside both ACMM repositories. A convenient WSL layout is:
+There is no `acmm run` API-key command option and no repository-local environment-variable fallback. Execution remains valid when telemetry authentication is unavailable; usage is simply recorded as unavailable.
 
-```text
-~/.config/acmm/secrets/ollama_api_key
-```
-
-Initialize the ACMM secret store once, then keep the key owner-only inside the managed secret
-directory and bind it:
+A typical binding is:
 
 ```text
 acmm secret init
-chmod 600 ~/.config/acmm/secrets/ollama_api_key
-acmm secret bind core ollama_api_key --file ~/.config/acmm/secrets/ollama_api_key
+chmod 600 <secret-file>
+acmm secret bind core ollama_api_key --file <secret-file>
+acmm secret validate
 ```
 
-Subsequent `acmm run` executions resolve the binding automatically. Neither the secret value nor its
-local source path is persisted in execution artifacts or mounted into subject runtimes.
+`<secret-file>` is an operator-controlled local credential file outside both repositories. Neither the value nor the local path is persisted into scientific artifacts or mounted into subject runtimes.
 
-Do not place the key in `experiment.yaml`, `experiment-package.yaml`, integration files, `.env` files
-inside either repository, command examples committed to Git, execution notes, or test fixtures.
+See [`../security/secrets.md`](../security/secrets.md).
 
 ## Interpretation limits
 
-Ollama's usage endpoint is account-scoped rather than ACMM-execution-scoped. Concurrent requests on
-the same account may therefore enter the observed delta. Provider usage groups can also be omitted
-from the returned top groups, and provider snapshots may remain unchanged over a short execution.
-For those reasons, usage telemetry is useful for debugging, qualification, and rough request-volume
-checks, but is not an ACMM measurement dimension.
+Provider usage is usually account-scoped rather than ACMM-execution-scoped. Concurrent provider activity, delayed aggregation, omitted model groups, and provider reporting behavior can therefore affect the observed delta.
 
-See `docs/security/secrets.md` for repository safeguards around API keys and other credentials.
+Use this telemetry for debugging, qualification, and rough request-volume checks. Do not treat it as an ACMM measurement dimension or as proof of exact per-run model-call counts.

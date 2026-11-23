@@ -35,12 +35,12 @@ completed execution session
 
 ## Execution session
 
-The default generated-artifact root is `~/acmm_generated` (or `ACMM_GENERATED_ROOT` when configured). Immediate experiment sessions are stored beneath its `results/` namespace.
+The generated-artifact root defaults to the Core-managed user location and can be redirected with `ACMM_GENERATED_ROOT`. Immediate experiment sessions are stored beneath its `results/` namespace.
 
 One call to `execute_experiment()` creates one execution session:
 
 ```text
-~/acmm_generated/results/
+<generated-root>/results/
 └── <experiment_id>/
     └── execution_<execution_id>/
         ├── contract.yaml

@@ -53,6 +53,6 @@ Use `--help` for repetition/cold-start/output options.
 
 ## 6. Freeze the promoted baseline
 
-Once qualification is accepted, record the selected catalog ID and relevant evidence in the project
-checkpoint documentation. Later experiments should reference that frozen baseline rather than
-silently changing models mid-series.
+Once qualification is accepted, record the selected catalog ID and relevant qualification evidence in
+the study records. Later experiments should reference that frozen baseline rather than silently
+changing models mid-series.

@@ -1,33 +1,32 @@
-# ACMM Engineering Tools
+# ACMM Repository Tools
 
-`acmm analyze <export-dir> --plan <plan.yaml>` is the preferred first-class generic analysis
-orchestration path. `analyze_execution.py` remains as the historical execution-only convenience
-wrapper and retains its established automatic strict/available-valid fallback behavior.
+The `tools/` directory contains maintenance, qualification, and compatibility utilities that are useful around the ACMM workflow but are not themselves research Experiment Packages.
 
+## Preferred analysis entry point
 
-The `tools/` directory contains engineering and analysis utilities. These programs are not research
-Experiment Packages unless explicitly stated otherwise.
+Use the first-class analysis command for normal downstream work:
 
-## Analysis
+```text
+acmm analyze <export-directory> --plan <analysis-plan>
+```
 
-`analyze_execution.py` drives the normalized export/statistical workflow for completed executions.
-Its outputs remain separate from raw evidence and persisted Run Records.
+`analyze_execution.py` remains as an execution-only compatibility/convenience wrapper for the established run-export workflow.
 
-## Cold-start qualification
+## Provider Pressure migration
 
-`cold_start_qualification.py` measures subject runtime bring-up behavior while preserving controlled
-startup boundaries. Use it for infrastructure diagnosis rather than compliance scoring.
+`upgrade_provider_pressure_store.py` converts legacy cumulative Provider Pressure trajectories into the bounded segmented `store_v2` format. It preserves legacy source files and resumes from durable checkpoints after interruption.
 
-## LLM behavioral qualification
+```text
+python tools/upgrade_provider_pressure_store.py <provider-pressure-root>
+```
 
-`qualify_llm_behavior.py` performs the LLM Rebasing behavioral smoke. It discovers the already-applied
-baseline, requires the cohort to be in clean experiment-independent state, starts subjects as needed,
-and repeats the same closed-world arithmetic task through each agent.
+See [`../docs/runtime/provider_pressure_storage.md`](../docs/runtime/provider_pressure_storage.md).
 
-The task implementation lives in `llm_behavioral_smoke.py`. No temporary research Tool, plugin, or
-Experiment Package is installed. Qualification artifacts are engineering evidence and are not added
-to research populations.
+## Infrastructure qualification utilities
 
-Standalone `smoke_open_webui.py` and `smoke_agent_zero.py` remain focused adapter/host development
-utilities. They exercise the current baseline interfaces and do not provide a hidden research tool
-configuration path.
+- `cold_start_qualification.py` — measures subject runtime bring-up behavior under controlled startup boundaries.
+- `qualify_llm_behavior.py` — runs the experiment-independent LLM behavioral smoke against the already deployed cohort.
+- `llm_behavioral_smoke.py` — shared implementation used by the qualifier.
+- subject-specific smoke utilities — focused host/adapter engineering checks.
+
+Qualification outputs are engineering evidence and are not added to ACMM scientific populations.

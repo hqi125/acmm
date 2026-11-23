@@ -6,7 +6,7 @@ experiment/campaign acquisition artifacts directly.
 
 ```text
 acmm analyze \
-    ~/acmm_generated/exports/<experiment_id>/campaign_<campaign_id>/merge_<merge_id> \
+    <export-directory> \
     --plan analysis/plans/standard_v0_4.yaml
 ```
 
@@ -28,17 +28,11 @@ A completed analysis directory is never overwritten implicitly. Work is performe
 directory and published atomically. A failed/interrupted analysis is retained as
 `analysis_<id>.failed` for diagnosis.
 
-## Plan schemas
+## Supported plan schemas
 
-Plan schema 0.1 remains supported for the original requirement/dimension/availability/interaction
-workflow. Plan schema 0.2 added normalized tool-trajectory analysis and selectable R-rendered plots.
-Plan schema 0.3 is a presentation-compatible extension: it adds explicit plot-format selection,
-PNG-only defaults, and a grouped GOBPFR dimension-profile plot while retaining all 0.2 analysis and
-report semantics. Plan schema 0.4 refines the generic trajectory presentation without changing the
-trajectory tables: it adds a dedicated per-run result-error-rate plot and a per-subject raw tool-name
-composition plot that avoids cross-adapter tool-name canonicalization.
+Analysis plans are versioned reproducibility inputs. Core validates the plan before running any R stage, resolves dependencies deterministically, and copies the exact plan into the immutable analysis result.
 
-The repository provides:
+The repository includes these standard Campaign plans:
 
 ```text
 analysis/plans/standard_v0_1.yaml
@@ -47,54 +41,17 @@ analysis/plans/standard_v0_3.yaml
 analysis/plans/standard_v0_4.yaml
 ```
 
-The v0.4 standard plan is the preferred campaign-analysis starting point:
+`standard_v0_4.yaml` is the preferred Campaign starting point. It uses the strict population, 2,000 hierarchical bootstrap replicates, seed 12345, 95% confidence, PNG figures, compliance/dimension analysis, availability, generic trajectory summaries, and the tabular workbooks.
 
-```yaml
-schema_version: '0.4'
-population:
-  policy: strict
-defaults:
-  bootstrap:
-    replicates: 2000
-    seed: 12345
-    confidence_level: 0.95
-  plot_formats:
-    - png
-analyses:
-  - kind: requirement_estimates
-  - kind: requirement_uncertainty
-  - kind: dimension_scores
-  - kind: dimension_uncertainty
-  - kind: availability
-  - kind: trajectory
-reports:
-  - kind: compliance_workbook
-  - kind: availability_workbook
-plots:
-  - kind: run_duration
-  - kind: requirement_compliance
-    estimand: scenario
-    include_intervals: true
-  - kind: dimension_scores
-    estimand: opportunity
-    aggregation_method: arithmetic
-    include_intervals: true
-  - kind: dimension_profile
-    estimand: opportunity
-    aggregation_method: arithmetic
-  - kind: availability
-  - kind: trajectory_run_metrics
-    metric: tool_calls
-  - kind: trajectory_error_rate
-  - kind: trajectory_tool_composition
-    top_n: 12
+Provider Pressure uses a separate lightweight plan family. The preferred plan is:
+
+```text
+analysis/plans/provider_pressure_v0_3.yaml
 ```
 
-`population.policy` must be either `strict` or `available-valid`; the plan path has no automatic
-fallback. Bootstrap parameters may be overridden on `requirement_uncertainty`,
-`dimension_uncertainty`, `availability`, or `interaction` analysis entries.
+The plan path does not silently change the requested population. Campaign plans must declare either `strict` or `available-valid` explicitly. Provider Pressure plans have no Campaign population policy.
 
-The generic analysis kinds are:
+Generic Campaign analysis kinds are:
 
 - `requirement_estimates`
 - `requirement_uncertainty`
@@ -102,15 +59,15 @@ The generic analysis kinds are:
 - `dimension_uncertainty`
 - `availability`
 - `interaction`
-- `trajectory` (plan schema 0.2; requires Campaign export schema 0.3)
+- `trajectory`
 
-The report kinds are `compliance_workbook`, `availability_workbook`, and `interaction_workbook`.
-Workbooks are intentionally tabular/presentation-oriented. Core does not embed analysis charts into
-the Excel files; selectable figures are rendered by R as standalone artifacts under `figures/`.
+Available report kinds are `compliance_workbook`, `availability_workbook`, and `interaction_workbook`.
+
+Workbooks are tabular presentation artifacts. Figures are rendered by R as standalone files under `figures/` and can be selected independently through the plan.
 
 ## Plot modules
 
-Plan schemas 0.2 through 0.5 expose generic R plot modules through `plots:`. Each requested plot is a
+Plan schemas 0.2 through 0.6 expose generic R plot modules through `plots:`. Each requested plot is a
 normal analysis stage with deterministic dependencies, progress output, logs, manifest provenance,
 and hashed figure outputs. Schema 0.2 preserves the historical PNG+PDF pair. Schemas 0.3 through 0.6 default to PNG only and
 allow `defaults.plot_formats` or a per-plot `formats` override using `png` and/or `pdf`. PDF is

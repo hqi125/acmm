@@ -1,41 +1,18 @@
 # ACMM Infrastructure
 
-This directory contains experiment-independent deployment defaults for the qualified subjects and
-registered LLM baselines. Subject-specific Python implementation lives under
-`src/acmm_infra/subjects/<subject>/`.
+This directory contains experiment-independent deployment profiles for the qualified ACMM subjects and registered LLM baselines. Research experiments do not live here; Experiment Packages own their Contracts, runtime code, integrations, assets, and study-specific state.
 
-Current subjects:
+Current qualified subjects are:
 
 - Hermes Agent;
 - Open WebUI; and
 - Agent Zero.
 
-Research experiments do not live below these subject directories. Experiment Packages own their
-Contracts, runtime code, and optional generic integration components. Core validates and stages the
-package, then constructs package-aware subject managers from the immutable snapshot.
+Pinned versions and images are declared in the subject profiles under `infrastructure/<subject>/`.
 
-## Subject source layout
+## Researcher-facing environment commands
 
-Each subject owns a narrow module tree:
-
-```text
-src/acmm_infra/subjects/<subject>/
-    api.py or client.py
-    manager.py
-    profile.py
-    cli.py
-    payloads/
-```
-
-`payloads/` contains executable/configuration payload sources that must be sent into the subject
-container. Keeping those payloads out of manager/client source makes reconciliation code readable and
-lets payload changes be reviewed independently.
-
-Cross-subject cohort/factory logic remains outside individual subject directories.
-
-## LLM composition
-
-Model selection is a baseline concern:
+Normal operation uses the cohort-level environment commands:
 
 ```text
 acmm env set-llm <llm-id>
@@ -44,12 +21,13 @@ acmm env doctor --start-if-needed
 acmm env stop
 ```
 
-`set-llm` reconciles the qualified cohort to the chosen registered LLM and returns subjects to
-experiment-independent capability state.
+`set-llm` reconciles the qualified cohort to one registered LLM baseline and returns subjects to experiment-independent capability state. Research capability integrations are applied separately through Experiment Packages.
 
-## Internal subject CLI
+Registered LLM definitions are under `infrastructure/llm-baselines/`. See [`../docs/infrastructure/llm_rebasing.md`](../docs/infrastructure/llm_rebasing.md) before changing the shared baseline.
 
-For integration/debugging work:
+## Subject-specific diagnostics
+
+The lower-level `acmm-infra` command family is intended for infrastructure diagnosis, subject development, and integration work:
 
 ```text
 acmm-infra <subject> init
@@ -60,8 +38,14 @@ acmm-infra <subject> doctor
 acmm-infra <subject> down
 ```
 
-These commands do not select research experiments. Package integration is orchestrated through
-`acmm package apply` or permissioned `acmm run --apply-if-needed`.
+These commands do not select research experiments or attach Experiment Package capabilities.
 
-Deployment provenance is stored in the subject runtime root and records the active package/integration
-revision when one is attached.
+Subject-specific notes:
+
+- [`hermes/README.md`](hermes/README.md)
+- [`open-webui/README.md`](open-webui/README.md)
+- [`agent-zero/README.md`](agent-zero/README.md)
+
+## Source ownership
+
+Subject implementation lives under `src/acmm_infra/subjects/<subject>/`. Managers own host reconciliation; runtime adapters own normalized execution interaction/evidence; Experiment Package integrations request study-specific capability state through the generic integration boundary.

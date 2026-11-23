@@ -234,36 +234,37 @@ functions and scripts remain the statistical implementation; the Core CLI valida
 resolves dependencies, runs only the requested generic stages, preserves full R logs, and publishes an
 immutable analysis manifest. See `docs/analysis/plan.md`.
 
-The repository provides `analysis/plans/standard_v0_1.yaml` for the established general workflow,
-`analysis/plans/standard_v0_2.yaml` for normalized trajectory analysis plus selectable R-rendered
-figures, and `analysis/plans/standard_v0_3.yaml` for the first polished figure workflow, and
-`analysis/plans/standard_v0_4.yaml` for the preferred trajectory-presentation refinement. The v0.4
-standard plan keeps the established `strict`, 2000-replicate, seed-12345, 95% bootstrap settings and
-PNG-only default, retains the grouped GOBPFR dimension profile, and replaces the cross-subject top-tool
-ranking with per-subject raw tool-name composition plus a dedicated result-error-rate distribution.
-PDF remains available as an explicit v0.3/v0.4 plot format. Use `available-valid` explicitly for a partial population; the plan
-runner does not silently fall back.
+The repository retains earlier standard plans for reproducibility. `analysis/plans/standard_v0_4.yaml`
+is the preferred Campaign starting point: it uses the strict population, 2,000 hierarchical bootstrap
+replicates, seed 12345, 95% confidence, PNG figures, compliance/dimension analysis, availability,
+generic trajectory summaries, and the tabular workbooks. `analysis/plans/provider_pressure_v0_3.yaml`
+is the preferred Provider Pressure plan.
+
+Use `available-valid` explicitly when a Campaign analysis is intentionally conditional on the
+available valid population; the first-class plan runner never silently changes the requested population.
 
 The standalone R scripts below remain supported for direct development and debugging.
 
 ## Analyze an export
 
+The examples below use `<run-export-directory>` for one run export, `<campaign-export-directory>` for one Campaign export, `<analysis-output-directory>` for a destination analysis directory, and `<execution-directory>` for one canonical completed immediate execution.
+
 Basic point estimates:
 
 ```text
 Rscript analysis/r/scripts/analyze_export.R \
-    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id>
+    <run-export-directory>
 
 # The same scripts accept schema-0.2/0.3 Campaign exports:
 Rscript analysis/r/scripts/analyze_export.R \
-    ~/acmm_generated/exports/<experiment_id>/campaign_<campaign_id>/merge_<merge_id>
+    <campaign-export-directory>
 ```
 
 Hierarchical uncertainty analysis:
 
 ```text
 Rscript analysis/r/scripts/analyze_uncertainty.R \
-    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id> \
+    <run-export-directory> \
     2000 \
     12345 \
     0.95
@@ -277,7 +278,7 @@ Dimension-score analysis:
 
 ```text
 Rscript analysis/r/scripts/analyze_dimensions.R \
-    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id>
+    <run-export-directory>
 ```
 
 This reports arithmetic, geometric, harmonic, and minimum `S_D` point values separately for the
@@ -287,7 +288,7 @@ Dimension-score hierarchical uncertainty:
 
 ```text
 Rscript analysis/r/scripts/analyze_dimension_uncertainty.R \
-    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id> \
+    <run-export-directory> \
     2000 \
     12345 \
     0.95
@@ -297,11 +298,11 @@ General availability analysis:
 
 ```text
 Rscript analysis/r/scripts/analyze_availability.R \
-    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id> \
+    <run-export-directory> \
     2000 \
     12345 \
     0.95 \
-    ~/acmm_generated/exports/<experiment_id>/execution_<execution_id>/analysis_output \
+    <analysis-output-directory> \
     --population-policy=available-valid
 ```
 
@@ -330,7 +331,7 @@ directly:
 
 ```text
 Rscript analysis/r/scripts/analyze_trajectory.R \
-    ~/acmm_generated/exports/<experiment_id>/campaign_<campaign_id>/merge_<merge_id> \
+    <campaign-export-directory> \
     <analysis-output-directory> \
     --population-policy=strict
 ```
@@ -349,7 +350,7 @@ orchestration tool:
 
 ```text
 python tools/analyze_execution.py \
-    ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
+    <execution-directory>
 ```
 
 No population option is required for routine use. The wrapper first attempts the strict population

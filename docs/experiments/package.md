@@ -222,15 +222,14 @@ Local bindings are managed separately:
 acmm secret init
 acmm secret validate
 acmm secret upgrade
-acmm secret bind experiment EXPERIMENT_ID SECRET_ID --file PATH
-acmm secret bind integration EXPERIMENT_ID INTEGRATION_ID SECRET_ID --file PATH
+acmm secret bind experiment <experiment-id> <secret-id> --file <secret-file>
+acmm secret bind integration <experiment-id> <integration-id> <secret-id> --file <secret-file>
 acmm secret list
-acmm secret unbind experiment EXPERIMENT_ID SECRET_ID
-acmm secret unbind integration EXPERIMENT_ID INTEGRATION_ID SECRET_ID
+acmm secret unbind experiment <experiment-id> <secret-id>
+acmm secret unbind integration <experiment-id> <integration-id> <secret-id>
 ```
 
-The default binding registry is `~/.config/acmm/secret-bindings.yaml`; recommended secret source
-files live under `~/.config/acmm/secrets/`. Registry YAML is a versioned data format validated
+The binding registry and secret source files live in the operator's local ACMM configuration area, outside both repositories. `<secret-file>` in the examples means one local credential file. Registry YAML is a versioned data format validated
 against the bundled JSON Schema selected by its mandatory `schema_version`. Ordinary Core
 operations require the registry version that Core currently supports and never migrate an older
 registry implicitly. `acmm secret upgrade` is the only supported registry transformation path.

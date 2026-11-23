@@ -1,110 +1,84 @@
 # Deterministic Analysis Export
 
-## Purpose
+`acmm export` converts validated ACMM artifacts into deterministic downstream interchange tables. Export is mechanical: it preserves acquisition, adjudication, merge, and telemetry facts without computing ACMM estimators, confidence intervals, fitted models, or interpretive labels.
 
-`acmm export` provides separate mechanical export scopes for immediate executions and durable
-campaigns. Both preserve acquisition facts and opportunity judgments without computing ACMM
-estimators, scores, confidence intervals, or other statistical results.
+Canonical acquisition and merge artifacts remain authoritative.
 
-Canonical acquisition/merge artifacts remain authoritative. CSV files are downstream interchange
-artifacts.
+## Path placeholders
+
+- `<execution-directory>` — one completed immediate execution directory.
+- `<campaign-directory>` — one generated `campaign_<id>` directory.
+- `<merge-directory>` — one immutable `merge_<id>` directory for that Campaign.
+- `<provider-pressure-root>` — generated Provider Pressure root containing one or more lineages.
+- `<export-root>` — optional destination root passed with `--output-root`.
 
 ## Commands
 
-Execution export (schema 0.1):
+Immediate execution export:
 
 ```text
-acmm export run ~/acmm_generated/results/<experiment_id>/execution_<execution_id>
+acmm export run <execution-directory>
 ```
 
-Campaign export (schema 0.3):
+Campaign export:
 
 ```text
-acmm export campaign \
-    ~/acmm_generated/<experiment_id>/campaign_<campaign_id> \
-    ~/acmm_generated/<experiment_id>/campaign_<campaign_id>/merged/merge_<merge_id>
+acmm export campaign <campaign-directory> <merge-directory>
 ```
 
-Provider Pressure export (schema 0.6):
+Provider Pressure export:
 
 ```text
-acmm export provider-pressure ~/acmm_generated/provider_pressure
+acmm export provider-pressure <provider-pressure-root>
 ```
 
-The Provider Pressure exporter prefers the bounded segmented `store_v2` trajectory format. Legacy
-trajectory stores remain readable only while individual legacy YAML artifacts stay below the
-defensive safe-load bound. Upgrade an oversized legacy store offline with:
+Use `--output-root <export-root>` when the deterministic export should be published outside the default generated-artifact tree.
+
+Existing export directories are never silently overwritten.
+
+## Run export
+
+Run export schema 0.1 validates the completed execution bundle and writes:
 
 ```text
-python tools/upgrade_provider_pressure_store.py ~/acmm_generated/provider_pressure
+runs.csv
+judgments.csv
+export_manifest.yaml
 ```
 
-The upgrader writes `store_v2` beside the immutable legacy files, never deletes or rewrites the
-legacy source, and resumes from sealed checkpoints after interruption.
+`runs.csv` contains one row per realized attempt, including invalid retry history. `selected=true` identifies the scientifically selected valid attempt for a resolved planned slot.
 
-Provider Pressure export schema 0.6 retains the compact `admission_summary.csv` and adds
-`utilization_summary.csv`, a per-run/checkpoint summary of the recorded provider-utilization
-envelope. It carries action/sample counts, event-order bounds, and mean/maximum utilization for the
-recorded content-requests/hour and content-requests/minute dimensions. The raw `decisions.csv`
-remains the audit surface; ordinary pressure analysis uses compact summaries without loading the
-full decision history.
-
-By default the export is published under:
-
-```text
-~/acmm_generated/exports/<experiment_id>/execution_<execution_id>/
-├── runs.csv
-├── judgments.csv
-└── export_manifest.yaml
-```
-
-A different root may be selected with `--output-root`. Existing export directories are never
-overwritten implicitly.
+`judgments.csv` contains only judgments actually present in Run Records and preserves their recorded outcomes. Invalid attempts without judgments do not generate fabricated judgment rows.
 
 ## Campaign export
 
-Campaign export deliberately requires both the Campaign root and one immutable merge directory. The
-Campaign contributes the frozen planned population plus acquisition history across Campaign
-executions, including retries and non-selected attempts. The merge contributes the authoritative
-accepted observation for each logical run and, when adjudication was selected, the final revised
-judgments. The exporter never mutates either source and never uses analysis findings to repair or
-rerun acquisition.
+Campaign export schema 0.3 requires **both** the frozen Campaign and one immutable merge. The two inputs represent different facts:
 
-By default schema 0.3 is published under:
+- the Campaign contributes the complete planned population and acquisition history across Campaign executions, including retries and non-selected attempts;
+- the merge contributes the authoritative accepted observation for each logical run and, when applicable, adjudicated judgments.
+
+The exporter never mutates either source and never uses analysis findings to repair acquisition.
+
+Schema 0.3 writes:
 
 ```text
-~/acmm_generated/exports/<experiment_id>/campaign_<campaign_id>/merge_<merge_id>/
-├── planned_runs.csv
-├── runs.csv
-├── judgments.csv
-├── tool_calls.csv
-├── tool_results.csv
-└── export_manifest.yaml
+planned_runs.csv
+runs.csv
+judgments.csv
+tool_calls.csv
+tool_results.csv
+export_manifest.yaml
 ```
 
-`planned_runs.csv` contains exactly one row per frozen Campaign logical slot, including slots with no
-realized attempt in a partial campaign. `runs.csv` contains realized attempts across Campaign
-executions. `source_selected` preserves the source-execution selection while `selected` identifies
-the observation accepted by the chosen merge. Selected observations use the merged Run Record as the
-authoritative judgment source; non-selected attempts retain their recorded source judgments.
+`planned_runs.csv` contains one row per frozen logical slot, including an unattempted slot in an explicitly partial Campaign. `runs.csv` preserves realized attempts. Selected observations use the merged Run Record as the authoritative judgment source; non-selected attempts retain their original acquisition records.
 
-Schema 0.3 additionally normalizes the acquisition-time `tool_calls` and `tool_results` evidence
-artifacts for every persisted Campaign attempt, including non-selected/invalid retry history. The two
-tables preserve stable run/attempt identity, tool names, transport names when available, call/result
-IDs, canonical call input JSON, result text/error markers, and recorded timestamps. These are
-descriptive trajectory facts; export does not infer recovery, verification, mutation, redundancy, or
-other semantic labels. Campaign export schema 0.2 remains readable by the R loader for previously
-published exports, but trajectory analysis requires a fresh schema-0.3 export.
+The tool-call/result tables normalize recorded trajectory evidence without inferring recovery, verification, mutation, redundancy, or other semantic behavior labels.
 
-The exporter verifies that the merge belongs to the supplied Campaign and binds the Campaign ID,
-experiment ID, design digest, package/Contract provenance, Campaign-manifest hash, population, source
-execution artifacts, source Run Record hashes, merged Run Record hashes, and optional adjudication
-provenance. A mismatch is fatal rather than reconciled heuristically.
+Campaign export verifies Campaign/merge identity, design digest, package/Contract provenance, source and merged Run Record hashes, population, and optional adjudication provenance. A mismatch is fatal.
 
 ## Provider Pressure export
 
-Provider Pressure export is a separate source family from run and Campaign export. Schema 0.6
-normalizes one or more Provider Pressure lineages into:
+Provider Pressure is a separate export family. The current schema 0.6 writes:
 
 ```text
 lineages.csv
@@ -119,118 +93,36 @@ utilization_summary.csv
 export_manifest.yaml
 ```
 
-For native `store_v2` input, the exporter walks checkpoints and segmented event records
-incrementally, verifies event/checkpoint hash chains, and keeps memory bounded to the current
-source record plus small aggregation state. `pacing_summary.csv`, `admission_summary.csv`, and
-`utilization_summary.csv` are produced while streaming so ordinary pressure analysis and plots do
-not need to materialize the full raw pacing/decision tables. Utilization is reported exactly as the
-recorded fraction of the controller's operational threshold; export does not reinterpret that
-threshold as a provider hard limit. The raw event tables remain available for audit.
+For native `store_v2` input, the exporter streams segmented records and verifies event/checkpoint hash chains while keeping source ingestion bounded. The compact summary tables are produced during that streaming pass so ordinary R analysis does not need to load the much larger raw decision or pacing-event tables.
 
-The export manifest binds the terminal lineage/checkpoint/event identity rather than enumerating an
-ever-growing source tree. Full chain integrity is still verified while the source is traversed.
-Provider-specific opaque model state is not interpreted by the generic exporter.
+`utilization_summary.csv` records run-level mean/maximum utilization for the provider dimensions actually recorded by the controller. Utilization is expressed relative to the **recorded operational threshold**; export does not reinterpret that threshold as a provider hard rate limit.
 
-Large legacy YAML trajectory snapshots are intentionally not passed to `yaml.safe_load()`. If a
-legacy artifact exceeds the defensive bound, export fails with instructions to use the offline
-upgrade tool. This prevents a normal export command from reproducing the unbounded YAML-object
-materialization failure that motivated the segmented store.
+Raw signal, decision, and pacing tables remain available for audit and follow-up analysis.
+
+### Legacy Provider Pressure stores
+
+Oversized legacy YAML trajectories should be migrated offline rather than loaded as one YAML object:
+
+```text
+python tools/upgrade_provider_pressure_store.py <provider-pressure-root>
+```
+
+The maintenance tool writes `store_v2` beside the immutable legacy files, never deletes the source, and resumes from durable checkpoints after interruption. See [`../runtime/provider_pressure_storage.md`](../runtime/provider_pressure_storage.md).
 
 ## Validation gate
 
-Export begins by validating the completed acquisition bundle:
+Before publication, export validates the source identity and relevant integrity relationships. Depending on the source family, this includes Contract hashes, manifest bindings, Run Record validation, evidence artifact hashes, merge bindings, adjudication provenance, and Provider Pressure hash chains.
 
-```text
-execution manifest
-    -> Contract snapshot hash
-    -> Contract validation
-    -> manifest slot/attempt bindings
-    -> Run Record validation
-    -> evidence artifact existence + SHA-256
-```
-
-If the canonical bundle has drifted, has been partially edited, or contains inconsistent
-manifest/record metadata, export fails before publishing CSV files.
-
-## `runs.csv`
-
-`runs.csv` contains one row per realized attempt, not merely one row per selected run. This
-preserves invalid attempts and retry history.
-
-Important fields include:
-
-```text
-execution_id / experiment_id / contract_sha256
-run_index / repetition / attempt / run_id
-selected
-validity / termination
-failure_kind / failure_message
-subject/model/environment provenance
-execution pacing and retry bounds
-evidence_count / judgment_count
-result_path
-```
-
-`selected=true` identifies the scientifically selected valid attempt for a resolved planned
-slot. Invalid attempts remain present with `selected=false`. The exporter does not silently
-remove them.
-
-Open subject/environment configuration mappings are encoded as compact, key-sorted JSON
-inside CSV cells so their structure is not flattened into an unstable set of columns.
-
-## `judgments.csv`
-
-`judgments.csv` contains one row per judgment that actually exists in a Run Record. The table
-retains the recorded outcome exactly:
-
-```text
-compliant
-violation
-not_applicable
-unadjudicable
-```
-
-Each row also joins deterministic Contract metadata needed for downstream grouping:
-
-```text
-opportunity_id
-requirement_id
-dimension
-check_id
-evaluator
-```
-
-Judgment evidence references are encoded as a JSON array. No denominator-eligibility flag is
-added: downstream statistical code decides how opportunity/scenario/run estimators treat each
-raw outcome.
-
-Invalid attempts with no judgments therefore appear in `runs.csv` but contribute no fabricated
-rows to `judgments.csv`. If an invalid attempt contains diagnostic partial judgments, those
-judgments are exported with that attempt's `validity=invalid` and `selected=false` markers.
+If canonical artifacts have drifted or are internally inconsistent, export fails rather than reconciling them heuristically.
 
 ## Determinism
 
-CSV column order and row order are fixed. Rows follow execution-manifest slot order, attempt
-order, and Run Record judgment order. CSV uses a fixed UTF-8/LF representation; boolean values
-are written as `true`/`false`; structured cells use canonical compact JSON.
+Column order and row order are fixed for each export schema. Structured cells use canonical JSON representations. `export_manifest.yaml` records source identity, row counts, and SHA-256 values for published tables without adding a generation timestamp that would make unchanged exports differ.
 
-`export_manifest.yaml` contains no generation timestamp. It records the source execution
-identity/hash plus row counts and SHA-256 digests for every published CSV table. Re-exporting the same
-unchanged completed execution to a different empty output root therefore produces identical
-`runs.csv`, `judgments.csv`, and `export_manifest.yaml` bytes for schema 0.1; Campaign schema 0.3 applies the same deterministic publication rule to all five CSV tables.
+Re-exporting the same unchanged source to a different empty destination therefore produces the same deterministic export bytes for that schema.
 
 ## Statistical boundary
 
-The exporter intentionally does not compute:
+Export intentionally does not compute compliance estimators, GOBPFR dimension scores, compensation rules, uncertainty intervals, fitted models, or report interpretations. Those responsibilities belong to the downstream analysis layer selected through `acmm analyze`.
 
-```text
-p-hat opportunity/scenario/run estimators
-S_D dimension scores
-weights or compensation rules
-confidence intervals
-power/hypothesis tests
-regression models
-plots
-```
-
-Those remain responsibilities of the separate R/RStudio analysis workspace.
+See [`plan.md`](plan.md) and [`../../analysis/r/README.md`](../../analysis/r/README.md).

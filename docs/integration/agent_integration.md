@@ -1,107 +1,56 @@
-# Agent Integration Workflow
+# Agent Integration
 
-This note describes how a new agent host is integrated into ACMM Core. It intentionally separates
-subject integration from research capability integration.
+ACMM subject integrations keep experiment-independent host management separate from Experiment Package scientific capability configuration.
 
 ## Principle
 
-A qualified subject is an agent system plus its reproducible baseline host configuration. A research
-experiment may later add package-owned integrations, but those additions must not be baked into the
-subject baseline merely because one experiment needs them.
+Core should not acquire experiment-specific branches for a concrete tool, service, or study. The stable ownership rule is:
 
-The implementation boundary is:
+> Core owns lifecycle and provenance. Subject infrastructure owns host mechanics. Experiment Packages own scientific capability and treatment configuration.
 
-```text
-src/acmm_infra/subjects/<subject>/
-    api.py or client.py
-    manager.py
-    profile.py
-    cli.py
-    payloads/
-```
+Subject infrastructure lives under `src/acmm_infra/subjects/<subject>/` with experiment-independent profiles under `infrastructure/<subject>/`.
 
-Cross-subject orchestration belongs in `src/acmm_infra/subjects/factory.py`, cohort/lifecycle modules,
-and the public Core CLI.
+## Adding a subject
 
-## Integration steps
+A supported subject integration should provide:
 
-1. Pin the agent distribution/image and record its externally visible version.
-2. Define an experiment-independent profile under `infrastructure/<subject>/profile.yaml`.
-3. Implement the host API/client wrapper used for supported application operations.
-4. Implement a manager with `init/apply/up/down/status/doctor` semantics.
-5. Keep executable/configuration payloads in the subject `payloads/` directory rather than inline in
-   Python source.
-6. Add the runtime adapter that executes one Contract run and captures normalized evidence.
-7. Register qualified subject IDs in the subject catalog.
-8. Add baseline, lifecycle, adapter, evidence, and failure-path tests.
-9. Exercise cold-start and LLM qualification before research use.
+1. a pinned agent distribution/image and externally visible version;
+2. an experiment-independent baseline profile;
+3. a host API/client wrapper for supported application operations;
+4. a manager with deterministic `init/apply/up/down/status/doctor` behavior;
+5. external payload files for executable/configuration documents that are sent into the managed application;
+6. a runtime adapter that creates a fresh run context and captures normalized evidence;
+7. subject catalog registration; and
+8. regression coverage for lifecycle, evidence, failure, and cleanup behavior.
+
+Research capability configuration should enter through Experiment Package integrations rather than a Core special case.
 
 ## Manager responsibilities
 
-A manager owns desired state and reconciliation for its host. `apply` should be deterministic and
-bounded; `status` observes without mutating; `doctor` verifies live readiness; `down` is
-non-destructive unless a separate explicit reset operation says otherwise.
+A manager owns desired state and reconciliation for one host. `apply` should be deterministic and bounded; `status` observes without mutating; `doctor` verifies live readiness; and `down` should be non-destructive unless a separate explicit reset operation says otherwise.
 
-Managers should expose generic managed-configuration surfaces where package integrations need to
-request host state. Do not add `if tool == ...` branches to Core or subject managers. Concrete
-service semantics belong to the integration implementation.
-
-Package-aware manager construction is:
-
-```text
-qualified profile
-    -> integration profile composition
-    -> normal manager
-    -> integration manager composition
-```
-
-An integration wrapper must preserve the normal subject deployment root and Docker client identity.
-That prevents package code from silently redirecting ACMM to an unrelated runtime.
+Package-aware construction composes the qualified baseline with package integration requests while preserving the normal deployment root and host identity.
 
 ## Payload rule
 
-Do not embed programs/configuration documents inside manager/client source when they are logically
-payloads sent to the managed application. This includes Python, shell, JSON, YAML, or other
-languages. Store them under the subject's `payloads/` tree and load/render them explicitly.
-
-Small ordinary command arguments and serialized runtime data are not payload source files merely
-because `json.dumps()` is used; the rule targets embedded source/configuration artifacts.
+Programs or configuration documents sent into a managed application should live under that subject's payload tree rather than being embedded as large source strings inside manager/client code. Ordinary command arguments and serialized runtime data do not need separate payload files merely because they use JSON or another encoding.
 
 ## Runtime adapter responsibilities
 
-Adapters should remain experiment-independent. They own:
+Adapters remain experiment-independent. They own fresh per-run context creation, host invocation, supported timeout/termination handling, cleanup, normalized conversation/tool-call/tool-result/final-response evidence, and relevant subject provenance.
 
-- fresh per-run conversation/context creation;
-- invocation of the qualified subject interface;
-- timeout/termination handling the host can actually enforce;
-- cleanup;
-- normalized conversation/tool-call/tool-result/final-response evidence; and
-- subject provenance relevant to interpretation.
+Adapters must not configure one experiment's external capability state. Package integrations and package runtime fixtures own that responsibility.
 
-Adapters must not configure one experiment's tool state. Package integrations and fixtures own
-experiment-specific capability/state setup.
+## Qualification requirements
 
-## Real capability integrations
+Before a subject/integration combination is used for research, establish at minimum:
 
-A real external capability should normally enter through an Experiment Package integration. The
-integration may use each host's native mechanism differently—those differences are part of the agent
-system—but the scientific capability can still be held constant upstream.
-
-Core should understand only the generic integration lifecycle/provenance interface. Tool-specific
-code can initially live in the experiment package. If reuse later justifies a shared integration
-repository/distribution, it should implement the same Core interface rather than adding a new Core
-special case.
-
-## Verification checklist
-
-Before qualifying an agent/integration combination, verify:
-
-- exact pinned agent/version;
-- model/provider/context state;
+- the exact pinned agent and LLM context;
 - baseline isolation settings;
-- expected capability configuration;
-- no unexpected capability exposure;
+- expected capability configuration and absence of unintended capability exposure;
 - live host readiness;
-- exact package/integration provenance when a package is attached;
+- exact package/integration provenance when attached;
 - clean detach/baseline restoration; and
-- evidence capture for success, rejection, timeout, and recovery paths.
+- evidence capture for success and important failure/recovery paths.
+
+These are reproducibility requirements rather than a project-management checklist.

@@ -1,103 +1,85 @@
-# Provider Pressure durable storage
+# Provider Pressure Durable Storage
 
-Provider Pressure runtime history uses a bounded segmented store under each provider/model lineage.
-The current store generation is `store_v2` schema 0.2. Legacy `trajectory-index.yaml` plus cumulative
-trajectory snapshot stores remain immutable historical artifacts, but Core will not extend a legacy
-lineage in place.
+Provider Pressure runtime history uses a bounded segmented store under each provider/model lineage. The current generation is `store_v2`. Legacy cumulative YAML trajectories remain immutable historical artifacts but are not extended in place.
 
-## Bounded store layout
+## Store layout
 
 ```text
 <lineage>/
-├── store_v2/
-│   ├── lineage.json
-│   ├── profile-state.yaml
-│   ├── segments/
-│   │   ├── segment_000000.jsonl
-│   │   ├── segment_000000.meta.json
-│   │   └── ...
-│   ├── checkpoints/
-│   │   ├── checkpoint_000000.json
-│   │   └── ...
-│   ├── blobs/
-│   │   └── <sha256>.json
-│   └── applied_sources/
-│       └── <sha256>.json
-└── legacy artifacts, when present
+└── store_v2/
+    ├── lineage.json
+    ├── profile-state.yaml
+    ├── segments/
+    │   ├── segment_000000.jsonl
+    │   ├── segment_000000.meta.json
+    │   └── ...
+    ├── checkpoints/
+    │   ├── checkpoint_000000.json
+    │   └── ...
+    ├── blobs/
+    │   └── <sha256>.json
+    └── applied_sources/
+        └── <sha256>.json
 ```
 
-`lineage.json` is a constant-sized head record. It stores terminal event/checkpoint identities and
-the active segment counters; it does not contain an ever-growing event array. Provider events are
-appended one record at a time to JSONL segments. A segment is sealed and hash-addressed when either
-its record-count or byte bound is reached. New stores persist one of four named segment policies:
-`small` (1 MiB / 256 records), `balanced` (8 MiB / 2048 records), `large` (16 MiB / 4096 records),
-or `xlarge` (32 MiB / 8192 records). `balanced` is the default for both new live-runtime stores and
-fresh migrations. Existing stores retain their persisted policy; stores created before policy metadata
-was added are treated as the original 1 MiB / 256-record policy. Event records are individually hash
-chained across segment boundaries. Checkpoints form a separate hash chain and contain only current model/profile
-state plus compact source metadata, never the complete historical event collection.
+`lineage.json` is a bounded head record. Provider events are appended to JSONL segments and hash-chained across segment boundaries. Checkpoints form a separate hash chain and contain current model/profile state plus compact source metadata rather than complete event history.
 
-Large individual payloads are externalized to content-addressed `blobs/` records. The mutable
-operational profile has a hard size bound; a provider model whose current state exceeds that bound
-must compact its model state instead of allowing `profile-state.yaml` to become a history store.
+Large individual payloads can be externalized to content-addressed blobs. The mutable operational profile has its own size bound so current state cannot silently become another history store.
 
-Live runtime active-segment writes are newline-terminated and fsynced per event. The offline legacy
-upgrader uses a bounded 64-record durability batch because its immutable source can be replayed after
-an interruption; it also commits at segment and snapshot/checkpoint boundaries. Startup validates the
-durable event chain and truncates only an incomplete final line. A malformed durable line or hash-chain
-mismatch fails closed.
+## Segment policies
 
-## Runtime rules
+New stores persist one named segment policy:
 
-Provider signals, decisions, and pacing events are persisted as they occur. Core keeps only bounded
-transient collections needed by the active execution (for example recent decision lookup). Execution
-finalization writes a compact checkpoint rather than constructing a cumulative trajectory snapshot.
+| Preset | Maximum bytes | Maximum records |
+| --- | ---: | ---: |
+| `small` | 1 MiB | 256 |
+| `balanced` | 8 MiB | 2,048 |
+| `large` | 16 MiB | 4,096 |
+| `xlarge` | 32 MiB | 8,192 |
 
-Applied historical-source markers are stored as independent constant-sized files instead of an
-unbounded list inside the profile document.
+`balanced` is the default for new live stores and fresh migrations. Existing stores retain the policy they were created with.
+
+Live runtime writes remain durable per event. The offline legacy upgrader can batch durability because its immutable source is replayable after interruption.
+
+## Runtime behavior
+
+Signals, decisions, and pacing events are persisted as they occur. Core keeps only bounded transient state required by the active execution. Finalization writes a compact checkpoint instead of constructing a cumulative trajectory snapshot.
+
+Startup validates the durable chain and may truncate only an incomplete final line. A malformed durable line or hash-chain mismatch fails closed.
 
 ## Upgrading a legacy store
 
-Migration is deliberately a repository maintenance tool, not an `acmm` CLI lifecycle command:
+Migration is a repository maintenance tool, not part of the normal `acmm` lifecycle:
 
 ```text
-python tools/upgrade_provider_pressure_store.py ~/acmm_generated/provider_pressure
+python tools/upgrade_provider_pressure_store.py <provider-pressure-root>
 ```
 
-A fresh migration defaults to the `balanced` segment policy. A different supported preset can be
-selected explicitly, for example:
+`<provider-pressure-root>` is the generated directory containing legacy Provider Pressure lineages.
+
+A fresh migration uses the `balanced` policy. A different supported preset can be selected explicitly:
 
 ```text
-python tools/upgrade_provider_pressure_store.py ~/acmm_generated/provider_pressure --segment-size large
+python tools/upgrade_provider_pressure_store.py <provider-pressure-root> --segment-size large
 ```
 
-The choice is persisted in `lineage.json`. A resumed migration must retain the existing policy; the
-tool will not silently change segment sizing partway through a lineage.
+The upgrader:
 
-The upgrader never deletes or rewrites legacy artifacts. It creates a sibling `store_v2` for each
-legacy lineage. Legacy indexes and large snapshot YAML files are parsed with an event-level streaming
-reader so the complete historical document is not materialized in memory. Migration commits one
-legacy snapshot at a time and records migration provenance in checkpoints.
+- never deletes or rewrites legacy artifacts;
+- creates `store_v2` beside each legacy lineage;
+- parses large legacy YAML with an event-level streaming reader;
+- commits durable checkpoints as migration progresses;
+- resumes without duplicating already migrated events after interruption; and
+- records migration provenance and reconciliation information.
 
-Migration is restart-safe and reports durable segment seals plus per-snapshot checkpoint completion. If the process stops after some events from a legacy snapshot are durable
-but before its checkpoint is committed, rerunning the tool verifies the existing segmented event
-chain, counts already-migrated records for that snapshot, and resumes without duplicating them.
-Small legacy snapshots have their canonical legacy snapshot digest recomputed. Very large legacy
-snapshots are streamed without canonical body reserialization; their index/metadata chain and raw
-file SHA-256 are retained in the migration report instead. This distinction is explicit rather than
-silently weakening verification.
+A resumed migration preserves the existing store's segment policy rather than changing it midway through a lineage.
 
-After migration, normal Provider Pressure runtime and export prefer `store_v2`. The legacy exporter
-keeps compatibility for modest historical stores but refuses oversized legacy YAML before calling
-`yaml.safe_load`; the maintenance upgrader is the required path for those artifacts.
+## Export and analysis
 
-## Analysis/export behavior
+```text
+acmm export provider-pressure <provider-pressure-root>
+```
 
-`acmm export provider-pressure` streams segmented checkpoints/events into deterministic analysis
-CSVs. Raw signals, decisions, and pacing events remain available for audit. The exporter also emits
-a compact per-checkpoint/reason pacing summary so ordinary R pressure analysis does not need to load
-the potentially much larger raw pacing-event table.
+The exporter streams native segmented stores and produces deterministic raw/audit tables plus compact pacing, admission, and utilization summaries. Ordinary Provider Pressure analysis consumes the compact summaries and therefore does not need to load the largest raw CSV tables.
 
-The general storage invariant is: no required lifecycle operation should need to materialize an
-artifact whose size grows with Provider Pressure execution history. Statistical analysis may still
-scale with the normalized data genuinely required by the requested estimator or plot.
+The storage invariant is simple: no required lifecycle operation should need to materialize an artifact whose size grows with the entire Provider Pressure history. Downstream statistical work may still scale with the normalized data genuinely required by a requested analysis.

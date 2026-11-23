@@ -1,30 +1,46 @@
-# Durable Campaign execution
+# Durable Campaign Execution
 
-`acmm campaign` freezes one installed Experiment Package revision, its Contract, its
-materialization design, and the complete logical run population into a durable artifact.
-Campaign execution delegates immediate work to the same `execute_experiment()` service as
-`acmm run`; Campaign adds durable selection history, reconciliation, resumption, and merging.
+`acmm campaign` freezes one installed Experiment Package revision, its Contract, materialization design, and complete logical run population into a durable study artifact. Campaign execution reuses the same immediate execution machinery as `acmm run`, but adds durable selection history, resumption, Campaign-level adjudication, and immutable merge products.
 
-## Commands
+## Create a Campaign
 
-Create a frozen Campaign:
+Preview the frozen design without writing a Campaign:
+
+```text
+acmm campaign create <experiment-selector> --preview
+```
+
+Create it:
 
 ```text
 acmm campaign create <experiment-selector>
 ```
 
-Execute any pending subset. Scenario selectors may be repeated and are reordered only by the
-frozen materialization policy; logical run indices do not change:
+The command returns a Campaign ID. The generated artifact is stored beneath `<generated-root>`; set `ACMM_GENERATED_ROOT` before the command when the complete generated tree should be redirected.
+
+## Execute selected pending runs
+
+Preview a selection:
 
 ```text
 acmm campaign execute <campaign-id> \
-  --scenario <scenario-a> \
-  --scenario <scenario-b> \
+  --scenario <scenario-id> \
+  --repetition 1 \
+  --preview
+```
+
+Execute it:
+
+```text
+acmm campaign execute <campaign-id> \
+  --scenario <scenario-id> \
   --repetition 1 \
   --apply-if-needed \
   --start-if-needed \
   --capture-runtime-logs
 ```
+
+Selectors operate against the frozen Campaign population. Logical run indices do not change across Campaign executions.
 
 Inspect durable state without mutation:
 
@@ -32,7 +48,9 @@ Inspect durable state without mutation:
 acmm campaign status <campaign-id>
 ```
 
-Resume the pending logical slots from the most recent incomplete Campaign execution selection:
+## Resume an incomplete execution selection
+
+Resume pending logical slots from the most recent resumable Campaign execution:
 
 ```text
 acmm campaign resume <campaign-id> \
@@ -41,66 +59,71 @@ acmm campaign resume <campaign-id> \
   --capture-runtime-logs
 ```
 
-A specific prior execution can be selected explicitly:
+A specific prior Campaign execution can be selected explicitly:
 
 ```text
-acmm campaign resume <campaign-id> --execution <execution-id> ...
+acmm campaign resume <campaign-id> --execution <execution-id> --apply-if-needed --start-if-needed
 ```
 
-A resume always creates a new immutable execution session. The new Campaign Execution record
-stores `resumed_from_execution_id`; the interrupted/failed source execution is never rewritten
-as if it had continued in place.
+Resume always creates a new immutable Campaign execution session. It never reopens an agent conversation or rewrites the interrupted/failed source execution as though it had continued in place.
 
-## Run state
+## Run state and retry boundary
 
-New Campaign Execution records use schema v0.2. A logical Campaign run is either:
+A logical Campaign run is either:
 
-- **observed**: a scientifically valid accepted attempt is durably persisted; or
-- **pending**: no accepted observation exists yet and the logical run remains resumable once the
-  Campaign recovery boundary is safe.
+- **observed** — a scientifically valid accepted attempt has been durably persisted; or
+- **pending** — no accepted observation exists yet and the slot remains resumable once the recovery boundary is safe.
 
-The old v0.1 per-run `blocked` state is retired. v0.1 Campaign Execution artifacts remain
-readable; their `blocked_run_ids` are interpreted as pending/resumable. Exposure to an agent no
-longer permanently consumes a logical slot because the current runtime can retry from a fresh
-agent session and fresh materialization generation.
+`--max-attempts-per-run` controls fresh attempts inside one immediate execution. Campaign resume is a separate layer: it starts a new Campaign execution for logical slots still pending after a prior execution stopped, failed safely, or completed only part of its selection.
 
-Safety is enforced at the Campaign execution/recovery boundary instead. Before new work begins,
-Campaign reconciles unfinished execution metadata. Failed or unclean executions that used a
-runtime lifecycle must establish a safe external-state boundary through the frozen package's
-recovery hook before pending logical runs may resume. Typed interruptions also use that recovery
-hook when one is available; packages without a recovery hook may resume a typed interruption
-because the immediate runtime already crossed its controlled interruption-cleanup boundary.
+When a package owns external mutable state, Campaign recovery requires the package/runtime lifecycle to establish a safe boundary before the logical slot can be executed again.
 
-## Retry versus resume
+## Materialization
 
-`--max-attempts-per-run` controls fresh attempts inside one immediate execution and defaults to
-2, matching `acmm run`. Invalid attempts are retried by the runtime using a fresh subject session
-and fresh materialization according to the normal runtime contract.
+A Campaign freezes the package-declared materialization policy. Selecting a subset does not redefine the scientific design: it schedules only the matching frozen logical slots and preserves their original identities.
 
-Campaign resume is a different layer. It starts a new Campaign execution for logical slots that
-remain pending after a prior execution completed partially, was interrupted, or was safely
-recovered. It does not resume an agent conversation or mutate the old execution session.
+## Campaign adjudication
 
-## Multi-scenario materialization
+Campaign adjudication is intentionally a **whole-Campaign** operation. It re-evaluates the accepted evidence of a complete Campaign with adjudication code from an explicit installed package revision whose Contract exactly matches the frozen Campaign Contract.
 
-Campaign freezes the package-declared `campaign.materialization.group_by` policy. A package such
-as Experiment 2 that groups by `scenario_id` receives one materialization slice per selected
-scenario. Within each slice Core keeps subject-major ordering and preserves run-index order within
-a subject. Selecting multiple scenarios therefore exercises multiple materialization slices in one
-Campaign execution without changing the logical experiment design.
+```text
+acmm campaign adjudicate <campaign-id> --package <adjudicator-selector>
+```
+
+A partial Campaign is rejected rather than treated as an arbitrary per-run adjudication request. Adjudication creates a separate immutable artifact; it does not mutate acquisition Run Records.
+
+Current writes use bounded Campaign Adjudication artifacts with a small provenance manifest plus a hash-bound `runs.jsonl` collection. Older supported adjudication formats remain readable.
 
 ## Merge
 
-`acmm campaign merge` copies accepted observations into an immutable merged product. Complete
-merge requires every logical run to be observed. `--allow-partial` permits an explicitly partial
-merge and records total, observed, and pending population counts.
+Create an immutable merge from accepted observations:
 
-Future writes use Campaign Merge v0.4: the top-level manifest remains a small provenance header and
-references a hash-bound `observations.jsonl` collection instead of embedding an observation array.
-Campaign Merge v0.1-v0.3 artifacts remain readable historical records. The same bounded-collection
-rule applies to new Campaign Adjudication v0.3 artifacts, which reference `runs.jsonl` while keeping
-per-run adjudication artifacts immutable. Existing finalized adjudication/merge products are never
-rewritten merely to adopt the newer storage layout.
+```text
+acmm campaign merge <campaign-id>
+```
 
-Adjudication and merge commands emit coarse phase/progress messages during source validation,
-observation processing, and publication. They do not print per-file chatter.
+Apply one complete Campaign adjudication when assembling the merged Run Records:
+
+```text
+acmm campaign merge <campaign-id> --adjudication <adjudication-id>
+```
+
+Complete merge requires the full logical population. For diagnostics or smoke tests, an explicitly partial merge is available:
+
+```text
+acmm campaign merge <campaign-id> --allow-partial
+```
+
+A partial merge records total, observed, and pending population counts. It is visibly distinct from a complete study merge.
+
+Current writes use Campaign Merge v0.4: the top-level manifest remains small and references a hash-bound `observations.jsonl` collection. Older supported merge formats remain readable historical artifacts.
+
+## Progress output
+
+Campaign execution, adjudication, and merge emit coarse phase-level progress. Long operations report durable progress without printing one line per source file or logical run.
+
+## Related documentation
+
+- [`experiment_execution.md`](experiment_execution.md) — immediate execution semantics and retries.
+- [`materialization.md`](materialization.md) — package materialization lifecycle.
+- [`../analysis/export.md`](../analysis/export.md) — Campaign export requires both the Campaign and one immutable merge.

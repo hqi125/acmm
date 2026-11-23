@@ -24,12 +24,12 @@ judgments.
 
 ## Directory layout
 
-The generated-artifact root defaults to `~/acmm_generated` and can be overridden with `ACMM_GENERATED_ROOT`. The immediate-execution result namespace is `results/` beneath that root.
+The generated-artifact root can be overridden with `ACMM_GENERATED_ROOT`. The immediate-execution result namespace is `results/` beneath that root.
 
 The default layout is:
 
 ```text
-~/acmm_generated/results/
+<generated-root>/results/
 └── <experiment_id>/
     └── run_<run_index>_<run_id>/
         ├── run_record.yaml
