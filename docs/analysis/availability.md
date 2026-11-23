@@ -109,9 +109,9 @@ number of opportunities for the scenario/requirement combination be consistent a
 runs. If a required scenario template was never observed, or the observed template is inconsistent,
 the sensitivity bounds are left unreported rather than guessed.
 
-The first implementation deliberately limits this missing-outcome envelope to the opportunity-weighted
-requirement estimand. Run- and scenario-weighted missing-outcome sensitivity can be added later if a
-clear general imputation contract is justified.
+The implemented missing-outcome envelope is deliberately limited to the opportunity-weighted
+requirement estimand. Run- and scenario-weighted missing-outcome sensitivity are outside the current
+analysis contract.
 
 ## Retry interpretation
 
@@ -126,8 +126,8 @@ mean_attempts_per_slot
 ```
 
 This preserves the difference between an agent/runtime that succeeds immediately and one that becomes
-usable only because the protocol permits retries. A future experiment should declare retry policy
-before acquisition; selectively rerunning only failed canonical slots after seeing results changes the
+usable only because the protocol permits retries. An experiment should declare retry policy before
+acquisition; selectively rerunning only failed canonical slots after seeing results changes the
 measurement protocol and should be treated as supplemental diagnosis rather than silent replacement.
 
 ## Outputs

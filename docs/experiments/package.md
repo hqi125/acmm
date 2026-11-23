@@ -201,8 +201,9 @@ it may promote an otherwise non-error normalized result to an error, but it cann
 established by the adapter. This keeps provider phrases and wire quirks out of Core while preserving one
 normalized evidence surface for evaluators.
 
-Future trusted pre/post-state observation can plug into the same generic package/runtime boundary
-without making Core aware of the concrete external service.
+Trusted pre/post-state observation uses the same generic package/runtime boundary: package
+lifecycle hooks can capture external-state evidence without making Core aware of the concrete
+service.
 
 ## Package and integration secrets
 

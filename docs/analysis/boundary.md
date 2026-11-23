@@ -36,7 +36,7 @@ separate statistical workspace
 Run Records, execution-session metadata, evidence, and Contract snapshots are the canonical
 experimental source of truth.
 
-CSV is the planned interchange format for downstream statistical analysis, not the
+Deterministic CSV export is the interchange format for downstream statistical analysis, not the
 canonical storage format for the experiment itself.
 
 ## ACMM Python boundary
@@ -76,7 +76,7 @@ should be recollected or re-exported.
 
 ## R integration
 
-The initial preferred workflow is ordinary CSV interchange with R/RStudio.
+The preferred workflow is ordinary deterministic export interchange with R/RStudio.
 
 Embedding R inside the Python experiment environment or using Python-to-R APIs is not
 required for the core architecture and should be considered only if a later workflow
@@ -107,8 +107,8 @@ See `docs/analysis/export.md` for the exact table and determinism rules.
 
 ## Implemented R analysis workspace
 
-The first downstream statistical layer now lives under `analysis/r/`. It is intentionally
-separate from `src/acmm` and consumes only deterministic export artifacts.
+The downstream statistical layer lives under `analysis/r/`. It is intentionally separate from
+`src/acmm` and consumes only deterministic export artifacts.
 
 The loader dispatches by export schema and verifies the manifest, CSV SHA-256 values, exact table
 columns, typed field syntax, retry/selection consistency, run-to-judgment bindings, and population

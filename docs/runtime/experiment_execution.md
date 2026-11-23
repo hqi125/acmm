@@ -305,7 +305,7 @@ published, a later infrastructure failure does not delete it.
 
 ## Researcher-facing command
 
-For a single-slot Hermes smoke test, with the managed deployment already `READY`, execute one
+For a single-slot smoke test, with the selected managed deployment already `READY`, execute one
 deterministic slot with:
 
 ```text
@@ -441,15 +441,14 @@ An unrecoverable execution/lifecycle error after session creation writes
 CLI cleanup boundary with status 2 instead of exposing a package traceback. No completion manifest
 is written in either case.
 
-## Current boundaries
+## Immediate-execution boundaries
 
-Experiment-level execution intentionally keeps these boundaries:
+Immediate experiment execution intentionally keeps these boundaries:
 
-- interrupted sessions are inspectable but cannot be resumed or exported as complete executions;
-- CLI selection currently filters by planned-run index/range and subject ID, not by scenario or
-  repetition directly;
+- interrupted `acmm run` sessions are inspectable but cannot be resumed or exported as complete
+  executions; durable resumption is a Campaign feature;
 - experiment runtime implementations come only from verified installed packages, while subject
-  adapters remain qualified through the core subject catalog.
+  adapters remain qualified through the Core subject catalog.
 
 
 ## Diagnostic environment snapshot request

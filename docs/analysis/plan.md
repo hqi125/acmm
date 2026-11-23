@@ -118,10 +118,10 @@ data/trajectory/trajectory_subject_summary.csv
 data/trajectory/trajectory_tool_usage.csv
 ```
 
-The first trajectory version intentionally limits itself to structurally defensible facts: tool-call
+Trajectory analysis intentionally limits itself to structurally defensible facts: tool-call
 intensity, distinct-tool breadth, result/error counts and rates, repeated tool-name usage,
 consecutive repeated tool-name usage, and call/result matching by recorded IDs. It does not infer
-recovery, verification, mutation, or redundancy semantics. Those require an explicit future
+recovery, verification, mutation, or redundancy semantics; those require an explicit
 classification/sequence contract rather than experiment-specific assumptions hidden in Core.
 
 Campaign export schema 0.2 remains valid for the pre-trajectory statistical modules, but requesting

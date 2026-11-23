@@ -5,6 +5,7 @@ This directory contains operator guidance and reference documentation for ACMM C
 ## Getting started
 
 - [`../README.md`](../README.md) — environment, first-time setup, daily workflow, `acmm run`, `acmm campaign`, export, and analysis.
+- [`operator_conventions.md`](operator_conventions.md) — placeholders, selectors, and generated-root conventions used by examples.
 - [`security/secrets.md`](security/secrets.md) — local secret binding and public-release safeguards.
 - [`experiments/package.md`](experiments/package.md) — Experiment Package lifecycle and Core/package ownership boundary.
 - [`../infrastructure/README.md`](../infrastructure/README.md) — qualified subject infrastructure and environment commands.

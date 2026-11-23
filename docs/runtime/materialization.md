@@ -40,7 +40,7 @@ Implementing only one materialization hook is invalid. Packages that do not impl
 
 ## Execution resource governance
 
-Materialization is also the generic admission boundary for expensive external resources. An Experiment Package may attach an optional execution resource governor to its runtime. Core invokes that governor inside `execute_experiment()` before `materialization_initialize()`, so the behavior is independent of whether execution was entered through `acmm run`, `acmm campaign`, or a future entry point that delegates to the same execution service.
+Materialization is also the generic admission boundary for expensive external resources. An Experiment Package may attach an optional execution resource governor to its runtime. Core invokes that governor inside `execute_experiment()` before `materialization_initialize()`, so the behavior is shared by execution entry points that delegate to the same execution service, including `acmm run` and `acmm campaign`.
 
 The resource governor is deliberately separate from the materialization lifecycle:
 
@@ -64,7 +64,7 @@ Core does not interpret provider-specific limits. The package decides how to for
 
 When a resource governor is active, the execution session contains `execution_resource_usage.yaml`, validated against `execution-resource-usage-v0.1.schema.json`. The artifact is written incrementally after admission and after materialization finalization, so a later interruption does not erase an already observed admission decision or completed usage measurement. Prior canonical usage artifacts in the same execution history are supplied to the next execution automatically.
 
-A package may treat a first slice with no empirical history as a cold start. Core does not require a special CLI baseline argument and does not fabricate a usage estimate; the package can rely on live provider state and its existing request-level safety policy, then use the first measured materialization as future history.
+A package may treat a first slice with no empirical history as a cold start. Core does not require a special CLI baseline argument and does not fabricate a usage estimate; the package can rely on live provider state and its existing request-level safety policy, then use the first measured materialization as subsequent history.
 
 ## Failure semantics
 

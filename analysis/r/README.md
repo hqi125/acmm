@@ -229,7 +229,7 @@ hierarchical resampling, and preservation of the caller's R random-number state.
 
 ## First-class analysis plans
 
-The preferred orchestration surface is now `acmm analyze <export-dir> --plan <plan.yaml>`. The R
+The preferred orchestration surface is `acmm analyze <export-dir> --plan <plan.yaml>`. The R
 functions and scripts remain the statistical implementation; the Core CLI validates a versioned plan,
 resolves dependencies, runs only the requested generic stages, preserves full R logs, and publishes an
 immutable analysis manifest. See `docs/analysis/plan.md`.

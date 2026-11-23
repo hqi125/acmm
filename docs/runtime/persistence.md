@@ -101,9 +101,9 @@ An already-existing final result directory is never overwritten.
 
 Evidence files are flushed and `fsync()` is requested before publication.
 
-The current v0.1 implementation does not claim full power-loss durability for directory
-metadata across every supported operating system/filesystem. Stronger crash-durability
-rules, if required, can be added independently later.
+The v0.1 persistence layer does not claim full power-loss durability for directory metadata across
+every supported operating system/filesystem. Its documented guarantee is limited to the publication
+boundary described below.
 
 The current guarantee is therefore best described as:
 
@@ -123,15 +123,8 @@ The serialized record is the same logical object carried by `executed_run.record
 Evidence bytes are written exactly as captured. Their SHA-256 values in the record therefore
 continue to identify the persisted evidence content.
 
-## Current exclusions
+## Layer boundary
 
-This layer intentionally does not yet:
-
-- snapshot the Experiment Contract into an experiment-result directory;
-- maintain an experiment-level manifest;
-- choose a preferred attempt when multiple realized runs occupy one planned slot;
-- retry invalid executions;
-- execute an entire experiment plan;
-- expose `acmm run`.
-
-Those belong to the experiment/campaign execution layer.
+This persistence layer writes one realized run bundle. Contract/session snapshots, experiment-level
+manifests, retry and selected-attempt policy, complete-plan orchestration, and the `acmm run` command
+are owned by the experiment/Campaign execution layers.

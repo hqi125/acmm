@@ -33,8 +33,8 @@ executed_run
         +-- captured evidence artifacts
 ```
 
-The implementation is intentionally platform-neutral. Hermes Agent, Open WebUI, Agent
-Zero, and other concrete subjects will be integrated later through subject adapters.
+The orchestration layer is platform-neutral. Hermes Agent, Open WebUI, and Agent Zero are
+provided through concrete subject adapters; additional subjects can use the same adapter boundary.
 
 ## Runtime interfaces
 
@@ -117,8 +117,8 @@ The orchestrator computes SHA-256 digests from the captured bytes and places onl
 manifest data in the Run Record.
 
 The artifact bytes remain alongside the Run Record in the returned `executed_run` bundle.
-Persistent/atomic writing to a result directory is intentionally deferred to the next
-runtime layer.
+Persistent/atomic writing to a result directory is owned by the persistence layer rather than
+`execute_planned_run()` itself.
 
 ## Valid and invalid executions
 
@@ -190,13 +190,7 @@ reached those stages.
 invalid execution rather than allowing an orchestration exception to masquerade as agent
 non-compliance.
 
-The current implementation deliberately does not:
-
-- persist result directories;
-- retry failed planned runs;
-- select a replacement attempt;
-- execute a complete experiment plan;
-- provide concrete Hermes/Open WebUI/Agent Zero adapters;
-- expose an `acmm run` command.
-
-Those belong to subsequent runtime layers.
+`execute_planned_run()` deliberately does not own result-directory persistence, retry policy,
+selected-attempt resolution, multi-run session orchestration, subject deployment, or CLI behavior.
+Those responsibilities are implemented by the surrounding persistence, experiment-execution,
+subject-adapter, and CLI layers.

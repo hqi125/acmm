@@ -6,7 +6,7 @@ Runtime planning is the first step after an Experiment Contract has passed Contr
 validation.
 
 The planner expands the declarative experiment definition into the concrete runs that the
-runtime will eventually execute.
+runtime can execute.
 
 For Contract v0.1, the run population is:
 
@@ -18,15 +18,16 @@ No agent interaction occurs during planning.
 
 ## Planned run
 
-A planned run currently contains:
+A planned run contains:
 
 - `run_index`: zero-based position in the generated plan;
 - `subject_id`: Contract subject selected for the run;
 - `scenario_id`: Contract scenario selected for the run;
 - `repetition`: one-based repetition number.
 
-The planner does not yet assign a persistent run UUID or execution-result identity.
-Durable run identity and provenance belong to the future Run Record design.
+A `planned_run` is intentionally a deterministic coordinate, not a realized execution identity.
+The execution layer assigns realized run/attempt identity and records provenance in the Run Record;
+Campaigns additionally freeze durable logical-run identities for their population.
 
 ## Deterministic ordering
 
@@ -151,7 +152,7 @@ Runtime planning
 Planned runs
         |
         v
-Future execution layer
+Execution layer
 ```
 
 This keeps planning focused on deterministic expansion rather than policy enforcement.
